@@ -20,6 +20,10 @@ type Player struct {
 	X, Y    int
 	Heading protocol.Heading
 
+	// Body and Head are Argentum asset numbers, assigned at join.
+	Body int
+	Head int
+
 	// Vitals are this player's own numbers, sent back only to them.
 	Vitals protocol.Vitals
 

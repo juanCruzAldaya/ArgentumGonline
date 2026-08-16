@@ -56,7 +56,44 @@
       "Bash(docker build*)",
       "Bash(docker compose*)",
       "PowerShell(docker build*)",
-      "PowerShell(docker compose*)"
+      "PowerShell(docker compose*)",
+
+      "Bash(gofmt *)",
+      "PowerShell(gofmt *)",
+
+      "PowerShell($*)",
+      "PowerShell(& *)",
+      "PowerShell(foreach *)",
+      "PowerShell(for *)",
+      "PowerShell(if *)",
+      "PowerShell(function *)",
+      "PowerShell(Add-Type *)",
+      "PowerShell(Expand-Archive *)",
+      "PowerShell(Get-ChildItem *)",
+      "PowerShell(Get-Content *)",
+      "PowerShell(Get-Command *)",
+      "PowerShell(Get-Item *)",
+      "PowerShell(Test-Path *)",
+      "PowerShell(New-Item *)",
+      "PowerShell(Select-Object *)",
+      "PowerShell(Where-Object *)",
+      "PowerShell(ForEach-Object *)",
+      "PowerShell(Sort-Object *)",
+      "PowerShell(Group-Object *)",
+      "PowerShell(Measure-Object *)",
+      "PowerShell(Format-Table *)",
+      "PowerShell(Select-String *)",
+      "PowerShell(Start-Sleep *)",
+      "PowerShell(Out-Null)",
+      "PowerShell(.\\bin\\*)",
+
+      "Bash(ls *)",
+      "Bash(mkdir *)",
+      "Bash(printf *)",
+      "Bash(curl -s http://127.0.0.1*)",
+      "Bash(curl -s -i http://127.0.0.1*)",
+      "Bash(curl -s -I http://127.0.0.1*)",
+      "Bash(curl -s http://localhost*)"
     ]
   }
 }

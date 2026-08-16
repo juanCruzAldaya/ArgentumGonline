@@ -62,6 +62,10 @@ func main() {
 		body   = flag.Int("body", 0, "dump all four facings of this body")
 		outDir = flag.String("out", "", "directory to write dumped PNGs into (required with -dump/-head/-body)")
 		info   = flag.Bool("info", false, "print the parsed record for anything dumped")
+
+		bundleDir = flag.String("bundle", "", "directory to write atlas.png and bundle.json into")
+		bodyList  = flag.String("bodies", "1,2,3,4,5,6,7,8", "comma separated body ids to bundle")
+		headList  = flag.String("heads", "1,2,3,4,5,6,7,8", "comma separated head ids to bundle")
 	)
 	flag.Parse()
 
@@ -81,11 +85,20 @@ func main() {
 	}
 	fmt.Printf("Cabezas.ini:  %d cabezas\n", len(heads))
 
+	// Cuerpos.ini is loaded for -body inspection only. It is not trusted for
+	// bundling: see deriveBodies.
 	bodies, err := loadFacings(filepath.Join(*assets, "INIT", "Cuerpos.ini"), "BODY", "Walk")
 	if err != nil {
 		fatal("%v", err)
 	}
-	fmt.Printf("Cuerpos.ini:  %d cuerpos\n", len(bodies))
+	fmt.Printf("Cuerpos.ini:  %d cuerpos (solo para inspección)\n", len(bodies))
+
+	if *bundleDir != "" {
+		if err := writeBundle(grhs, heads,
+			*assets, parseList(*bodyList), parseList(*headList), *bundleDir); err != nil {
+			fatal("%v", err)
+		}
+	}
 
 	var wanted []int
 	if *dump != "" {
@@ -349,6 +362,22 @@ func iniLines(path string) ([]string, error) {
 		}
 	}
 	return out, scanner.Err()
+}
+
+// parseList reads a comma separated list of ids, skipping anything unparseable
+// so a stray trailing comma is not fatal.
+func parseList(s string) []int {
+	var out []int
+	for _, field := range strings.Split(s, ",") {
+		field = strings.TrimSpace(field)
+		if field == "" {
+			continue
+		}
+		if n, err := strconv.Atoi(field); err == nil {
+			out = append(out, n)
+		}
+	}
+	return out
 }
 
 func atoi(s string) int {

@@ -41,6 +41,14 @@ const (
 	spawnAttempts = 200
 )
 
+// Appearances that the client has assets bundled for. Argentum defines
+// hundreds; these are the ones tools/aoconv currently packs into the atlas, and
+// the two lists must stay in step with that bundle.
+var (
+	availableBodies = []int{1, 2, 3, 4, 5, 6, 7, 8}
+	availableHeads  = []int{1, 2, 3, 4, 5, 6, 7, 8}
+)
+
 // Starting vitals. Every player is identical for now: classes and races decide
 // these in classic AO, and that table comes over from the VB6 source once class
 // selection exists.
@@ -260,6 +268,8 @@ func (w *World) viewportOf(p *Player) []protocol.EntityState {
 			X:       other.X,
 			Y:       other.Y,
 			Heading: other.Heading,
+			Body:    other.Body,
+			Head:    other.Head,
 			Name:    other.Name,
 		})
 	}
@@ -274,7 +284,16 @@ func (w *World) addPlayer(req joinReq) EntityID {
 	id := EntityID(w.nextID)
 
 	x, y := w.freeSpawn()
-	p := &Player{ID: id, Name: req.name, X: x, Y: y, Vitals: startingVitals, conn: req.conn}
+	p := &Player{
+		ID:     id,
+		Name:   req.name,
+		X:      x,
+		Y:      y,
+		Body:   availableBodies[w.rng.Intn(len(availableBodies))],
+		Head:   availableHeads[w.rng.Intn(len(availableHeads))],
+		Vitals: startingVitals,
+		conn:   req.conn,
+	}
 	w.players[id] = p
 	w.occupied[tileKey{x, y}] = id
 

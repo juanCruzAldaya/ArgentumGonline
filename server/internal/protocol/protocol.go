@@ -120,11 +120,17 @@ type Vitals struct {
 }
 
 // EntityState is one entity as seen from some player's viewport.
+//
+// Body and Head are Argentum's own asset numbers. Appearance is server-assigned
+// so that everyone renders the same character the same way, and so a modified
+// client cannot make itself invisible by claiming a body that draws nothing.
 type EntityState struct {
 	ID      uint32  `json:"id"`
 	X       int     `json:"x"`
 	Y       int     `json:"y"`
 	Heading Heading `json:"h"`
+	Body    int     `json:"b"`
+	Head    int     `json:"hd"`
 	Name    string  `json:"n,omitempty"`
 }
 
