@@ -1,0 +1,62 @@
+{
+  "permissions": {
+    "allow": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Edit",
+      "Write",
+
+      "Bash(cd *)",
+      "PowerShell(cd *)",
+      "PowerShell(Set-Location *)",
+
+      "Bash(go *)",
+      "PowerShell(go *)",
+      "Bash(gofmt *)",
+      "PowerShell(gofmt *)",
+      "Bash(godot *)",
+      "PowerShell(godot *)",
+
+      "Bash(git status*)",
+      "Bash(git diff*)",
+      "Bash(git log*)",
+      "Bash(git show*)",
+      "Bash(git add*)",
+      "Bash(git commit*)",
+      "Bash(git branch*)",
+      "Bash(git checkout*)",
+      "Bash(git switch*)",
+      "Bash(git init*)",
+      "Bash(git remote*)",
+      "Bash(git fetch*)",
+      "Bash(git stash*)",
+      "Bash(git tag*)",
+      "Bash(git ls-files*)",
+      "Bash(git rev-parse*)",
+      "Bash(git config*)",
+      "PowerShell(git status*)",
+      "PowerShell(git diff*)",
+      "PowerShell(git log*)",
+      "PowerShell(git show*)",
+      "PowerShell(git add*)",
+      "PowerShell(git commit*)",
+      "PowerShell(git branch*)",
+      "PowerShell(git checkout*)",
+      "PowerShell(git switch*)",
+      "PowerShell(git init*)",
+      "PowerShell(git remote*)",
+      "PowerShell(git fetch*)",
+      "PowerShell(git stash*)",
+      "PowerShell(git tag*)",
+      "PowerShell(git ls-files*)",
+      "PowerShell(git rev-parse*)",
+      "PowerShell(git config*)",
+
+      "Bash(docker build*)",
+      "Bash(docker compose*)",
+      "PowerShell(docker build*)",
+      "PowerShell(docker compose*)"
+    ]
+  }
+}

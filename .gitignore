@@ -1,0 +1,15 @@
+# Go build output
+/server/bin/
+*.exe
+
+# Godot
+/client/.godot/
+/client/android/
+/client/export_presets.cfg
+/build/
+
+# Editor / OS
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store

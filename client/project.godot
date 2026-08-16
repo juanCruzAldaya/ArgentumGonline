@@ -1,0 +1,24 @@
+; Godot project file for the juegito client.
+;
+; The client is a renderer and an input device. All authoritative state lives in
+; the Go server, so nothing in here simulates the game.
+
+config_version=5
+
+[application]
+
+config/name="Juegito"
+run/main_scene="res://scenes/main.tscn"
+config/features=PackedStringArray("4.3", "GL Compatibility")
+
+[display]
+
+; 17x13 tiles at 48px, matching the server's classic-AO viewport exactly.
+window/size/viewport_width=816
+window/size/viewport_height=624
+
+[rendering]
+
+renderer/rendering_method="gl_compatibility"
+renderer/rendering_method.mobile="gl_compatibility"
+textures/canvas_textures/default_texture_filter=0

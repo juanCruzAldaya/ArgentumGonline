@@ -1,0 +1,32 @@
+# A single always-reachable server for remote playtesting.
+#
+# This is the shared-test deployment, not the per-match provisioning that a real
+# battle royale needs. That comes later, driven by the Fly Machines API: one
+# machine per match, started at lobby close and destroyed when the match ends.
+
+app = "juegito"
+primary_region = "eze" # Ezeiza — lowest latency from Buenos Aires
+
+[build]
+  dockerfile = "Dockerfile"
+
+# WebSocket rides the normal HTTP service, so this needs no dedicated IPv4.
+# Going to raw UDP later is what would require one.
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_start_machines = true
+  # The machine sleeps when nobody is connected and wakes on the next
+  # connection, a couple of seconds later. Fine while two people test on and
+  # off; set min_machines_running = 1 once a cold start would interrupt a match.
+  auto_stop_machines = "stop"
+  min_machines_running = 0
+
+  [[http_service.checks]]
+    path = "/healthz"
+    interval = "30s"
+    timeout = "5s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"

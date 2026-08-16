@@ -1,0 +1,22 @@
+[gd_scene load_steps=4 format=3]
+
+[ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
+[ext_resource type="Script" path="res://scripts/net_client.gd" id="2_net"]
+[ext_resource type="Script" path="res://scripts/world_view.gd" id="3_view"]
+
+[node name="Main" type="Node2D"]
+script = ExtResource("1_main")
+
+[node name="Net" type="Node" parent="."]
+script = ExtResource("2_net")
+
+[node name="WorldView" type="Node2D" parent="."]
+script = ExtResource("3_view")
+
+[node name="HUD" type="CanvasLayer" parent="."]
+
+[node name="Status" type="Label" parent="HUD"]
+offset_left = 8.0
+offset_top = 8.0
+offset_right = 808.0
+offset_bottom = 48.0

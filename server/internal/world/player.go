@@ -1,0 +1,32 @@
+package world
+
+import (
+	"juegito/server/internal/protocol"
+	"juegito/server/internal/transport"
+)
+
+// EntityID identifies one entity for the lifetime of a match. IDs are never
+// reused, so a stale reference on a client resolves to nothing rather than to
+// the wrong player.
+type EntityID uint32
+
+// Player is one connected client's presence in the world.
+//
+// Every field is owned by the world goroutine and must only be touched from
+// there — conn is the single exception, since it is safe for concurrent use.
+type Player struct {
+	ID      EntityID
+	Name    string
+	X, Y    int
+	Heading protocol.Heading
+
+	conn transport.Conn
+
+	// lastMoveTick gates walking speed; see moveCooldownTicks.
+	lastMoveTick uint64
+
+	// consecutiveDrops counts snapshots the client failed to accept in a row.
+	// A client that is merely stuttering recovers; one that never drains gets
+	// disconnected rather than being allowed to lag forever.
+	consecutiveDrops int
+}
