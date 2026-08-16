@@ -13,10 +13,11 @@ config/features=PackedStringArray("4.7", "GL Compatibility")
 
 [display]
 
-; 1088x832 of game viewport (17x13 tiles at Argentum's native 32px, drawn at 2x
-; so the pixel art stays sharp) plus a 240px side panel and a 132px console.
-window/size/viewport_width=1328
-window/size/viewport_height=964
+; Argentum's arrangement: a console strip across the top with the minimap beside
+; it, the 1088x832 game viewport below (17x13 tiles at the native 32px, drawn at
+; 2x so the pixel art stays sharp), and the character panel down the right.
+window/size/viewport_width=1360
+window/size/viewport_height=962
 window/stretch/mode="canvas_items"
 window/stretch/aspect="keep"
 

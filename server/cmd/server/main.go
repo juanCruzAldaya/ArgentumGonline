@@ -19,14 +19,15 @@ import (
 
 func main() {
 	var (
-		addr     = flag.String("addr", ":8080", "address to listen on")
-		tickRate = flag.Int("tick", 20, "simulation ticks per second")
-		mapW     = flag.Int("map-width", 100, "demo map width in tiles")
-		mapH     = flag.Int("map-height", 100, "demo map height in tiles")
-		seed     = flag.Int64("seed", 1, "demo map generation seed")
-		debug    = flag.Bool("debug", false, "enable debug logging")
-		webDir   = flag.String("web-dir", "", "directory holding the exported web client; empty disables it")
-		mapFile  = flag.String("map-file", "", "converted Argentum map to play on; empty uses the generated demo arena")
+		addr      = flag.String("addr", ":8080", "address to listen on")
+		tickRate  = flag.Int("tick", 20, "simulation ticks per second")
+		mapW      = flag.Int("map-width", 100, "demo map width in tiles")
+		mapH      = flag.Int("map-height", 100, "demo map height in tiles")
+		seed      = flag.Int64("seed", 1, "demo map generation seed")
+		debug     = flag.Bool("debug", false, "enable debug logging")
+		webDir    = flag.String("web-dir", "", "directory holding the exported web client; empty disables it")
+		mapFile   = flag.String("map-file", "", "converted Argentum map to play on; empty uses the generated demo arena")
+		itemsFile = flag.String("items-file", "", "converted obj.dat; without it every weapon and armour is unknown")
 	)
 	flag.Parse()
 
@@ -63,6 +64,17 @@ func main() {
 
 	w := world.New(grid, protocol.JSONCodec{}, *tickRate, log)
 	w.SetMap(mapNumber, mapName)
+
+	if *itemsFile != "" {
+		items, err := world.LoadItems(*itemsFile)
+		if err != nil {
+			log.Error("no se pudieron cargar los items", "err", err)
+			os.Exit(1)
+		}
+		w.SetItems(items)
+		log.Info("items cargados", "count", len(items))
+	}
+
 	go w.Run(ctx)
 
 	srv := &transport.WSServer{

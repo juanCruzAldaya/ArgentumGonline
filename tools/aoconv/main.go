@@ -69,7 +69,8 @@ func main() {
 
 		mapNum    = flag.Int("map", 0, "Argentum map number to convert into the bundle")
 		mundosDir = flag.String("mundos", "", "directory holding Mapa*.map (default <assets>/Mundos)")
-		serverOut = flag.String("server-out", "", "directory to write the server's map JSON into")
+		serverOut = flag.String("server-out", "", "directory to write the server's data into")
+		datDir    = flag.String("dat", "", "directory holding obj.dat and Hechizos.dat (default <assets>/Dat)")
 	)
 	flag.Parse()
 
@@ -96,6 +97,22 @@ func main() {
 		fatal("%v", err)
 	}
 	fmt.Printf("Cuerpos.ini:  %d cuerpos (solo para inspección)\n", len(bodies))
+
+	dat := *datDir
+	if dat == "" {
+		dat = filepath.Join(*assets, "Dat")
+	}
+
+	items, err := loadItems(filepath.Join(dat, "obj.dat"))
+	if err != nil {
+		fatal("%v", err)
+	}
+	spells, err := loadSpells(filepath.Join(dat, "Hechizos.dat"))
+	if err != nil {
+		fatal("%v", err)
+	}
+	fmt.Printf("obj.dat:      %d objetos que se pueden llevar\n", len(items))
+	fmt.Printf("Hechizos.dat: %d hechizos\n", len(spells))
 
 	var aoMap *AOMap
 	var displayName string
@@ -132,8 +149,23 @@ func main() {
 	if *bundleDir != "" {
 		if err := writeBundle(grhs, heads,
 			*assets, parseList(*bodyList), parseList(*headList), *bundleDir,
-			aoMap, displayName); err != nil {
+			aoMap, displayName, items); err != nil {
 			fatal("%v", err)
+		}
+
+		// Items and spells go to the client for names and icons, and to the
+		// server for the numbers combat runs on. One writer, so they cannot
+		// drift apart.
+		for _, dir := range []string{*bundleDir, *serverOut} {
+			if dir == "" {
+				continue
+			}
+			if err := writeJSON(filepath.Join(dir, "items.json"), items); err != nil {
+				fatal("%v", err)
+			}
+			if err := writeJSON(filepath.Join(dir, "spells.json"), spells); err != nil {
+				fatal("%v", err)
+			}
 		}
 	}
 
@@ -376,6 +408,63 @@ func loadFacings(path, section, key string) (map[int][4]int, error) {
 	return out, nil
 }
 
+// cp1252High maps the bytes where Windows-1252 differs from Latin-1. Every
+// other byte in the range 0xA0-0xFF already equals its Unicode code point.
+var cp1252High = map[byte]rune{
+	0x80: '€', 0x82: '‚', 0x83: 'ƒ', 0x84: '„', 0x85: '…', 0x86: '†', 0x87: '‡',
+	0x88: 'ˆ', 0x89: '‰', 0x8A: 'Š', 0x8B: '‹', 0x8C: 'Œ', 0x8E: 'Ž',
+	0x91: '‘', 0x92: '’', 0x93: '“', 0x94: '”', 0x95: '•', 0x96: '–', 0x97: '—',
+	0x98: '˜', 0x99: '™', 0x9A: 'š', 0x9B: '›', 0x9C: 'œ', 0x9E: 'ž', 0x9F: 'Ÿ',
+}
+
+// decodeCP1252 converts one Argentum data line to UTF-8.
+//
+// These files predate UTF-8 and are Windows-1252, so "Poción" and "Dardo
+// Mágico" arrive as bytes that are not valid UTF-8 at all. Reading them as
+// UTF-8 does not merely look wrong, it silently mangles every accented name in
+// the game.
+func decodeCP1252(b []byte) string {
+	var sb strings.Builder
+	sb.Grow(len(b))
+	for _, c := range b {
+		switch {
+		case c < 0x80:
+			sb.WriteByte(c)
+		case cp1252High[c] != 0:
+			sb.WriteRune(cp1252High[c])
+		default:
+			sb.WriteRune(rune(c))
+		}
+	}
+	return sb.String()
+}
+
+// stripVBComment removes the trailing comments these files carry, without
+// eating apostrophes that belong to the text.
+//
+// Two shapes exist and they need different rules. Section headers glue the
+// comment straight on ("[OBJ46]'Nieve 1"), while values separate it with
+// whitespace ("Walk1=4582  ' arriba"). Spell and item descriptions are prose,
+// so cutting at every apostrophe would silently truncate them; requiring the
+// preceding whitespace keeps in-word apostrophes intact.
+func stripVBComment(line string) string {
+	if strings.HasPrefix(line, "[") {
+		if close := strings.IndexByte(line, ']'); close >= 0 {
+			if idx := strings.IndexByte(line[close:], '\''); idx >= 0 {
+				return line[:close+idx]
+			}
+		}
+		return line
+	}
+
+	for i := 1; i < len(line); i++ {
+		if line[i] == '\'' && (line[i-1] == ' ' || line[i-1] == '\t') {
+			return line[:i]
+		}
+	}
+	return line
+}
+
 // iniLines reads an index file, stripping the trailing VB comments that some of
 // them carry ("Walk1=4582  ' arriba").
 func iniLines(path string) ([]string, error) {
@@ -389,10 +478,8 @@ func iniLines(path string) ([]string, error) {
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	for scanner.Scan() {
-		line := scanner.Text()
-		if idx := strings.IndexByte(line, '\''); idx >= 0 {
-			line = line[:idx]
-		}
+		line := decodeCP1252(scanner.Bytes())
+		line = stripVBComment(line)
 		line = strings.TrimSpace(line)
 		if line != "" {
 			out = append(out, line)

@@ -32,6 +32,8 @@ const COLOR_NAME := Color(0.92, 0.92, 0.88)
 const COLOR_NAME_LOCAL := Color(0.62, 0.92, 0.62)
 const COLOR_NAME_SHADOW := Color(0, 0, 0, 0.85)
 const COLOR_SHADOW := Color(0, 0, 0, 0.25)
+const COLOR_TARGET := Color(0.95, 0.35, 0.30)
+const COLOR_CORPSE := Color(0.45, 0.42, 0.45, 0.85)
 
 ## Fallback marks, used only for entities whose appearance was not bundled.
 const COLOR_LOCAL := Color(0.45, 0.80, 0.45)
@@ -58,6 +60,11 @@ var _layer3: Dictionary = {}
 var _layer4: Dictionary = {}
 ## Drives animated tiles such as water, which run whether or not anyone moves.
 var _world_time := 0.0
+
+## While true the entity under the cursor is ringed, so it is obvious both that
+## the game is waiting for a target and which one is about to be picked.
+var targeting := false
+var _hovered := 0
 
 
 func _ready() -> void:
@@ -124,6 +131,7 @@ func set_entities(entities: Array) -> void:
 		entity["body"] = int(e.get("b", 0))
 		entity["head"] = int(e.get("hd", 0))
 		entity["name"] = str(e.get("n", ""))
+		entity["dead"] = bool(e.get("d", false))
 		_entities[id] = entity
 
 	for id: int in _entities.keys():
@@ -133,6 +141,7 @@ func set_entities(entities: Array) -> void:
 
 func _process(delta: float) -> void:
 	_world_time += delta
+	_hovered = entity_at(get_local_mouse_position()) if targeting else 0
 	if _entities.is_empty():
 		return
 
@@ -162,6 +171,41 @@ func _process(delta: float) -> void:
 			_camera = entity["render"]
 
 	queue_redraw()
+
+
+## entity_at returns the id of whoever is drawn under a point in this node's own
+## coordinates, or 0.
+##
+## The test is against the drawn sprite, not the tile. Characters are taller
+## than their square and grow upward out of it, so a player clicking the torso
+## is aiming more than a tile above the position the server knows about —
+## testing the tile would make aiming feel broken.
+func entity_at(local_pos: Vector2) -> int:
+	var origin := Vector2(_camera.x - view_w / 2.0, _camera.y - view_h / 2.0)
+
+	var best := 0
+	var best_depth := -INF
+	for id: int in _entities:
+		if _entity_box(_entities[id], origin).has_point(local_pos):
+			# Whoever is drawn in front wins, matching the painter's order.
+			var depth: float = _entities[id]["render"].y
+			if depth > best_depth:
+				best_depth = depth
+				best = id
+	return best
+
+
+func entity_name(id: int) -> String:
+	var entity: Variant = _entities.get(id)
+	return "alguien" if entity == null else str(entity["name"])
+
+
+## _entity_box is roughly what the character covers on screen: one tile wide,
+## and one and a half tall reaching up from the feet.
+func _entity_box(entity: Dictionary, origin: Vector2) -> Rect2:
+	var foot: Vector2 = (entity["render"] - origin) * TILE_SIZE + Vector2(TILE_SIZE * 0.5, TILE_SIZE)
+	var size := Vector2(TILE_SIZE, TILE_SIZE * 1.5)
+	return Rect2(foot - Vector2(size.x * 0.5, size.y), size)
 
 
 func is_blocked(x: int, y: int) -> bool:
@@ -259,6 +303,14 @@ func _draw_entity(id: int, entity: Dictionary, origin: Vector2, font: Font) -> v
 
 	draw_circle(foot + Vector2(0, -2), TILE_SIZE * 0.30, COLOR_SHADOW)
 
+	if targeting and id == _hovered:
+		draw_arc(foot + Vector2(0, -2), TILE_SIZE * 0.42, 0.0, TAU, 24, COLOR_TARGET, 2.0)
+
+	# The dead are greyed out, so a battlefield reads at a glance: who is still
+	# standing, and who is already out.
+	var dead: bool = entity.get("dead", false)
+	var tint := COLOR_CORPSE if dead else Color.WHITE
+
 	var drawn := false
 	if _sprites.is_loaded():
 		var body := _sprites.body_rect(
@@ -267,7 +319,7 @@ func _draw_entity(id: int, entity: Dictionary, origin: Vector2, font: Font) -> v
 		if body.size.x > 0.0:
 			var body_at := foot - Vector2(body.size.x * 0.5, body.size.y)
 			draw_texture_rect_region(
-				_sprites.atlas, Rect2(body_at, body.size), body
+				_sprites.atlas, Rect2(body_at, body.size), body, tint
 			)
 			var head := _sprites.head_rect(int(entity["head"]), int(entity["heading"]))
 			if head.size.x > 0.0:
@@ -279,7 +331,7 @@ func _draw_entity(id: int, entity: Dictionary, origin: Vector2, font: Font) -> v
 				)
 				var head_at := body_at + Vector2((body.size.x - head.size.x) * 0.5, head_y)
 				draw_texture_rect_region(
-					_sprites.atlas, Rect2(head_at, head.size), head
+					_sprites.atlas, Rect2(head_at, head.size), head, tint
 				)
 			drawn = true
 

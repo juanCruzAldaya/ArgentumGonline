@@ -11,13 +11,17 @@ const INPUT_INTERVAL := 0.05
 @onready var _net: Node = $Net
 @onready var _view: Node2D = $WorldView
 @onready var _hud: Control = $UI/Screen
-@onready var _minimap: Control = $UI/Screen/Minimap
+@onready var _minimap: Control = $UI/Screen/MinimapFrame/Minimap
 
 var _url := DEFAULT_URL
 var _player_name := ""
 var _local_id := 0
 var _time_since_input := 0.0
 var _connected := false
+## Spell awaiting a target. Argentum casts in two steps — pick the spell, then
+## pick who it lands on — and the second click is what this holds open.
+var _targeting_spell := 0
+var _warned_casting := false
 ## Entities seen in the previous snapshot, so the console can report who walked
 ## into and out of view. Diffing here keeps the server free of an event stream
 ## it does not need yet.
@@ -33,8 +37,11 @@ func _ready() -> void:
 	_net.server_disconnected.connect(_on_disconnected)
 	_net.welcomed.connect(_on_welcomed)
 	_net.snapshot_received.connect(_on_snapshot)
+	_net.loadout_received.connect(_hud.set_loadout)
+	_net.combat_received.connect(_on_combat)
+	_hud.cast_requested.connect(_on_cast_requested)
 
-	_hud.set_character(_player_name, 1)
+	_hud.set_character(_player_name)
 	_hud.log_line("conectando a %s ..." % _url, _hud.COLOR_TEXT_DIM)
 	_net.connect_to_server(_url, _player_name)
 
@@ -44,10 +51,94 @@ func _process(delta: float) -> void:
 	if not _connected or _time_since_input < INPUT_INTERVAL:
 		return
 
+	# Ctrl swings, as in Argentum. The server enforces the real cadence, so
+	# holding it down simply gets the extra requests ignored.
+	if Input.is_key_pressed(KEY_CTRL):
+		_time_since_input = 0.0
+		_net.send_attack()
+		return
+
 	var dir := _pressed_direction()
 	if dir >= 0:
 		_time_since_input = 0.0
 		_net.send_move(dir)
+
+
+## Combat lines are worded the way Argentum words them, from the point of view
+## of whoever is reading them.
+func _on_combat(event: Dictionary) -> void:
+	var mine: bool = bool(event.get("mine", false))
+	var attacker := str(event.get("an", "alguien"))
+	var victim := str(event.get("vn", "alguien"))
+	var damage := int(event.get("dmg", 0))
+
+	if not bool(event.get("hit", false)):
+		if bool(event.get("blocked", false)):
+			if mine:
+				_hud.log_line("%s rechazó tu ataque con su escudo." % victim, _hud.COLOR_TEXT_DIM)
+			else:
+				_hud.log_line("Rechazaste el ataque de %s con tu escudo." % attacker, _hud.COLOR_MANA)
+		elif mine:
+			_hud.log_line("¡Has fallado el golpe!", _hud.COLOR_TEXT_DIM)
+		else:
+			_hud.log_line("¡%s ha fallado el golpe!" % attacker, _hud.COLOR_TEXT_DIM)
+		return
+
+	if mine:
+		_hud.log_line("Le has quitado %d puntos de vida a %s." % [damage, victim], _hud.COLOR_HP)
+	else:
+		_hud.log_line("%s te ha quitado %d puntos de vida." % [attacker, damage], _hud.COLOR_EXP)
+
+	if bool(event.get("killed", false)):
+		if mine:
+			_hud.log_line("¡Has matado a %s!" % victim, _hud.COLOR_ACCENT)
+		else:
+			_hud.log_line("¡%s te ha matado!" % attacker, _hud.COLOR_EXP)
+
+
+func _on_cast_requested(spell_id: int) -> void:
+	_targeting_spell = spell_id
+	_view.targeting = true
+	Input.set_default_cursor_shape(Input.CURSOR_CROSS)
+	_hud.log_line("Elegí un objetivo. Click derecho o Esc para cancelar.", _hud.COLOR_ACCENT)
+
+
+func _stop_targeting() -> void:
+	_targeting_spell = 0
+	_view.targeting = false
+	Input.set_default_cursor_shape(Input.CURSOR_ARROW)
+
+
+func _unhandled_input(event: InputEvent) -> void:
+	if _targeting_spell == 0:
+		return
+
+	var cancel: bool = event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE
+	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_RIGHT:
+		cancel = true
+	if cancel:
+		_stop_targeting()
+		_hud.log_line("Cancelado.", _hud.COLOR_TEXT_DIM)
+		return
+
+	if not (event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT):
+		return
+
+	var target: int = _view.entity_at(_view.to_local(event.position))
+	if target == 0:
+		_hud.log_line("No hay nadie ahí.", _hud.COLOR_TEXT_DIM)
+		return
+
+	var spell_name := str(_hud.spell_name(_targeting_spell))
+	_net.send_cast(_targeting_spell, target)
+	_stop_targeting()
+	_hud.log_line("Lanzás %s sobre %s." % [spell_name, _view.entity_name(target)], _hud.COLOR_ACCENT)
+
+	# The flow is wired end to end, but the server does not resolve spells yet.
+	# Saying so once beats letting it look like nothing happened.
+	if not _warned_casting:
+		_warned_casting = true
+		_hud.log_line("(el servidor todavía no resuelve hechizos)", _hud.COLOR_TEXT_DIM)
 
 
 ## Raw key checks rather than input actions, so the project needs no input map
@@ -112,7 +203,10 @@ func _on_welcomed(welcome: Dictionary) -> void:
 	_local_id = int(welcome.get("id", 0))
 	_view.configure(welcome)
 	_minimap.configure(welcome)
-	_hud.set_character(_player_name, 1)
+
+	var map_name := str(welcome.get("mapName", ""))
+	if map_name != "":
+		_hud.log_line("Has llegado a %s." % map_name, _hud.COLOR_ACCENT)
 	_hud.log_line(
 		(
 			"mapa %dx%d  ·  %d Hz  ·  spawn en (%d, %d)"
@@ -138,7 +232,6 @@ func _on_snapshot(snapshot: Dictionary) -> void:
 	var vitals: Variant = snapshot.get("self")
 	if typeof(vitals) == TYPE_DICTIONARY:
 		_hud.set_vitals(vitals)
-		_hud.set_character(_player_name, int(vitals.get("lvl", 1)))
 
 	_report_arrivals_and_departures(entities)
 

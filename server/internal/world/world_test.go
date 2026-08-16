@@ -209,7 +209,7 @@ func TestSnapshotOnlyIncludesTheViewport(t *testing.T) {
 func TestSnapshotCarriesAliveCountAndOwnVitalsOnly(t *testing.T) {
 	w := newTestWorld(t, 100, 100)
 
-	_, conn := place(t, w, "wachin", 50, 50)
+	me, conn := place(t, w, "wachin", 50, 50)
 	place(t, w, "vecino", 51, 50)
 	// Far enough to be outside the viewport, so it must not appear in entities
 	// while still counting towards alive.
@@ -231,9 +231,14 @@ func TestSnapshotCarriesAliveCountAndOwnVitalsOnly(t *testing.T) {
 	if snap.Self == nil {
 		t.Fatal("snapshot carried no vitals for the local player")
 	}
-	if snap.Self.HP != startingVitals.HP || snap.Self.MaxHP != startingVitals.MaxHP {
-		t.Errorf("vitals = %d/%d, want %d/%d",
-			snap.Self.HP, snap.Self.MaxHP, startingVitals.HP, startingVitals.MaxHP)
+	// Max health comes from the class's MODVIDA column, so it is checked
+	// against that rather than against a fixed number.
+	wantMax := int(classModifiers[me.Class].Vida * 10)
+	if snap.Self.MaxHP != wantMax {
+		t.Errorf("maxHp = %d, want %d for %s", snap.Self.MaxHP, wantMax, me.Class)
+	}
+	if snap.Self.HP != snap.Self.MaxHP {
+		t.Errorf("hp = %d/%d, want to start at full health", snap.Self.HP, snap.Self.MaxHP)
 	}
 }
 

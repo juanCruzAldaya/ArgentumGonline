@@ -185,7 +185,7 @@ func loadBodySeeds(path string) ([]int, error) {
 
 // writeBundle packs every frame the given bodies and heads need into one atlas
 // and writes it alongside its JSON index.
-func writeBundle(grhs map[int]Grh, heads map[int][4]int, assets string, wantBodies, wantHeads []int, outDir string, aoMap *AOMap, mapDisplayName string) error {
+func writeBundle(grhs map[int]Grh, heads map[int][4]int, assets string, wantBodies, wantHeads []int, outDir string, aoMap *AOMap, mapDisplayName string, items map[int]Item) error {
 	seeds, err := loadBodySeeds(filepath.Join(assets, "INIT", "Cuerpos.ini"))
 	if err != nil {
 		return err
@@ -255,6 +255,22 @@ func writeBundle(grhs map[int]Grh, heads map[int][4]int, assets string, wantBodi
 		b.Heads[id] = Head{Facings: append([]int(nil), facings...)}
 	}
 
+	if len(items) > 0 {
+		// Every carriable item contributes its inventory icon, so slots can
+		// show the real thing instead of an empty square.
+		missing := 0
+		for _, item := range items {
+			if err := collect(item.Grh); err != nil {
+				missing++
+			}
+		}
+		fmt.Printf("items: %d iconos", len(items))
+		if missing > 0 {
+			fmt.Printf(", %d sin gráfico (se omiten)", missing)
+		}
+		fmt.Println()
+	}
+
 	if aoMap != nil {
 		// A tile referencing a graphic that is not in the index is a data bug in
 		// a twenty year old map, not a reason to refuse the whole conversion.
@@ -271,11 +287,37 @@ func writeBundle(grhs map[int]Grh, heads map[int][4]int, assets string, wantBodi
 		fmt.Println()
 	}
 
-	// Pack tallest first so the shelves stay tight.
+	// Open every sheet up front and drop whatever cannot be decoded.
+	//
+	// 83 of ao-libre's 3147 PNGs have a corrupted signature — an extra 0x0d
+	// before the trailing 0x0a, the signature of a line-ending conversion
+	// applied to a binary file somewhere in that repository's history. The
+	// damage is lossy and cannot be reliably undone, so those graphics are
+	// simply unavailable. Two percent of bad upstream data is not a reason to
+	// refuse to build anything.
+	sheets := map[int]image.Image{}
+	broken := map[int]bool{}
 	order := make([]int, 0, len(needed))
 	for grhNum := range needed {
+		file := grhs[grhNum].File
+		if broken[file] {
+			continue
+		}
+		if _, cached := sheets[file]; !cached {
+			sheet, err := openSheet(assets, file)
+			if err != nil {
+				broken[file] = true
+				continue
+			}
+			sheets[file] = sheet
+		}
 		order = append(order, grhNum)
 	}
+	if len(broken) > 0 {
+		fmt.Printf("hojas ilegibles y omitidas: %d\n", len(broken))
+	}
+
+	// Pack tallest first so the shelves stay tight.
 	sort.Slice(order, func(i, j int) bool {
 		hi, hj := grhs[order[i]].H, grhs[order[j]].H
 		if hi != hj {
@@ -307,21 +349,16 @@ func writeBundle(grhs map[int]Grh, heads map[int][4]int, assets string, wantBodi
 	}
 
 	atlas := image.NewNRGBA(image.Rect(0, 0, atlasWidth, atlasHeight))
-	sheets := map[int]image.Image{}
 	for _, grhNum := range order {
 		g := grhs[grhNum]
-		if _, cached := sheets[g.File]; !cached {
-			sheet, err := openSheet(assets, g.File)
-			if err != nil {
-				return err
-			}
-			sheets[g.File] = sheet
-		}
 		src := sheets[g.File]
 
 		srcRect := image.Rect(g.X, g.Y, g.X+g.W, g.Y+g.H)
 		if !srcRect.In(src.Bounds()) {
-			return fmt.Errorf("grh %d: rect %v se sale de la hoja %d %v", grhNum, srcRect, g.File, src.Bounds())
+			// An index entry pointing outside its own sheet is another piece of
+			// twenty year old data rot. Drop the frame instead of the build.
+			delete(b.Frames, grhNum)
+			continue
 		}
 		dst := b.Frames[grhNum]
 		draw.Draw(atlas, image.Rect(dst.X, dst.Y, dst.X+dst.W, dst.Y+dst.H), src, srcRect.Min, draw.Src)

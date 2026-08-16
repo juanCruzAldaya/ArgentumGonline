@@ -52,11 +52,29 @@ var (
 // Starting vitals. Every player is identical for now: classes and races decide
 // these in classic AO, and that table comes over from the VB6 source once class
 // selection exists.
+// The classic Argentum newbie kit, by obj.dat id: a sword, both potions,
+// something to eat and something to drink. Equipment and consumables do
+// nothing yet — this is what the inventory panel is drawing.
+var startingInventory = []protocol.InventorySlot{
+	{Slot: 0, ItemID: 2, Amount: 1, Equipped: true}, // Espada Larga
+	{Slot: 1, ItemID: 38, Amount: 100},              // Poción Roja
+	{Slot: 2, ItemID: 37, Amount: 100},              // Poción Azul
+	{Slot: 3, ItemID: 1, Amount: 20},                // Manzana Roja
+	{Slot: 4, ItemID: 43, Amount: 20},               // Botella de Agua
+}
+
+// Known spells, by Hechizos.dat id. Casting does not exist yet; these are what
+// the spell list shows.
+var startingSpells = []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12}
+
 var startingVitals = protocol.Vitals{
 	Level: 1,
-	HP:    100, MaxHP: 100,
+	Exp:   0, MaxExp: 300,
+	HP: 100, MaxHP: 100,
 	Mana: 100, MaxMana: 100,
 	Stamina: 100, MaxStamina: 100,
+	Hunger: 100, MaxHunger: 100,
+	Thirst: 100, MaxThirst: 100,
 }
 
 // ErrWorldClosed is returned when the simulation has stopped.
@@ -87,6 +105,9 @@ type World struct {
 	// client can pick the matching tile data it already ships with.
 	mapNumber int
 	mapName   string
+
+	// items is the converted obj.dat, read for weapon and armour numbers.
+	items map[int]Item
 
 	tickRate int
 	tick     uint64
@@ -216,13 +237,15 @@ func (w *World) apply(cmd command) {
 			return
 		}
 		w.movePlayer(p, m.Dir)
+	case protocol.TypeAttack:
+		w.attack(p)
 	default:
 		w.log.Debug("ignoring unknown command", "id", cmd.id, "type", cmd.typ)
 	}
 }
 
 func (w *World) movePlayer(p *Player, dir protocol.Heading) {
-	if !dir.Valid() {
+	if !dir.Valid() || p.Dead {
 		return
 	}
 	p.Heading = dir
@@ -247,7 +270,7 @@ func (w *World) movePlayer(p *Player, dir protocol.Heading) {
 }
 
 func (w *World) broadcast() {
-	alive := len(w.players)
+	alive := w.aliveCount()
 	for _, p := range w.players {
 		// Vitals go out every tick even though they change rarely. At this
 		// scale the extra bytes are noise, and the alternative — tracking what
@@ -283,6 +306,7 @@ func (w *World) viewportOf(p *Player) []protocol.EntityState {
 			Body:    other.Body,
 			Head:    other.Head,
 			Name:    other.Name,
+			Dead:    other.Dead,
 		})
 	}
 	// Map iteration order is random in Go; sorting keeps snapshots stable so
@@ -296,15 +320,27 @@ func (w *World) addPlayer(req joinReq) EntityID {
 	id := EntityID(w.nextID)
 
 	x, y := w.freeSpawn()
+	// Class and race are rolled for now. Letting players choose is a design
+	// question a battle royale has to answer — pick at the lobby, or find your
+	// class on the ground — so the server assigns until that is decided.
+	class := allClasses[w.rng.Intn(len(allClasses))]
+	race := allRaces[w.rng.Intn(len(allRaces))]
+
 	p := &Player{
-		ID:     id,
-		Name:   req.name,
-		X:      x,
-		Y:      y,
-		Body:   availableBodies[w.rng.Intn(len(availableBodies))],
-		Head:   availableHeads[w.rng.Intn(len(availableHeads))],
-		Vitals: startingVitals,
-		conn:   req.conn,
+		ID:         id,
+		Name:       req.name,
+		X:          x,
+		Y:          y,
+		Body:       availableBodies[w.rng.Intn(len(availableBodies))],
+		Head:       availableHeads[w.rng.Intn(len(availableHeads))],
+		Class:      class,
+		Race:       race,
+		Attributes: rolledAttributes(race),
+		Skills:     startingSkills,
+		Vitals:     vitalsFor(class),
+		Inventory:  append([]protocol.InventorySlot(nil), startingInventory...),
+		Spells:     append([]int(nil), startingSpells...),
+		conn:       req.conn,
 	}
 	w.players[id] = p
 	w.occupied[tileKey{x, y}] = id
@@ -321,6 +357,11 @@ func (w *World) addPlayer(req joinReq) EntityID {
 		ViewH:     ViewportH,
 		SpawnX:    x,
 		SpawnY:    y,
+	})
+
+	w.sendTo(p, protocol.TypeLoadout, protocol.Loadout{
+		Inventory: p.Inventory,
+		Spells:    p.Spells,
 	})
 
 	w.log.Info("player joined",

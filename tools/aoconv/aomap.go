@@ -84,7 +84,7 @@ func readAOMap(path string, number int) (*AOMap, error) {
 	m := &AOMap{
 		Number:  number,
 		Version: int(int16(binary.LittleEndian.Uint16(raw[0:2]))),
-		Desc:    strings.TrimRight(string(raw[2:257]), "\x00 "),
+		Desc:    strings.TrimRight(decodeCP1252(raw[2:257]), "\x00 "),
 		Tiles:   make([]Tile, MapWidth*MapHeight),
 	}
 

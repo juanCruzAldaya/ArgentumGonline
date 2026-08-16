@@ -17,13 +17,16 @@ type MsgType string
 
 const (
 	// Client -> server.
-	TypeJoin MsgType = "join"
-	TypeMove MsgType = "move"
-	TypePing MsgType = "ping"
+	TypeJoin   MsgType = "join"
+	TypeMove   MsgType = "move"
+	TypeAttack MsgType = "attack"
+	TypePing   MsgType = "ping"
 
 	// Server -> client.
 	TypeWelcome  MsgType = "welcome"
 	TypeSnapshot MsgType = "snapshot"
+	TypeLoadout  MsgType = "loadout"
+	TypeCombat   MsgType = "combat"
 	TypePong     MsgType = "pong"
 	TypeError    MsgType = "error"
 )
@@ -114,13 +117,24 @@ type Welcome struct {
 // values. The field is here now so the HUD is driven by the server from the
 // start rather than by placeholders it would later have to unlearn.
 type Vitals struct {
-	Level      int `json:"lvl"`
+	Level int `json:"lvl"`
+	// Exp and MaxExp drive the level bar. Nothing awards experience yet.
+	Exp    int `json:"exp"`
+	MaxExp int `json:"maxExp"`
+
 	HP         int `json:"hp"`
 	MaxHP      int `json:"maxHp"`
 	Mana       int `json:"mana"`
 	MaxMana    int `json:"maxMana"`
 	Stamina    int `json:"sta"`
 	MaxStamina int `json:"maxSta"`
+	// Hunger and Thirst are core Argentum vitals and the HUD shows them, so
+	// they are real server state rather than decoration. Nothing drains them
+	// yet — that is a design call about whether a battle royale wants upkeep.
+	Hunger    int `json:"hun"`
+	MaxHunger int `json:"maxHun"`
+	Thirst    int `json:"thi"`
+	MaxThirst int `json:"maxThi"`
 }
 
 // EntityState is one entity as seen from some player's viewport.
@@ -136,6 +150,9 @@ type EntityState struct {
 	Body    int     `json:"b"`
 	Head    int     `json:"hd"`
 	Name    string  `json:"n,omitempty"`
+	// Dead marks an eliminated player, so the client can draw a body rather
+	// than a character standing around.
+	Dead bool `json:"d,omitempty"`
 }
 
 // Snapshot is the per-tick view sent to a single player: only the entities
@@ -149,6 +166,44 @@ type Snapshot struct {
 	Self  *Vitals `json:"self,omitempty"`
 	// Entities is everyone inside the viewport, including the player itself.
 	Entities []EntityState `json:"e"`
+}
+
+// InventorySlot is one bag slot. ItemID indexes Argentum's obj.dat, which the
+// client already ships, so only the number travels.
+type InventorySlot struct {
+	Slot     int  `json:"s"`
+	ItemID   int  `json:"i"`
+	Amount   int  `json:"n"`
+	Equipped bool `json:"e,omitempty"`
+}
+
+// Loadout is what a player carries and knows.
+//
+// It rides its own message rather than the snapshot: a bag changes when someone
+// picks something up, not twenty times a second.
+type Loadout struct {
+	Inventory []InventorySlot `json:"inv"`
+	Spells    []int           `json:"spells"`
+}
+
+// Attack swings at whoever is standing on the tile the player faces. There is
+// no target field on purpose: melee in Argentum hits the square in front of
+// you, so a client cannot name someone across the map as its victim.
+type Attack struct{}
+
+// CombatEvent narrates one swing to both people involved.
+type CombatEvent struct {
+	AttackerID   uint32 `json:"a"`
+	AttackerName string `json:"an"`
+	VictimID     uint32 `json:"v"`
+	VictimName   string `json:"vn"`
+	Hit          bool   `json:"hit"`
+	Blocked      bool   `json:"blocked,omitempty"`
+	Damage       int    `json:"dmg,omitempty"`
+	Killed       bool   `json:"killed,omitempty"`
+	// Mine tells the client whether it was the one swinging, so it can word
+	// the line without having to compare ids itself.
+	Mine bool `json:"mine"`
 }
 
 // Error reports a protocol-level problem before the connection is dropped.

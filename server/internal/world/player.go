@@ -24,8 +24,24 @@ type Player struct {
 	Body int
 	Head int
 
+	// Class, Race, Attributes and Skills are what combat reads. See balance.go.
+	Class      Class
+	Race       Race
+	Attributes Attributes
+	Skills     Skills
+
+	// Dead means eliminated. Argentum revives you; a battle royale does not,
+	// so this is terminal for the match.
+	Dead bool
+
+	lastAttackTick uint64
+
 	// Vitals are this player's own numbers, sent back only to them.
 	Vitals protocol.Vitals
+
+	// Inventory and Spells are also private to this player.
+	Inventory []protocol.InventorySlot
+	Spells    []int
 
 	conn transport.Conn
 

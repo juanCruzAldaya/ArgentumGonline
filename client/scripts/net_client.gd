@@ -9,6 +9,8 @@ signal server_connected
 signal server_disconnected
 signal welcomed(welcome: Dictionary)
 signal snapshot_received(snapshot: Dictionary)
+signal loadout_received(loadout: Dictionary)
+signal combat_received(event: Dictionary)
 
 var _socket := WebSocketPeer.new()
 var _last_state := WebSocketPeer.STATE_CLOSED
@@ -24,6 +26,18 @@ func connect_to_server(url: String, player_name: String) -> void:
 
 func send_move(dir: int) -> void:
 	_send("move", {"dir": dir})
+
+
+## Attacking carries no target: Argentum melee hits whatever stands on the tile
+## you face, and the server works that out from your own heading.
+func send_attack() -> void:
+	_send("attack", {})
+
+
+## Casting is not resolved server-side yet; the command is sent so the flow is
+## real end to end, and the server currently ignores what it does not know.
+func send_cast(spell_id: int, target_id: int) -> void:
+	_send("cast", {"spell": spell_id, "target": target_id})
 
 
 func send_ping() -> void:
@@ -66,5 +80,9 @@ func _handle_frame(text: String) -> void:
 			welcomed.emit(data)
 		"snapshot":
 			snapshot_received.emit(data)
+		"loadout":
+			loadout_received.emit(data)
+		"combat":
+			combat_received.emit(data)
 		"error":
 			push_error("server rejected us: %s" % data.get("reason", "unknown"))
