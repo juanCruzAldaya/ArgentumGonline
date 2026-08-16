@@ -77,7 +77,21 @@ func runBot(ctx context.Context, url, name string, interval time.Duration, log *
 	defer conn.Close()
 
 	codec := protocol.JSONCodec{}
-	join, err := codec.Encode(protocol.TypeJoin, protocol.Join{Name: name})
+	rng := rand.New(rand.NewSource(time.Now().UnixNano() + int64(len(name))))
+
+	// Bots pick their own class and race before joining, the same as a real
+	// player's character picker would. The server has no "randomize this for
+	// me" path — a Join always names a real selection — so an all-Guerrero,
+	// all-Humano bot swarm would be this loop's fault, not the server's.
+	// classCount/raceCount must stay in step with world.allClasses/allRaces;
+	// cmd/bot deliberately doesn't import internal/world just to read two
+	// slice lengths.
+	const classCount, raceCount = 12, 5
+	join, err := codec.Encode(protocol.TypeJoin, protocol.Join{
+		Name:  name,
+		Class: rng.Intn(classCount),
+		Race:  rng.Intn(raceCount),
+	})
 	if err != nil {
 		return err
 	}
@@ -103,7 +117,6 @@ func runBot(ctx context.Context, url, name string, interval time.Duration, log *
 		}
 	}()
 
-	rng := rand.New(rand.NewSource(time.Now().UnixNano() + int64(len(name))))
 	dir := protocol.Heading(rng.Intn(4))
 
 	ticker := time.NewTicker(interval)

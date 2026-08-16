@@ -12,14 +12,22 @@ signal snapshot_received(snapshot: Dictionary)
 signal loadout_received(loadout: Dictionary)
 signal combat_received(event: Dictionary)
 signal spell_received(event: Dictionary)
+signal use_result_received(result: Dictionary)
 
 var _socket := WebSocketPeer.new()
 var _last_state := WebSocketPeer.STATE_CLOSED
 var _player_name := ""
+var _class_id := 0
+var _race_id := 0
 
 
-func connect_to_server(url: String, player_name: String) -> void:
+## class_id/race_id come straight from the character picker's own indices —
+## they line up with the server's Class/Race enums (see ao_data.gd's
+## CLASS_NAMES/RACE_NAMES) because both sides list them in the same order.
+func connect_to_server(url: String, player_name: String, class_id: int, race_id: int) -> void:
 	_player_name = player_name
+	_class_id = class_id
+	_race_id = race_id
 	var err := _socket.connect_to_url(url)
 	if err != OK:
 		push_error("connect_to_url(%s) failed: %d" % [url, err])
@@ -27,6 +35,12 @@ func connect_to_server(url: String, player_name: String) -> void:
 
 func send_move(dir: int) -> void:
 	_send("move", {"dir": dir})
+
+
+## Argentum overloads one "use" action for both equip-toggling and consuming —
+## the item's own type decides which happens server-side, never the client.
+func send_use(slot: int) -> void:
+	_send("use", {"slot": slot})
 
 
 ## Attacking carries no target: Argentum melee hits whatever stands on the tile
@@ -60,7 +74,7 @@ func _process(_delta: float) -> void:
 		match state:
 			WebSocketPeer.STATE_OPEN:
 				# The server refuses anything before a join, so it goes first.
-				_send("join", {"name": _player_name})
+				_send("join", {"name": _player_name, "class": _class_id, "race": _race_id})
 				server_connected.emit()
 			WebSocketPeer.STATE_CLOSED:
 				server_disconnected.emit()
@@ -87,5 +101,7 @@ func _handle_frame(text: String) -> void:
 			combat_received.emit(data)
 		"spell":
 			spell_received.emit(data)
+		"useResult":
+			use_result_received.emit(data)
 		"error":
 			push_error("server rejected us: %s" % data.get("reason", "unknown"))

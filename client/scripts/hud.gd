@@ -31,6 +31,12 @@ const SLOT_SIZE := 36
 ## know what a target is; main.gd takes it from here into targeting mode.
 signal cast_requested(spell_id: int)
 
+## Raised when the player clicks a bag or equipment slot. server_slot is the
+## server's own InventorySlot.Slot number for whatever is displayed there —
+## not the visual grid position, which does not necessarily match once
+## equipped items and a partially-filled bag are laid out.
+signal item_used(server_slot: int)
+
 ## The side panel buttons Argentum shows. None are wired yet; they are here so
 ## the panel can be judged at its real density.
 const PANEL_BUTTONS := [
@@ -87,18 +93,21 @@ func _fill_inventory(slots: Array) -> void:
 		_clear_slot(child)
 
 	for entry in slots:
-		var index := int(entry.get("s", -1))
+		var server_slot := int(entry.get("s", -1))
 		var item := _data.item(int(entry.get("i", 0)))
 		if item.is_empty():
 			continue
 
 		# Equipped things go in the row above the bag, the way Argentum splits
-		# what you are wearing from what you are merely carrying.
-		var parent: Node = $SidePanel/EquipRow if bool(entry.get("e", false)) else _inv_grid
-		var slot := _next_free_slot(parent) if bool(entry.get("e", false)) else _slot_at(index)
+		# what you are wearing from what you are merely carrying. The bag uses
+		# the server's own slot number as its grid position; the equip row
+		# does not have one-Panel-per-type, so it just fills left to right.
+		var equipped: bool = entry.get("e", false)
+		var parent: Node = $SidePanel/EquipRow if equipped else _inv_grid
+		var slot := _next_free_slot(parent) if equipped else _slot_at(server_slot)
 		if slot == null:
 			continue
-		_fill_slot(slot, item, int(entry.get("n", 1)))
+		_fill_slot(slot, item, int(entry.get("n", 1)), server_slot)
 
 
 func _slot_at(index: int) -> Panel:
@@ -117,9 +126,13 @@ func _next_free_slot(parent: Node) -> Panel:
 func _clear_slot(slot: Node) -> void:
 	for child in slot.get_children():
 		child.queue_free()
+	# -1 means "nothing here": a click on an empty slot has no server slot
+	# number to report, and _on_slot_gui_input relies on this to ignore it.
+	slot.set_meta(&"server_slot", -1)
 
 
-func _fill_slot(slot: Panel, item: Dictionary, amount: int) -> void:
+func _fill_slot(slot: Panel, item: Dictionary, amount: int, server_slot: int) -> void:
+	slot.set_meta(&"server_slot", server_slot)
 	var rect: Rect2 = _sprites.grh_rect(int(item.get("grh", 0)), 0.0)
 	if rect.size.x > 0.0:
 		var atlas := AtlasTexture.new()
@@ -209,6 +222,7 @@ func _build_tabs() -> void:
 	_tab_inv.text = "INVENTARIO"
 	_tab_spells.text = "HECHIZOS"
 	for tab: Button in [_tab_inv, _tab_spells]:
+		tab.focus_mode = Control.FOCUS_NONE
 		tab.add_theme_font_size_override("font_size", 12)
 		tab.add_theme_color_override("font_color", COLOR_TEXT_DIM)
 		tab.add_theme_color_override("font_hover_color", COLOR_TEXT)
@@ -253,15 +267,37 @@ func _build_inventory() -> void:
 func _make_slot(side: int, edge: Color) -> Panel:
 	var slot := Panel.new()
 	slot.custom_minimum_size = Vector2(side, side)
-	slot.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# STOP (not the default IGNORE) so the slot receives clicks; FOCUS_NONE so
+	# it never grabs keyboard focus the way the spell list used to — see the
+	# note on _spell_list.focus_mode in _build_spells.
+	slot.mouse_filter = Control.MOUSE_FILTER_STOP
+	slot.focus_mode = Control.FOCUS_NONE
+	slot.set_meta(&"server_slot", -1)
 	slot.add_theme_stylebox_override("panel", _flat(COLOR_SLOT, edge))
+	slot.gui_input.connect(_on_slot_gui_input.bind(slot))
 	return slot
+
+
+## A left click uses whatever the server last told us is in this slot — empty
+## slots report -1 via the meta set in _clear_slot and are simply ignored.
+func _on_slot_gui_input(event: InputEvent, slot: Panel) -> void:
+	if not (event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT):
+		return
+	var server_slot: int = slot.get_meta(&"server_slot", -1)
+	if server_slot >= 0:
+		item_used.emit(server_slot)
 
 
 ## Spells follow Argentum's interaction: pick one from the list, press LANZAR,
 ## then click a target in the world. The list is a real selection rather than a
 ## row of labels, because selecting is half of how casting works.
 func _build_spells() -> void:
+	# Godot gives a focused ItemList its own up/down keyboard navigation,
+	# which is exactly the arrow keys the game uses for movement — click a
+	# spell to select it and the list would swallow WASD/arrows from then on.
+	# The panel is mouse-driven by design (matching Argentum's own UI), so it
+	# never needs to hold keyboard focus at all.
+	_spell_list.focus_mode = Control.FOCUS_NONE
 	_spell_list.add_theme_font_size_override("font_size", 12)
 	_spell_list.add_theme_color_override("font_color", COLOR_TEXT)
 	_spell_list.add_theme_color_override("font_selected_color", Color.BLACK)
@@ -335,6 +371,7 @@ func _on_info_pressed() -> void:
 func _make_panel_button(caption: String) -> Button:
 	var button := Button.new()
 	button.text = caption
+	button.focus_mode = Control.FOCUS_NONE
 	button.custom_minimum_size = Vector2(118, 26)
 	button.add_theme_font_size_override("font_size", 11)
 	button.add_theme_color_override("font_color", COLOR_TEXT)
@@ -388,6 +425,7 @@ func _build_buttons() -> void:
 	for caption in PANEL_BUTTONS:
 		var button := Button.new()
 		button.text = caption
+		button.focus_mode = Control.FOCUS_NONE
 		button.custom_minimum_size = Vector2(118, 26)
 		button.disabled = true
 		button.add_theme_font_size_override("font_size", 11)

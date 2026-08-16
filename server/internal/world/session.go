@@ -32,7 +32,7 @@ func (w *World) HandleConn(conn transport.Conn) {
 		return
 	}
 
-	id, err := w.Join(sanitizeName(join.Name), conn)
+	id, err := w.Join(sanitizeName(join.Name), Class(join.Class), Race(join.Race), conn)
 	if err != nil {
 		return
 	}

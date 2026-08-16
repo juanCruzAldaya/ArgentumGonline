@@ -51,11 +51,29 @@ func _ready() -> void:
 	_net.loadout_received.connect(_hud.set_loadout)
 	_net.combat_received.connect(_on_combat)
 	_net.spell_received.connect(_on_spell)
+	_net.use_result_received.connect(_on_use_result)
 	_hud.cast_requested.connect(_on_cast_requested)
+	_hud.item_used.connect(_net.send_use)
+
+	# The world and the HUD have nothing to show until a character exists, so
+	# they stay hidden — and the server stays untouched — until the picker
+	# confirms a class and race.
+	_view.visible = false
+	_hud.visible = false
+
+	var picker := preload("res://scripts/character_picker.gd").new()
+	$UI.add_child(picker)
+	picker.confirmed.connect(_on_character_confirmed.bind(picker))
+
+
+func _on_character_confirmed(class_id: int, race_id: int, picker: Control) -> void:
+	picker.queue_free()
+	_view.visible = true
+	_hud.visible = true
 
 	_hud.set_character(_player_name)
 	_hud.log_line("conectando a %s ..." % _url, _hud.COLOR_TEXT_DIM)
-	_net.connect_to_server(_url, _player_name)
+	_net.connect_to_server(_url, _player_name, class_id, race_id)
 
 
 func _process(delta: float) -> void:
@@ -206,6 +224,59 @@ func _log_attribute(mine: bool, caster: String, victim: String, stat: String, ve
 		_hud.log_line("Le has %s la %s a %s." % [verb, stat, victim], color)
 	else:
 		_hud.log_line("%s te ha %s la %s." % [caster, verb, stat], color)
+
+
+## UseResult narration mirrors the source's own phrasing for the shape each
+## outcome takes ("Has bebido...", "Te has equipado...") rather than the
+## attacker/victim framing combat and spells use — using an item only ever
+## affects yourself.
+func _on_use_result(result: Dictionary) -> void:
+	var failed := str(result.get("failed", ""))
+	if failed != "":
+		_hud.log_line(failed, _hud.COLOR_TEXT_DIM)
+		return
+
+	var item_name := str(result.get("item", "el objeto"))
+
+	if bool(result.get("equipped", false)):
+		_hud.log_line("Te has equipado: %s." % item_name, _hud.COLOR_ACCENT)
+		return
+	if bool(result.get("unequipped", false)):
+		_hud.log_line("Te has quitado: %s." % item_name, _hud.COLOR_TEXT_DIM)
+		return
+
+	if bool(result.get("died", false)):
+		_hud.log_line("Sientes un gran mareo y pierdes el conocimiento.", _hud.COLOR_EXP)
+		return
+
+	var heal := int(result.get("healHp", 0))
+	if heal > 0:
+		_hud.log_line("Has bebido %s. Recuperaste %d puntos de vida." % [item_name, heal], _hud.COLOR_HP)
+	var mana := int(result.get("restoredMana", 0))
+	if mana > 0:
+		_hud.log_line("Has bebido %s. Recuperaste %d puntos de maná." % [item_name, mana], _hud.COLOR_MANA)
+	var hunger := int(result.get("restoredHunger", 0))
+	if hunger > 0:
+		_hud.log_line("Has comido %s. Recuperaste %d de hambre." % [item_name, hunger], _hud.COLOR_HUNGER)
+	var thirst := int(result.get("restoredThirst", 0))
+	if thirst > 0:
+		_hud.log_line("Has bebido %s. Recuperaste %d de sed." % [item_name, thirst], _hud.COLOR_THIRST)
+
+	var ag := int(result.get("agDelta", 0))
+	if ag != 0:
+		_hud.log_line(
+			"Has bebido %s. Tu agilidad ha %s." % [item_name, "aumentado" if ag > 0 else "disminuido"],
+			_hud.COLOR_HP if ag > 0 else _hud.COLOR_EXP
+		)
+	var fu := int(result.get("fuDelta", 0))
+	if fu != 0:
+		_hud.log_line(
+			"Has bebido %s. Tu fuerza ha %s." % [item_name, "aumentado" if fu > 0 else "disminuido"],
+			_hud.COLOR_HP if fu > 0 else _hud.COLOR_EXP
+		)
+
+	if bool(result.get("curedPoison", false)):
+		_hud.log_line("No estás envenenado.", _hud.COLOR_TEXT_DIM)
 
 
 func _on_cast_requested(spell_id: int) -> void:

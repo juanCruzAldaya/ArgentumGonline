@@ -21,16 +21,18 @@ const (
 	TypeMove   MsgType = "move"
 	TypeAttack MsgType = "attack"
 	TypeCast   MsgType = "cast"
+	TypeUse    MsgType = "use"
 	TypePing   MsgType = "ping"
 
 	// Server -> client.
-	TypeWelcome  MsgType = "welcome"
-	TypeSnapshot MsgType = "snapshot"
-	TypeLoadout  MsgType = "loadout"
-	TypeCombat   MsgType = "combat"
-	TypeSpell    MsgType = "spell"
-	TypePong     MsgType = "pong"
-	TypeError    MsgType = "error"
+	TypeWelcome   MsgType = "welcome"
+	TypeSnapshot  MsgType = "snapshot"
+	TypeLoadout   MsgType = "loadout"
+	TypeCombat    MsgType = "combat"
+	TypeSpell     MsgType = "spell"
+	TypeUseResult MsgType = "useResult"
+	TypePong      MsgType = "pong"
+	TypeError     MsgType = "error"
 )
 
 // Heading is a facing direction on the tile grid. Classic Argentum Online only
@@ -71,8 +73,15 @@ type Envelope struct {
 }
 
 // Join is the handshake frame; it must be the first thing a client sends.
+//
+// Class and Race are chosen by the player before connecting — see the client's
+// character picker — and validated server-side against the real class/race
+// count, so a modified client sending an out-of-range id just gets clamped
+// rather than crashing anything.
 type Join struct {
-	Name string `json:"name"`
+	Name  string `json:"name"`
+	Class int    `json:"class"`
+	Race  int    `json:"race"`
 }
 
 // Move asks to step one tile in the given direction. The server rate limits it,
@@ -257,6 +266,37 @@ type CombatEvent struct {
 	// Mine tells the client whether it was the one swinging, so it can word
 	// the line without having to compare ids itself.
 	Mine bool `json:"mine"`
+}
+
+// Use asks to equip/unequip or consume whatever sits in one bag slot. Argentum
+// overloads a single "use item" click this way — the branch is decided by the
+// item's own type, not by the client.
+type Use struct {
+	Slot int `json:"slot"`
+}
+
+// UseResult narrates what a Use actually did. Exactly one of the outcome
+// fields is meaningful per call: equipment toggles Equipped/Unequipped,
+// consumables set the rest.
+type UseResult struct {
+	ItemName string `json:"item"`
+
+	Equipped   bool `json:"equipped,omitempty"`
+	Unequipped bool `json:"unequipped,omitempty"`
+
+	Consumed       bool `json:"consumed,omitempty"`
+	HealedHP       int  `json:"healHp,omitempty"`
+	RestoredMana   int  `json:"restoredMana,omitempty"`
+	RestoredHunger int  `json:"restoredHunger,omitempty"`
+	RestoredThirst int  `json:"restoredThirst,omitempty"`
+	AgilityDelta   int  `json:"agDelta,omitempty"`
+	StrengthDelta  int  `json:"fuDelta,omitempty"`
+	CuredPoison    bool `json:"curedPoison,omitempty"`
+	// Died is the Poción Negra joke item: a coin-flip's worth of "why would
+	// anyone drink this" that classic AO players did anyway.
+	Died bool `json:"died,omitempty"`
+
+	Failed string `json:"failed,omitempty"`
 }
 
 // Error reports a protocol-level problem before the connection is dropped.

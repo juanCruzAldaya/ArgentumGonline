@@ -52,6 +52,7 @@ type Player struct {
 
 	lastAttackTick uint64
 	lastCastTick   uint64
+	lastUseTick    uint64
 
 	// Vitals are this player's own numbers, sent back only to them.
 	Vitals protocol.Vitals

@@ -231,9 +231,10 @@ func TestSnapshotCarriesAliveCountAndOwnVitalsOnly(t *testing.T) {
 	if snap.Self == nil {
 		t.Fatal("snapshot carried no vitals for the local player")
 	}
-	// Max health comes from the class's MODVIDA column, so it is checked
-	// against that rather than against a fixed number.
-	wantMax := int(classModifiers[me.Class].Vida * 10)
+	// Max health comes from the class's MODVIDA column times maxLevel — every
+	// match starts characters at the level cap — so it is checked against
+	// that formula rather than against a fixed number.
+	wantMax := int(classModifiers[me.Class].Vida * maxLevel)
 	if snap.Self.MaxHP != wantMax {
 		t.Errorf("maxHp = %d, want %d for %s", snap.Self.MaxHP, wantMax, me.Class)
 	}

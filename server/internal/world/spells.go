@@ -104,6 +104,11 @@ func (w *World) cast(caster *Player, spellID int, targetID EntityID) {
 		w.spellFailed(caster, "No conocés ese hechizo.")
 		return
 	}
+	// PuedeLanzar's actual gate: not enough Magia skill for this spell yet.
+	if caster.Skills.Magia < spell.MinSkill {
+		w.spellFailed(caster, "No tenés suficientes puntos de magia para lanzar este hechizo.")
+		return
+	}
 	if spell.Target != targetUser && spell.Target != targetBoth {
 		w.spellFailed(caster, "Ese hechizo no se lanza sobre personas.")
 		return

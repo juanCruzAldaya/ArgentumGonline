@@ -100,12 +100,18 @@ var raceModifiers = map[Race]Attributes{
 	Gnomo:  {Fuerza: -2, Agilidad: 3, Inteligencia: 4, Carisma: 1, Constitucion: 0},
 }
 
-// Skills are the handful of Argentum skills combat actually reads.
+// Skills are the handful of Argentum skills combat and casting actually read.
 type Skills struct {
 	Armas     int
 	Wrestling int
 	Tacticas  int
 	Defensa   int
+	// Magia gates casting: PuedeLanzar in the source refuses a spell whose
+	// MinSkill exceeds it. It's a separate skill from Armas/Wrestling on
+	// purpose — a fighter build and a caster build cost different points in
+	// classic AO, even though this port skips the grind that would normally
+	// separate them.
+	Magia int
 }
 
 var allClasses = []Class{
@@ -115,10 +121,21 @@ var allClasses = []Class{
 
 var allRaces = []Race{Humano, Elfo, Drow, Enano, Gnomo}
 
-// baseAttribute is what every character starts from before its race adjusts it.
-// Argentum rolls dice here; a battle royale wants everyone starting even, so
-// only the race modifiers create the spread.
-const baseAttribute = 18
+// maxLevel is where every character spawns.
+//
+// This project doesn't grind: nobody has a level 1 you'd ever see. 45 is the
+// commonly cited cap for classic Argentum/Alkon, used here as a reasonable
+// target for the level-scaling terms in combat and spells rather than as a
+// number pulled from a grepped constant — Declares.bas loads STAT_MAXELV from
+// server config rather than hardcoding it, so there's no single "the" value.
+const maxLevel = 45
+
+// baseAttribute is what every character starts from before its race adjusts
+// it. Argentum rolls dice across a match's worth of characters; here, with
+// everyone spawning at the level cap and nobody grinding, only the race
+// modifiers create the spread between characters. 30 approximates a
+// maxed-out roll under Argentum's usual attribute range (roughly 6-38).
+const baseAttribute = 30
 
 func rolledAttributes(race Race) Attributes {
 	mod := raceModifiers[race]
@@ -131,15 +148,19 @@ func rolledAttributes(race Race) Attributes {
 	}
 }
 
-// startingSkills gives everyone a competent-but-not-expert baseline. Argentum
-// earns these over months of play, which a fifteen minute match does not have.
-var startingSkills = Skills{Armas: 50, Wrestling: 30, Tacticas: 50, Defensa: 40}
+// startingSkills gives everyone the maximum in every skill combat and casting
+// read. Argentum's own scale tops out at 100, and the 31/61/91 breakpoints in
+// poderAtaque assume a character can actually reach the top band.
+var startingSkills = Skills{Armas: 100, Wrestling: 100, Tacticas: 100, Defensa: 100, Magia: 100}
 
-// vitalsFor scales starting health by the class's MODVIDA column, which in
-// Argentum is health per level: a warrior's 10 against a mage's 7.5.
+// vitalsFor scales health by the class's MODVIDA column times maxLevel —
+// Argentum's Vida is health-per-level, so a warrior's 10/level against a
+// mage's 7.5/level compounds into a real gap at the cap: 450 HP vs 337.
 func vitalsFor(class Class) protocol.Vitals {
 	vitals := startingVitals
-	vitals.MaxHP = int(classModifiers[class].Vida * 10)
+	vitals.Level = maxLevel
+	vitals.MaxExp = 0 // there is no next level to progress toward
+	vitals.MaxHP = int(classModifiers[class].Vida * maxLevel)
 	vitals.HP = vitals.MaxHP
 	return vitals
 }

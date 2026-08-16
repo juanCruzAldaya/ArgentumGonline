@@ -42,6 +42,16 @@ type Item struct {
 	// Restores is how much food or drink an item gives back.
 	Restores int `json:"restores,omitempty"`
 	Value    int `json:"value,omitempty"`
+
+	// Potion fields — see ePocionType in the source: 1 Agilidad, 2 Fuerza,
+	// 3 Salud, 4 Mana, 5 CuraVeneno, 6 Negra (a joke item that kills you).
+	// MinModificador/MaxModificador is the roll a Salud/Agilidad/Fuerza potion
+	// uses; Mana potions ignore both and use a formula instead (ported into
+	// the server's useItem, not here — this converter just carries the data).
+	PotionType     int `json:"potionType,omitempty"`
+	MinModificador int `json:"minMod,omitempty"`
+	MaxModificador int `json:"maxMod,omitempty"`
+	DuracionEfecto int `json:"potionDuration,omitempty"`
 }
 
 // Spell is one entry of Hechizos.dat.
@@ -143,20 +153,30 @@ func loadItems(path string) (map[int]Item, error) {
 		}
 
 		item := Item{
-			ID:     id,
-			Name:   section["NAME"],
-			Grh:    sectionInt(section, "GrhIndex"),
-			Type:   objType,
-			MinHit: sectionInt(section, "MinHit"),
-			MaxHit: sectionInt(section, "MaxHit"),
-			MinDef: sectionInt(section, "MinDef"),
-			MaxDef: sectionInt(section, "MaxDef"),
-			Value:  sectionInt(section, "Valor"),
+			ID:             id,
+			Name:           section["NAME"],
+			Grh:            sectionInt(section, "GrhIndex"),
+			Type:           objType,
+			MinHit:         sectionInt(section, "MinHit"),
+			MaxHit:         sectionInt(section, "MaxHit"),
+			MinDef:         sectionInt(section, "MinDef"),
+			MaxDef:         sectionInt(section, "MaxDef"),
+			Value:          sectionInt(section, "Valor"),
+			PotionType:     sectionInt(section, "TipoPocion"),
+			MinModificador: sectionInt(section, "MinModificador"),
+			MaxModificador: sectionInt(section, "MaxModificador"),
+			DuracionEfecto: sectionInt(section, "DuracionEfecto"),
 		}
-		// Food and drink use different keys for the same idea.
-		if v := sectionInt(section, "MinHAM"); v > 0 {
+		// Food and drink restore different vitals through different .dat keys
+		// that both end up meaning "how much this refills." Drinks are the one
+		// surprise: the key on disk is MinAgu, not MinSed — FileIO.bas loads
+		// GetValue("OBJ..","MinAgu") straight into the in-memory field the rest
+		// of the source calls MinSed, so the name that looks right (MinSed) is
+		// actually never populated. Read as MinSed originally here, this always
+		// silently returned zero and every drink was inert.
+		if v := sectionInt(section, "MinHam"); v > 0 {
 			item.Restores = v
-		} else if v := sectionInt(section, "MinSed"); v > 0 {
+		} else if v := sectionInt(section, "MinAgu"); v > 0 {
 			item.Restores = v
 		}
 		if item.Name == "" || item.Grh == 0 {

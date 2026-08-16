@@ -85,9 +85,11 @@ var ErrWorldClosed = errors.New("world: closed")
 type tileKey struct{ X, Y int }
 
 type joinReq struct {
-	name string
-	conn transport.Conn
-	resp chan EntityID
+	name  string
+	class Class
+	race  Race
+	conn  transport.Conn
+	resp  chan EntityID
 }
 
 type command struct {
@@ -111,6 +113,10 @@ type World struct {
 	// items and spells are the converted obj.dat and Hechizos.dat.
 	items  map[int]Item
 	spells map[int]Spell
+	// loadout is derived from items by SetItems: the best weapon, shield,
+	// armour, helmet and ring plus every potion type, food and drink. Zero
+	// value (no items loaded) falls back to startingInventory below.
+	loadout bestLoadout
 
 	tickRate int
 	tick     uint64
@@ -182,10 +188,15 @@ func (w *World) Run(ctx context.Context) {
 }
 
 // Join registers a client and returns its entity ID.
-func (w *World) Join(name string, conn transport.Conn) (EntityID, error) {
+// Join registers a client. class/race are the player's own choice from the
+// character picker — both real players and the bot client always send a real
+// selection, so 0 (Guerrero/Humano) is just as legitimate a pick as any other
+// and is not treated as "unset." Only a genuinely out-of-range value — from a
+// modified client, say — falls back to a random pick in addPlayer.
+func (w *World) Join(name string, class Class, race Race, conn transport.Conn) (EntityID, error) {
 	resp := make(chan EntityID, 1)
 	select {
-	case w.joinCh <- joinReq{name: name, conn: conn, resp: resp}:
+	case w.joinCh <- joinReq{name: name, class: class, race: race, conn: conn, resp: resp}:
 	case <-w.done:
 		return 0, ErrWorldClosed
 	}
@@ -248,6 +259,12 @@ func (w *World) apply(cmd command) {
 			return
 		}
 		w.cast(p, c.SpellID, EntityID(c.Target))
+	case protocol.TypeUse:
+		var u protocol.Use
+		if err := w.codec.DecodePayload(cmd.payload, &u); err != nil {
+			return
+		}
+		w.useItem(p, u.Slot)
 	default:
 		w.log.Debug("ignoring unknown command", "id", cmd.id, "type", cmd.typ)
 	}
@@ -349,11 +366,24 @@ func (w *World) addPlayer(req joinReq) EntityID {
 	id := EntityID(w.nextID)
 
 	x, y := w.freeSpawn()
-	// Class and race are rolled for now. Letting players choose is a design
-	// question a battle royale has to answer — pick at the lobby, or find your
-	// class on the ground — so the server assigns until that is decided.
-	class := allClasses[w.rng.Intn(len(allClasses))]
-	race := allRaces[w.rng.Intn(len(allRaces))]
+	// The client picks class and race before ever connecting; out-of-range
+	// ids (a stale client, a bot that didn't bother) fall back to random
+	// rather than being rejected.
+	class := req.class
+	if class < 0 || int(class) >= len(allClasses) {
+		class = allClasses[w.rng.Intn(len(allClasses))]
+	}
+	race := req.race
+	if race < 0 || int(race) >= len(allRaces) {
+		race = allRaces[w.rng.Intn(len(allRaces))]
+	}
+
+	inventory := w.loadout.inventory()
+	if len(inventory) == 0 {
+		// No item table loaded (e.g. running without -items-file): fall back
+		// to the fixed newbie kit rather than spawning with an empty bag.
+		inventory = append([]protocol.InventorySlot(nil), startingInventory...)
+	}
 
 	p := &Player{
 		ID:         id,
@@ -367,7 +397,7 @@ func (w *World) addPlayer(req joinReq) EntityID {
 		Attributes: rolledAttributes(race),
 		Skills:     startingSkills,
 		Vitals:     vitalsFor(class),
-		Inventory:  append([]protocol.InventorySlot(nil), startingInventory...),
+		Inventory:  inventory,
 		Spells:     append([]int(nil), startingSpells...),
 		conn:       req.conn,
 	}

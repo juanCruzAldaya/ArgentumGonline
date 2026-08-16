@@ -19,6 +19,17 @@ const TYPE_SHIELD := 16
 const TYPE_HELMET := 17
 const TYPE_RING := 18
 
+## Class and race names, in the exact order the server's Class/Race enums
+## define them (see server/internal/world/balance.go's allClasses/allRaces).
+## The character picker sends the index, not the name, so this order is the
+## actual contract between client and server — reordering either side without
+## the other silently reassigns everyone's class.
+const CLASS_NAMES := [
+	"Guerrero", "Cazador", "Paladín", "Bandido", "Asesino", "Pirata",
+	"Ladrón", "Clérigo", "Bardo", "Mago", "Druida", "Trabajador",
+]
+const RACE_NAMES := ["Humano", "Elfo", "Elfo Oscuro", "Enano", "Gnomo"]
+
 var _items: Dictionary = {}
 var _spells: Dictionary = {}
 var _loaded := false
