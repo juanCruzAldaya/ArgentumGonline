@@ -21,11 +21,22 @@ var _connected := false
 ## Spell awaiting a target. Argentum casts in two steps — pick the spell, then
 ## pick who it lands on — and the second click is what this holds open.
 var _targeting_spell := 0
-var _warned_casting := false
 ## Entities seen in the previous snapshot, so the console can report who walked
 ## into and out of view. Diffing here keeps the server free of an event stream
 ## it does not need yet.
 var _seen: Dictionary = {}
+
+## Own status, mirrored from the server every snapshot. The server is what
+## actually blocks a paralyzed move or an immobilized swing; these exist so the
+## client can say why locally instead of silently swallowing the input, and so
+## held keys don't spam the server with commands it is only going to drop.
+var _paralyzed := false
+var _immobilized := false
+var _invisible := false
+## Debounces the "you can't do that" line the same way Argentum's own
+## UltimoMensaje flag does: say it once when the key is first denied, not once
+## per _process frame for as long as it's held.
+var _told_blocked := false
 
 
 func _ready() -> void:
@@ -39,6 +50,7 @@ func _ready() -> void:
 	_net.snapshot_received.connect(_on_snapshot)
 	_net.loadout_received.connect(_hud.set_loadout)
 	_net.combat_received.connect(_on_combat)
+	_net.spell_received.connect(_on_spell)
 	_hud.cast_requested.connect(_on_cast_requested)
 
 	_hud.set_character(_player_name)
@@ -51,17 +63,34 @@ func _process(delta: float) -> void:
 	if not _connected or _time_since_input < INPUT_INTERVAL:
 		return
 
-	# Ctrl swings, as in Argentum. The server enforces the real cadence, so
-	# holding it down simply gets the extra requests ignored.
+	# Ctrl swings, as in Argentum. Immobilize roots the feet, not the arms —
+	# only paralysis stops a swing, matching the server's canAct.
 	if Input.is_key_pressed(KEY_CTRL):
 		_time_since_input = 0.0
+		if _paralyzed:
+			_tell_blocked("No podés atacar, estás paralizado.")
+			return
 		_net.send_attack()
 		return
 
 	var dir := _pressed_direction()
 	if dir >= 0:
 		_time_since_input = 0.0
+		if _paralyzed or _immobilized:
+			_tell_blocked(
+				"No podés moverte, estás paralizado."
+				if _paralyzed
+				else "No podés moverte, estás inmovilizado."
+			)
+			return
 		_net.send_move(dir)
+
+
+func _tell_blocked(text: String) -> void:
+	if _told_blocked:
+		return
+	_told_blocked = true
+	_hud.log_line(text, _hud.COLOR_TEXT_DIM)
 
 
 ## Combat lines are worded the way Argentum words them, from the point of view
@@ -94,6 +123,89 @@ func _on_combat(event: Dictionary) -> void:
 			_hud.log_line("¡Has matado a %s!" % victim, _hud.COLOR_ACCENT)
 		else:
 			_hud.log_line("¡%s te ha matado!" % attacker, _hud.COLOR_EXP)
+
+
+func _on_spell(event: Dictionary) -> void:
+	var failed := str(event.get("failed", ""))
+	if failed != "":
+		_hud.log_line(failed, _hud.COLOR_TEXT_DIM)
+		return
+
+	var mine: bool = bool(event.get("mine", false))
+	var caster := str(event.get("cn", "alguien"))
+	var victim := str(event.get("vn", "alguien"))
+	var spell := str(event.get("sn", "un hechizo"))
+	var words := str(event.get("w", ""))
+
+	# The magic words are half of what a spell feels like in Argentum.
+	if words != "":
+		_hud.log_line("%s: ¡%s!" % [caster, words], _hud.COLOR_MANA)
+
+	var damage := int(event.get("dmg", 0))
+	var healed := int(event.get("heal", 0))
+	if damage > 0:
+		if mine:
+			_hud.log_line("Has lanzado %s sobre %s. Le quitaste %d puntos de vida." % [spell, victim, damage], _hud.COLOR_HP)
+		else:
+			_hud.log_line("%s te ha lanzado %s. Te quitó %d puntos de vida." % [caster, spell, damage], _hud.COLOR_EXP)
+	elif healed > 0:
+		if mine:
+			_hud.log_line("Has curado %d puntos de vida a %s." % [healed, victim], _hud.COLOR_HP)
+		else:
+			_hud.log_line("%s te ha curado %d puntos de vida." % [caster, healed], _hud.COLOR_HP)
+
+	if bool(event.get("killed", false)):
+		if mine:
+			_hud.log_line("¡Has matado a %s!" % victim, _hud.COLOR_ACCENT)
+		else:
+			_hud.log_line("¡%s te ha matado!" % caster, _hud.COLOR_EXP)
+
+	if bool(event.get("paralyzed", false)):
+		if mine:
+			_hud.log_line("Has paralizado a %s." % victim, _hud.COLOR_MANA)
+		else:
+			_hud.log_line("¡%s te ha paralizado!" % caster, _hud.COLOR_EXP)
+	if bool(event.get("immobilized", false)):
+		if mine:
+			_hud.log_line("Has inmovilizado a %s." % victim, _hud.COLOR_MANA)
+		else:
+			_hud.log_line("¡%s te ha inmovilizado!" % caster, _hud.COLOR_EXP)
+	if bool(event.get("removedParalysis", false)):
+		if mine:
+			_hud.log_line("Has devuelto la movilidad a %s." % victim, _hud.COLOR_HP)
+		else:
+			_hud.log_line("%s te ha devuelto la movilidad." % caster, _hud.COLOR_HP)
+	if bool(event.get("invisible", false)):
+		if not mine:
+			_hud.log_line("%s te ha vuelto invisible." % caster, _hud.COLOR_MANA)
+		elif caster == victim:
+			_hud.log_line("Te has vuelto invisible.", _hud.COLOR_ACCENT)
+		else:
+			_hud.log_line("Has vuelto invisible a %s." % victim, _hud.COLOR_HP)
+
+	var ag := int(event.get("agDelta", 0))
+	if ag > 0:
+		_log_attribute(mine, caster, victim, "agilidad", "aumentado", _hud.COLOR_HP)
+	elif ag < 0:
+		_log_attribute(mine, caster, victim, "agilidad", "reducido", _hud.COLOR_EXP)
+
+	var fu := int(event.get("fuDelta", 0))
+	if fu > 0:
+		_log_attribute(mine, caster, victim, "fuerza", "aumentado", _hud.COLOR_HP)
+	elif fu < 0:
+		_log_attribute(mine, caster, victim, "fuerza", "reducido", _hud.COLOR_EXP)
+
+
+## Buff/debuff narration shares the same "quién hizo qué a quién" shape four
+## times over (agility up, agility down, strength up, strength down), so it is
+## factored out rather than repeated.
+func _log_attribute(mine: bool, caster: String, victim: String, stat: String, verb: String, color: Color) -> void:
+	if mine and caster == victim:
+		_hud.log_line("Tu %s ha %s." % [stat, verb], color)
+	elif mine:
+		_hud.log_line("Le has %s la %s a %s." % [verb, stat, victim], color)
+	else:
+		_hud.log_line("%s te ha %s la %s." % [caster, verb, stat], color)
 
 
 func _on_cast_requested(spell_id: int) -> void:
@@ -129,16 +241,8 @@ func _unhandled_input(event: InputEvent) -> void:
 		_hud.log_line("No hay nadie ahí.", _hud.COLOR_TEXT_DIM)
 		return
 
-	var spell_name := str(_hud.spell_name(_targeting_spell))
 	_net.send_cast(_targeting_spell, target)
 	_stop_targeting()
-	_hud.log_line("Lanzás %s sobre %s." % [spell_name, _view.entity_name(target)], _hud.COLOR_ACCENT)
-
-	# The flow is wired end to end, but the server does not resolve spells yet.
-	# Saying so once beats letting it look like nothing happened.
-	if not _warned_casting:
-		_warned_casting = true
-		_hud.log_line("(el servidor todavía no resuelve hechizos)", _hud.COLOR_TEXT_DIM)
 
 
 ## Raw key checks rather than input actions, so the project needs no input map
@@ -232,8 +336,40 @@ func _on_snapshot(snapshot: Dictionary) -> void:
 	var vitals: Variant = snapshot.get("self")
 	if typeof(vitals) == TYPE_DICTIONARY:
 		_hud.set_vitals(vitals)
+		_update_own_status(vitals)
 
 	_report_arrivals_and_departures(entities)
+
+
+## Edge-detects status transitions from the raw booleans the server sends
+## every tick, so the console gets one line when a status starts or ends
+## rather than one every snapshot for as long as it lasts.
+func _update_own_status(vitals: Dictionary) -> void:
+	var paralyzed: bool = vitals.get("paralyzed", false)
+	var immobilized: bool = vitals.get("immobilized", false)
+	var invisible: bool = vitals.get("invisible", false)
+
+	if paralyzed and not _paralyzed:
+		_hud.log_line("¡Estás paralizado!", _hud.COLOR_EXP)
+	elif _paralyzed and not paralyzed:
+		_hud.log_line("Ya no estás paralizado.", _hud.COLOR_HP)
+		_told_blocked = false
+
+	if immobilized and not _immobilized:
+		_hud.log_line("¡Estás inmovilizado!", _hud.COLOR_EXP)
+	elif _immobilized and not immobilized:
+		_hud.log_line("Ya no estás inmovilizado.", _hud.COLOR_HP)
+		_told_blocked = false
+
+	if invisible and not _invisible:
+		_hud.log_line("Eres invisible.", _hud.COLOR_ACCENT)
+	elif _invisible and not invisible:
+		_hud.log_line("Ya no eres invisible.", _hud.COLOR_TEXT_DIM)
+
+	_paralyzed = paralyzed
+	_immobilized = immobilized
+	_invisible = invisible
+	_view.local_invisible = invisible
 
 
 func _report_arrivals_and_departures(entities: Array) -> void:

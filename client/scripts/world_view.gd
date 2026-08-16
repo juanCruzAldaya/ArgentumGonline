@@ -34,6 +34,9 @@ const COLOR_NAME_SHADOW := Color(0, 0, 0, 0.85)
 const COLOR_SHADOW := Color(0, 0, 0, 0.25)
 const COLOR_TARGET := Color(0.95, 0.35, 0.30)
 const COLOR_CORPSE := Color(0.45, 0.42, 0.45, 0.85)
+const COLOR_PARALYZED_RING := Color(0.55, 0.80, 0.95)
+const COLOR_IMMOBILIZED_RING := Color(0.55, 0.80, 0.40)
+const COLOR_INVISIBLE_SELF := Color(1, 1, 1, 0.4)
 
 ## Fallback marks, used only for entities whose appearance was not bundled.
 const COLOR_LOCAL := Color(0.45, 0.80, 0.45)
@@ -65,6 +68,12 @@ var _world_time := 0.0
 ## the game is waiting for a target and which one is about to be picked.
 var targeting := false
 var _hovered := 0
+
+## Set by main.gd from the server's own-vitals status each snapshot. Nobody
+## else's invisibility is drawn specially — an invisible stranger is simply
+## absent from the server's snapshot — but a player needs to see their own
+## state, the way Argentum shows you your own translucent sprite.
+var local_invisible := false
 
 
 func _ready() -> void:
@@ -132,6 +141,8 @@ func set_entities(entities: Array) -> void:
 		entity["head"] = int(e.get("hd", 0))
 		entity["name"] = str(e.get("n", ""))
 		entity["dead"] = bool(e.get("d", false))
+		entity["paralyzed"] = bool(e.get("pz", false))
+		entity["immobilized"] = bool(e.get("im", false))
 		_entities[id] = entity
 
 	for id: int in _entities.keys():
@@ -306,10 +317,25 @@ func _draw_entity(id: int, entity: Dictionary, origin: Vector2, font: Font) -> v
 	if targeting and id == _hovered:
 		draw_arc(foot + Vector2(0, -2), TILE_SIZE * 0.42, 0.0, TAU, 24, COLOR_TARGET, 2.0)
 
+	# Argentum shows a stunned enemy's state, which is tactically relevant: it
+	# tells you whether closing the distance is safe. Paralyzed takes priority
+	# since the two are mutually exclusive server-side anyway.
+	if entity.get("paralyzed", false):
+		draw_arc(foot + Vector2(0, -2), TILE_SIZE * 0.38, 0.0, TAU, 20, COLOR_PARALYZED_RING, 2.0)
+	elif entity.get("immobilized", false):
+		draw_arc(foot + Vector2(0, -2), TILE_SIZE * 0.38, 0.0, TAU, 20, COLOR_IMMOBILIZED_RING, 2.0)
+
 	# The dead are greyed out, so a battlefield reads at a glance: who is still
 	# standing, and who is already out.
 	var dead: bool = entity.get("dead", false)
-	var tint := COLOR_CORPSE if dead else Color.WHITE
+	var tint := Color.WHITE
+	if dead:
+		tint = COLOR_CORPSE
+	elif is_local and local_invisible:
+		# Nobody else's client ever draws this: an invisible stranger is simply
+		# absent from their snapshot. This is purely local feedback so a
+		# player can tell their own invisibility is active.
+		tint = COLOR_INVISIBLE_SELF
 
 	var drawn := false
 	if _sprites.is_loaded():

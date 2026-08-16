@@ -66,6 +66,16 @@ type Spell struct {
 	MinHP     int `json:"minHp,omitempty"`
 	MaxHP     int `json:"maxHp,omitempty"`
 
+	// AffectsAgility/AffectsStrength: 1 buffs, 2 debuffs. Argentum rolls
+	// Min..Max and caps a buff at double the target's own base attribute, a
+	// debuff at a floor of 1 — see MODATRIBUTOS handling ported into combat.go.
+	AffectsAgility  int `json:"affectsAg,omitempty"`
+	MinAgility      int `json:"minAg,omitempty"`
+	MaxAgility      int `json:"maxAg,omitempty"`
+	AffectsStrength int `json:"affectsFu,omitempty"`
+	MinStrength     int `json:"minFu,omitempty"`
+	MaxStrength     int `json:"maxFu,omitempty"`
+
 	Paralyzes        bool `json:"paralyzes,omitempty"`
 	Immobilizes      bool `json:"immobilizes,omitempty"`
 	RemovesParalysis bool `json:"removesParalysis,omitempty"`
@@ -187,6 +197,12 @@ func loadSpells(path string) (map[int]Spell, error) {
 			AffectsHP:        sectionInt(section, "SubeHP"),
 			MinHP:            sectionInt(section, "MinHP"),
 			MaxHP:            sectionInt(section, "MaxHP"),
+			AffectsAgility:   sectionInt(section, "SubeAG"),
+			MinAgility:       sectionInt(section, "MinAG"),
+			MaxAgility:       sectionInt(section, "MaxAG"),
+			AffectsStrength:  sectionInt(section, "SubeFU"),
+			MinStrength:      sectionInt(section, "MinFU"),
+			MaxStrength:      sectionInt(section, "MaxFU"),
 			Paralyzes:        sectionBool(section, "Paraliza"),
 			Immobilizes:      sectionBool(section, "Inmoviliza"),
 			RemovesParalysis: sectionBool(section, "RemoverParalisis"),

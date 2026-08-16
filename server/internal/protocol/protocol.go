@@ -20,6 +20,7 @@ const (
 	TypeJoin   MsgType = "join"
 	TypeMove   MsgType = "move"
 	TypeAttack MsgType = "attack"
+	TypeCast   MsgType = "cast"
 	TypePing   MsgType = "ping"
 
 	// Server -> client.
@@ -27,6 +28,7 @@ const (
 	TypeSnapshot MsgType = "snapshot"
 	TypeLoadout  MsgType = "loadout"
 	TypeCombat   MsgType = "combat"
+	TypeSpell    MsgType = "spell"
 	TypePong     MsgType = "pong"
 	TypeError    MsgType = "error"
 )
@@ -135,6 +137,12 @@ type Vitals struct {
 	MaxHunger int `json:"maxHun"`
 	Thirst    int `json:"thi"`
 	MaxThirst int `json:"maxThi"`
+
+	// Status effects, computed fresh each tick rather than tracked as
+	// standing state — see World.broadcast.
+	Paralyzed   bool `json:"paralyzed,omitempty"`
+	Immobilized bool `json:"immobilized,omitempty"`
+	Invisible   bool `json:"invisible,omitempty"`
 }
 
 // EntityState is one entity as seen from some player's viewport.
@@ -153,6 +161,12 @@ type EntityState struct {
 	// Dead marks an eliminated player, so the client can draw a body rather
 	// than a character standing around.
 	Dead bool `json:"d,omitempty"`
+	// Paralyzed/Immobilized are shown for whoever is visible — Argentum shows
+	// a stunned enemy's state, which matters tactically. Invisible has no
+	// equivalent field here: an invisible player is simply absent from
+	// everyone's Entities except their own.
+	Paralyzed   bool `json:"pz,omitempty"`
+	Immobilized bool `json:"im,omitempty"`
 }
 
 // Snapshot is the per-tick view sent to a single player: only the entities
@@ -190,6 +204,45 @@ type Loadout struct {
 // no target field on purpose: melee in Argentum hits the square in front of
 // you, so a client cannot name someone across the map as its victim.
 type Attack struct{}
+
+// Cast asks to throw a spell at somebody.
+//
+// Unlike Attack this does name a target, because Argentum spells reach across
+// the screen. The server re-checks that the spell is known, that the target is
+// close enough to see and that the caster can pay for it.
+type Cast struct {
+	SpellID int    `json:"spell"`
+	Target  uint32 `json:"target"`
+}
+
+// SpellEvent narrates one cast. Failed carries the reason when nothing happened,
+// so the player learns why instead of watching the mana vanish.
+type SpellEvent struct {
+	CasterID   uint32 `json:"c"`
+	CasterName string `json:"cn,omitempty"`
+	VictimID   uint32 `json:"v,omitempty"`
+	VictimName string `json:"vn,omitempty"`
+	SpellID    int    `json:"s,omitempty"`
+	SpellName  string `json:"sn,omitempty"`
+	Words      string `json:"w,omitempty"`
+	Damage     int    `json:"dmg,omitempty"`
+	Healed     int    `json:"heal,omitempty"`
+	Killed     bool   `json:"killed,omitempty"`
+
+	// Status outcomes. AgilityDelta/StrengthDelta are signed and never zero
+	// when present — a positive value is Celeridad/Fuerza, negative is
+	// Torpeza/Debilidad — so the client can tell buff from debuff without a
+	// separate flag.
+	Paralyzed        bool `json:"paralyzed,omitempty"`
+	Immobilized      bool `json:"immobilized,omitempty"`
+	RemovedParalysis bool `json:"removedParalysis,omitempty"`
+	MadeInvisible    bool `json:"invisible,omitempty"`
+	AgilityDelta     int  `json:"agDelta,omitempty"`
+	StrengthDelta    int  `json:"fuDelta,omitempty"`
+
+	Failed string `json:"failed,omitempty"`
+	Mine   bool   `json:"mine"`
+}
 
 // CombatEvent narrates one swing to both people involved.
 type CombatEvent struct {

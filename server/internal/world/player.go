@@ -34,7 +34,24 @@ type Player struct {
 	// so this is terminal for the match.
 	Dead bool
 
+	// Status effects. Each "Until" is an absolute world tick: the effect is
+	// active exactly while w.tick < the field. Zero means never applied, which
+	// is also naturally "not active" since tick 0 has already passed by the
+	// time anyone can be affected. See status.go.
+	ParalyzedUntil   uint64
+	ImmobilizedUntil uint64
+	InvisibleUntil   uint64
+
+	// AgilityDelta/StrengthDelta are temporary attribute modifiers from Fuerza,
+	// Celeridad and their debuff counterparts. A new cast overwrites rather
+	// than stacks, matching the source.
+	AgilityDelta  int
+	AgilityUntil  uint64
+	StrengthDelta int
+	StrengthUntil uint64
+
 	lastAttackTick uint64
+	lastCastTick   uint64
 
 	// Vitals are this player's own numbers, sent back only to them.
 	Vitals protocol.Vitals

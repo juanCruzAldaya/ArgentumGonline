@@ -11,6 +11,7 @@ signal welcomed(welcome: Dictionary)
 signal snapshot_received(snapshot: Dictionary)
 signal loadout_received(loadout: Dictionary)
 signal combat_received(event: Dictionary)
+signal spell_received(event: Dictionary)
 
 var _socket := WebSocketPeer.new()
 var _last_state := WebSocketPeer.STATE_CLOSED
@@ -34,8 +35,8 @@ func send_attack() -> void:
 	_send("attack", {})
 
 
-## Casting is not resolved server-side yet; the command is sent so the flow is
-## real end to end, and the server currently ignores what it does not know.
+## The target is named here because Argentum spells reach across the screen.
+## The server re-checks range, knowledge and cost regardless.
 func send_cast(spell_id: int, target_id: int) -> void:
 	_send("cast", {"spell": spell_id, "target": target_id})
 
@@ -84,5 +85,7 @@ func _handle_frame(text: String) -> void:
 			loadout_received.emit(data)
 		"combat":
 			combat_received.emit(data)
+		"spell":
+			spell_received.emit(data)
 		"error":
 			push_error("server rejected us: %s" % data.get("reason", "unknown"))

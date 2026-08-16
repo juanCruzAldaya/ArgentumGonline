@@ -41,7 +41,8 @@ type AttackResult struct {
 func (w *World) poderEvasion(p *Player) float64 {
 	mods := classModifiers[p.Class]
 	tacticas := float64(p.Skills.Tacticas)
-	base := (tacticas + tacticas/33*float64(p.Attributes.Agilidad)) * mods.Evasion
+	agility := float64(w.effectiveAttributes(p).Agilidad)
+	base := (tacticas + tacticas/33*agility) * mods.Evasion
 	return base + 2.5*math.Max(float64(p.Vitals.Level-12), 0)
 }
 
@@ -57,7 +58,7 @@ func (w *World) poderEvasionEscudo(p *Player) float64 {
 // on skill alone, an expert brings three times their agility to bear.
 func (w *World) poderAtaque(p *Player) float64 {
 	mods := classModifiers[p.Class]
-	agility := float64(p.Attributes.Agilidad)
+	agility := float64(w.effectiveAttributes(p).Agilidad)
 
 	var power float64
 	if _, armed := w.equippedWeapon(p); armed {
@@ -118,7 +119,8 @@ func (w *World) calcDamage(p *Player) int {
 	}
 
 	weaponRoll := float64(w.randRange(minHit, maxHit))
-	strengthBonus := float64(maxHit) / 5 * math.Max(float64(p.Attributes.Fuerza-15), 0)
+	strength := float64(w.effectiveAttributes(p).Fuerza)
+	strengthBonus := float64(maxHit) / 5 * math.Max(strength-15, 0)
 	bodyRoll := float64(w.randRange(fistMinDamage, fistMaxDamage))
 
 	damage := (3*weaponRoll + strengthBonus + bodyRoll) * modifier
@@ -170,7 +172,9 @@ func (w *World) resolveAttack(attacker, victim *Player) AttackResult {
 // the client sends: a modified client can ask to swing, but it cannot choose
 // who it reaches.
 func (w *World) attack(p *Player) {
-	if p.Dead {
+	// Immobilize roots the feet, not the arms: melee still works. Paralysis
+	// stops everything, which is what canAct checks.
+	if p.Dead || !p.canAct(w.tick) {
 		return
 	}
 	if w.tick-p.lastAttackTick < attackCooldownTicks {

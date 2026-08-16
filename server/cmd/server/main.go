@@ -19,15 +19,16 @@ import (
 
 func main() {
 	var (
-		addr      = flag.String("addr", ":8080", "address to listen on")
-		tickRate  = flag.Int("tick", 20, "simulation ticks per second")
-		mapW      = flag.Int("map-width", 100, "demo map width in tiles")
-		mapH      = flag.Int("map-height", 100, "demo map height in tiles")
-		seed      = flag.Int64("seed", 1, "demo map generation seed")
-		debug     = flag.Bool("debug", false, "enable debug logging")
-		webDir    = flag.String("web-dir", "", "directory holding the exported web client; empty disables it")
-		mapFile   = flag.String("map-file", "", "converted Argentum map to play on; empty uses the generated demo arena")
-		itemsFile = flag.String("items-file", "", "converted obj.dat; without it every weapon and armour is unknown")
+		addr       = flag.String("addr", ":8080", "address to listen on")
+		tickRate   = flag.Int("tick", 20, "simulation ticks per second")
+		mapW       = flag.Int("map-width", 100, "demo map width in tiles")
+		mapH       = flag.Int("map-height", 100, "demo map height in tiles")
+		seed       = flag.Int64("seed", 1, "demo map generation seed")
+		debug      = flag.Bool("debug", false, "enable debug logging")
+		webDir     = flag.String("web-dir", "", "directory holding the exported web client; empty disables it")
+		mapFile    = flag.String("map-file", "", "converted Argentum map to play on; empty uses the generated demo arena")
+		itemsFile  = flag.String("items-file", "", "converted obj.dat; without it every weapon and armour is unknown")
+		spellsFile = flag.String("spells-file", "", "converted Hechizos.dat; without it nothing can be cast")
 	)
 	flag.Parse()
 
@@ -73,6 +74,16 @@ func main() {
 		}
 		w.SetItems(items)
 		log.Info("items cargados", "count", len(items))
+	}
+
+	if *spellsFile != "" {
+		spells, err := world.LoadSpells(*spellsFile)
+		if err != nil {
+			log.Error("no se pudieron cargar los hechizos", "err", err)
+			os.Exit(1)
+		}
+		w.SetSpells(spells)
+		log.Info("hechizos cargados", "count", len(spells))
 	}
 
 	go w.Run(ctx)

@@ -65,7 +65,9 @@ var startingInventory = []protocol.InventorySlot{
 
 // Known spells, by Hechizos.dat id. Casting does not exist yet; these are what
 // the spell list shows.
-var startingSpells = []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12}
+// startingSpells is 1-12 plus, by id, the specific status-effect spells:
+// 14 Invisibilidad, 18 Celeridad, 19 Torpeza, 20 Fuerza, 21 Debilidad.
+var startingSpells = []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14, 18, 19, 20, 21}
 
 var startingVitals = protocol.Vitals{
 	Level: 1,
@@ -106,8 +108,9 @@ type World struct {
 	mapNumber int
 	mapName   string
 
-	// items is the converted obj.dat, read for weapon and armour numbers.
-	items map[int]Item
+	// items and spells are the converted obj.dat and Hechizos.dat.
+	items  map[int]Item
+	spells map[int]Spell
 
 	tickRate int
 	tick     uint64
@@ -239,6 +242,12 @@ func (w *World) apply(cmd command) {
 		w.movePlayer(p, m.Dir)
 	case protocol.TypeAttack:
 		w.attack(p)
+	case protocol.TypeCast:
+		var c protocol.Cast
+		if err := w.codec.DecodePayload(cmd.payload, &c); err != nil {
+			return
+		}
+		w.cast(p, c.SpellID, EntityID(c.Target))
 	default:
 		w.log.Debug("ignoring unknown command", "id", cmd.id, "type", cmd.typ)
 	}
@@ -246,6 +255,13 @@ func (w *World) apply(cmd command) {
 
 func (w *World) movePlayer(p *Player, dir protocol.Heading) {
 	if !dir.Valid() || p.Dead {
+		return
+	}
+	// Paralysis and immobilize both root you — HandleWalk in the source
+	// rejects the move outright under either, though a rooted player can
+	// still turn to face a new direction and swing.
+	if !p.canMove(w.tick) {
+		p.Heading = dir
 		return
 	}
 	p.Heading = dir
@@ -275,7 +291,12 @@ func (w *World) broadcast() {
 		// Vitals go out every tick even though they change rarely. At this
 		// scale the extra bytes are noise, and the alternative — tracking what
 		// each client last saw — is a cache to keep correct for no gain yet.
+		// Status booleans are computed here rather than kept in sync on
+		// Player.Vitals itself, the same way Alive is computed fresh above.
 		vitals := p.Vitals
+		vitals.Paralyzed = p.paralyzed(w.tick)
+		vitals.Immobilized = p.immobilized(w.tick)
+		vitals.Invisible = p.invisible(w.tick)
 		w.sendTo(p, protocol.TypeSnapshot, protocol.Snapshot{
 			Tick:     w.tick,
 			Alive:    alive,
@@ -298,15 +319,23 @@ func (w *World) viewportOf(p *Player) []protocol.EntityState {
 		if dx < -halfW || dx > halfW || dy < -halfH || dy > halfH {
 			continue
 		}
+		// An invisible player is absent from everyone's viewport but their
+		// own — not shown-but-marked, actually absent, so a modified client
+		// has nothing to read a position out of.
+		if other.ID != p.ID && other.invisible(w.tick) {
+			continue
+		}
 		out = append(out, protocol.EntityState{
-			ID:      uint32(other.ID),
-			X:       other.X,
-			Y:       other.Y,
-			Heading: other.Heading,
-			Body:    other.Body,
-			Head:    other.Head,
-			Name:    other.Name,
-			Dead:    other.Dead,
+			ID:          uint32(other.ID),
+			X:           other.X,
+			Y:           other.Y,
+			Heading:     other.Heading,
+			Body:        other.Body,
+			Head:        other.Head,
+			Name:        other.Name,
+			Dead:        other.Dead,
+			Paralyzed:   other.paralyzed(w.tick),
+			Immobilized: other.immobilized(w.tick),
 		})
 	}
 	// Map iteration order is random in Go; sorting keeps snapshots stable so
