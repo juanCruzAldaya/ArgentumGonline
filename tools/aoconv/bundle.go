@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"image"
-	"image/color"
 	"image/draw"
 	"image/png"
 	"os"
@@ -32,6 +31,23 @@ type Anim struct {
 	Speed  float64 `json:"speed"`
 }
 
+// Body is one character body: four facings plus where its artwork actually
+// starts. The sprite rectangle is padded, so ContentTop is what a head has to
+// line up against.
+type Body struct {
+	Facings []int `json:"facings"`
+	// ContentTop is the first row with any opaque pixel, relative to the frame.
+	ContentTop int `json:"top"`
+}
+
+// Head is one character head. Heads are drawn in a tall rectangle whose lower
+// half is empty, so ContentBottom — not the rectangle — is where the neck is.
+type Head struct {
+	Facings []int `json:"facings"`
+	// ContentBottom is the last row with any opaque pixel, relative to the rect.
+	ContentBottom int `json:"bottom"`
+}
+
 // Bundle is everything the client needs to draw Argentum characters.
 type Bundle struct {
 	Atlas string `json:"atlas"`
@@ -48,11 +64,11 @@ type Bundle struct {
 	// them {up,down} and {left,right} rather than alternating. Sorting is the
 	// one ordering that is stable across the whole file; which index is which
 	// facing is decided client-side, where it can be seen.
-	Bodies map[int][]int `json:"bodies"`
+	Bodies map[int]Body `json:"bodies"`
 
 	// Heads holds four grhs per head in file order, which for Cabezas.ini is
 	// self-consistent: up, right, down, left.
-	Heads map[int][]int `json:"heads"`
+	Heads map[int]Head `json:"heads"`
 }
 
 // deriveBodies reconstructs bodies from Graficos.ini instead of from Cuerpos.
@@ -181,8 +197,8 @@ func writeBundle(grhs map[int]Grh, heads map[int][4]int, assets string, wantBodi
 		Atlas:  "atlas.png",
 		Frames: map[int]Rect{},
 		Anims:  map[int]Anim{},
-		Bodies: map[int][]int{},
-		Heads:  map[int][]int{},
+		Bodies: map[int]Body{},
+		Heads:  map[int]Head{},
 	}
 
 	// needed collects the static grhs to pack. Animations contribute their
@@ -219,7 +235,7 @@ func writeBundle(grhs map[int]Grh, heads map[int][4]int, assets string, wantBodi
 				return fmt.Errorf("cuerpo %d: %w", id, err)
 			}
 		}
-		b.Bodies[id] = append([]int(nil), facings...)
+		b.Bodies[id] = Body{Facings: append([]int(nil), facings...)}
 	}
 
 	for _, id := range wantHeads {
@@ -236,7 +252,7 @@ func writeBundle(grhs map[int]Grh, heads map[int][4]int, assets string, wantBodi
 				return fmt.Errorf("cabeza %d: %w", id, err)
 			}
 		}
-		b.Heads[id] = append([]int(nil), facings...)
+		b.Heads[id] = Head{Facings: append([]int(nil), facings...)}
 	}
 
 	// Pack tallest first so the shelves stay tight.
@@ -297,6 +313,19 @@ func writeBundle(grhs map[int]Grh, heads map[int][4]int, assets string, wantBodi
 
 	keyBlackToTransparent(atlas)
 
+	// Measure the artwork only now that transparency is real. The rectangles
+	// are padded — a head is drawn in a 17x50 box whose lower 35 rows are
+	// empty — so aligning by rectangle puts heads well above the shoulders.
+	// Alignment has to key off where the pixels actually are.
+	for id, body := range b.Bodies {
+		body.ContentTop = contentTop(atlas, b.Frames[firstStaticFrame(grhs, body.Facings[0])])
+		b.Bodies[id] = body
+	}
+	for id, head := range b.Heads {
+		head.ContentBottom = contentBottom(atlas, b.Frames[firstStaticFrame(grhs, head.Facings[0])])
+		b.Heads[id] = head
+	}
+
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		return err
 	}
@@ -335,5 +364,37 @@ func keyBlackToTransparent(img *image.NRGBA) {
 			img.Pix[i+3] = 0
 		}
 	}
-	_ = color.NRGBA{}
+}
+
+// firstStaticFrame resolves a possibly animated grh down to a drawable one.
+func firstStaticFrame(grhs map[int]Grh, num int) int {
+	g, ok := grhs[num]
+	if ok && g.Animated() && len(g.Anim) > 0 {
+		return g.Anim[0]
+	}
+	return num
+}
+
+// contentTop is the first row of the rectangle holding any opaque pixel.
+func contentTop(img *image.NRGBA, r Rect) int {
+	for y := 0; y < r.H; y++ {
+		for x := 0; x < r.W; x++ {
+			if img.NRGBAAt(r.X+x, r.Y+y).A != 0 {
+				return y
+			}
+		}
+	}
+	return 0
+}
+
+// contentBottom is the last row of the rectangle holding any opaque pixel.
+func contentBottom(img *image.NRGBA, r Rect) int {
+	for y := r.H - 1; y >= 0; y-- {
+		for x := 0; x < r.W; x++ {
+			if img.NRGBAAt(r.X+x, r.Y+y).A != 0 {
+				return y
+			}
+		}
+	}
+	return r.H - 1
 }

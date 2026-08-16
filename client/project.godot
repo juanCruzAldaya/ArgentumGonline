@@ -13,10 +13,10 @@ config/features=PackedStringArray("4.7", "GL Compatibility")
 
 [display]
 
-; 816x624 of game viewport (17x13 tiles at 48px, the classic AO window) plus a
-; 240px side panel and a 132px console.
-window/size/viewport_width=1056
-window/size/viewport_height=756
+; 1088x832 of game viewport (17x13 tiles at Argentum's native 32px, drawn at 2x
+; so the pixel art stays sharp) plus a 240px side panel and a 132px console.
+window/size/viewport_width=1328
+window/size/viewport_height=964
 window/stretch/mode="canvas_items"
 window/stretch/aspect="keep"
 
