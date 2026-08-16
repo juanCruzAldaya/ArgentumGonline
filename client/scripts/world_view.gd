@@ -49,6 +49,16 @@ var _blocked := PackedByteArray()
 var _entities: Dictionary = {}
 var _camera := Vector2.ZERO
 
+## Argentum tile layers, loaded from the map the server named in its welcome.
+## Layer 1 covers every tile so it is dense; the rest are sparse index -> grh.
+var _has_map := false
+var _layer1 := PackedInt32Array()
+var _layer2: Dictionary = {}
+var _layer3: Dictionary = {}
+var _layer4: Dictionary = {}
+## Drives animated tiles such as water, which run whether or not anyone moves.
+var _world_time := 0.0
+
 
 func _ready() -> void:
 	_sprites.load_bundle()
@@ -63,7 +73,37 @@ func configure(welcome: Dictionary) -> void:
 	_blocked = Marshalls.base64_to_raw(str(welcome.get("blocked", "")))
 	_camera = Vector2(int(welcome.get("sx", 0)), int(welcome.get("sy", 0)))
 	_entities.clear()
+	_load_map(int(welcome.get("map", 0)))
 	queue_redraw()
+
+
+## Map tiles ship with the client rather than over the wire: they are static
+## content and the same for everyone, so the server only names the map.
+func _load_map(number: int) -> void:
+	_has_map = false
+	if number <= 0:
+		return
+
+	var path := "res://assets/ao/map%d.json" % number
+	if not FileAccess.file_exists(path):
+		push_warning("falta %s; se dibuja la arena de prueba" % path)
+		return
+
+	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(path))
+	if typeof(parsed) != TYPE_DICTIONARY:
+		push_error("map%d.json ilegible" % number)
+		return
+
+	_layer1 = PackedInt32Array(parsed.get("layer1", []))
+	_layer2 = parsed.get("layer2", {})
+	_layer3 = parsed.get("layer3", {})
+	_layer4 = parsed.get("layer4", {})
+	_has_map = _layer1.size() == map_width * map_height
+	if not _has_map:
+		push_error(
+			"map%d.json trae %d tiles, el server dice %dx%d"
+			% [number, _layer1.size(), map_width, map_height]
+		)
 
 
 func set_entities(entities: Array) -> void:
@@ -92,6 +132,7 @@ func set_entities(entities: Array) -> void:
 
 
 func _process(delta: float) -> void:
+	_world_time += delta
 	if _entities.is_empty():
 		return
 
@@ -143,25 +184,70 @@ func _draw() -> void:
 	var first := Vector2i(floori(origin.x), floori(origin.y))
 	var shift := (Vector2(first) - origin) * TILE_SIZE
 
+	# Argentum's layer order is what makes the world read as three dimensional:
+	# ground, then things lying on it, then the characters, and only then the
+	# trees and walls they walk behind, and the roofs over everything.
+	if _has_map and _sprites.is_loaded():
+		_draw_layer(_layer1, first, shift, true)
+		_draw_layer(_layer2, first, shift, false)
+	else:
+		_draw_placeholder_floor(first, shift)
+
+	var ids: Array = _entities.keys()
+	# Painter's order: whoever stands further down overlaps whoever is behind.
+	ids.sort_custom(func(a, b): return _entities[a]["render"].y < _entities[b]["render"].y)
+
+	var font := ThemeDB.fallback_font
+	for id: int in ids:
+		_draw_entity(id, _entities[id], origin, font)
+
+	if _has_map and _sprites.is_loaded():
+		_draw_layer(_layer3, first, shift, false)
+		_draw_layer(_layer4, first, shift, false)
+
+
+## _draw_layer paints one Argentum layer across the visible window. Layer 1 is a
+## dense array indexed by tile; the others are sparse dictionaries keyed by the
+## same index, which is why lookups go through a small closure either way.
+func _draw_layer(layer: Variant, first: Vector2i, shift: Vector2, dense: bool) -> void:
 	for vy in view_h + 2:
 		for vx in view_w + 2:
 			var tile := first + Vector2i(vx, vy)
+			if tile.x < 0 or tile.y < 0 or tile.x >= map_width or tile.y >= map_height:
+				continue
+
+			var index := tile.y * map_width + tile.x
+			var grh := 0
+			if dense:
+				grh = layer[index]
+			else:
+				grh = int(layer.get(str(index), 0))
+			if grh <= 0:
+				continue
+
+			var src: Rect2 = _sprites.grh_rect(grh, _world_time)
+			if src.size.x <= 0.0:
+				continue
+
+			# Anything taller or wider than a tile — trees, walls, banners —
+			# hangs up and out from the square it is anchored to, so it is
+			# placed by its bottom centre rather than its top left corner.
 			var at := shift + Vector2(vx * TILE_SIZE, vy * TILE_SIZE)
-			var rect := Rect2(at, Vector2(TILE_SIZE, TILE_SIZE))
+			at += Vector2((TILE_SIZE - src.size.x) * 0.5, TILE_SIZE - src.size.y)
+			draw_texture_rect_region(_sprites.atlas, Rect2(at, src.size), src)
+
+
+func _draw_placeholder_floor(first: Vector2i, shift: Vector2) -> void:
+	for vy in view_h + 2:
+		for vx in view_w + 2:
+			var tile := first + Vector2i(vx, vy)
+			var rect := Rect2(shift + Vector2(vx * TILE_SIZE, vy * TILE_SIZE), Vector2(TILE_SIZE, TILE_SIZE))
 
 			var color := COLOR_VOID
 			if tile.x >= 0 and tile.y >= 0 and tile.x < map_width and tile.y < map_height:
 				color = COLOR_WALL if is_blocked(tile.x, tile.y) else COLOR_FLOOR
 			draw_rect(rect, color)
 			draw_rect(rect, COLOR_GRID, false, 1.0)
-
-	# Painter's order: whoever stands further down overlaps whoever is behind.
-	var ids: Array = _entities.keys()
-	ids.sort_custom(func(a, b): return _entities[a]["render"].y < _entities[b]["render"].y)
-
-	var font := ThemeDB.fallback_font
-	for id: int in ids:
-		_draw_entity(id, _entities[id], origin, font)
 
 
 func _draw_entity(id: int, entity: Dictionary, origin: Vector2, font: Font) -> void:

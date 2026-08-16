@@ -26,6 +26,7 @@ func main() {
 		seed     = flag.Int64("seed", 1, "demo map generation seed")
 		debug    = flag.Bool("debug", false, "enable debug logging")
 		webDir   = flag.String("web-dir", "", "directory holding the exported web client; empty disables it")
+		mapFile  = flag.String("map-file", "", "converted Argentum map to play on; empty uses the generated demo arena")
 	)
 	flag.Parse()
 
@@ -49,7 +50,19 @@ func main() {
 	defer stop()
 
 	grid := world.GenerateDemoMap(*mapW, *mapH, *seed)
+	mapNumber, mapName := 0, ""
+	if *mapFile != "" {
+		loaded, number, name, err := world.LoadMap(*mapFile)
+		if err != nil {
+			log.Error("no se pudo cargar el mapa", "err", err)
+			os.Exit(1)
+		}
+		grid, mapNumber, mapName = loaded, number, name
+		log.Info("mapa cargado", "number", number, "name", name, "size", [2]int{grid.W, grid.H})
+	}
+
 	w := world.New(grid, protocol.JSONCodec{}, *tickRate, log)
+	w.SetMap(mapNumber, mapName)
 	go w.Run(ctx)
 
 	srv := &transport.WSServer{

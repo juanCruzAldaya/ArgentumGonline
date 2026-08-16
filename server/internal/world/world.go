@@ -83,6 +83,11 @@ type World struct {
 	log   *slog.Logger
 	rng   *rand.Rand
 
+	// mapNumber and mapName describe which Argentum map is loaded, so the
+	// client can pick the matching tile data it already ships with.
+	mapNumber int
+	mapName   string
+
 	tickRate int
 	tick     uint64
 
@@ -116,6 +121,13 @@ func New(grid *Grid, codec protocol.Codec, tickRate int, log *slog.Logger) *Worl
 		cmdCh:    make(chan command, 1024),
 		done:     make(chan struct{}),
 	}
+}
+
+// SetMap records which Argentum map this world was built from. It must be
+// called before Run, since it is read from the world goroutine afterwards.
+func (w *World) SetMap(number int, name string) {
+	w.mapNumber = number
+	w.mapName = name
 }
 
 // Run drives the simulation until ctx is cancelled. It must be called exactly
@@ -300,6 +312,8 @@ func (w *World) addPlayer(req joinReq) EntityID {
 	w.sendTo(p, protocol.TypeWelcome, protocol.Welcome{
 		EntityID:  uint32(id),
 		TickRate:  w.tickRate,
+		MapNumber: w.mapNumber,
+		MapName:   w.mapName,
 		MapWidth:  w.grid.W,
 		MapHeight: w.grid.H,
 		Blocked:   base64.StdEncoding.EncodeToString(w.grid.PackedBitset()),

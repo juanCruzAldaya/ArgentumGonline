@@ -66,6 +66,10 @@ func main() {
 		bundleDir = flag.String("bundle", "", "directory to write atlas.png and bundle.json into")
 		bodyList  = flag.String("bodies", "1,2,3,4,5,6,7,8", "comma separated body ids to bundle")
 		headList  = flag.String("heads", "1,2,3,4,5,6,7,8", "comma separated head ids to bundle")
+
+		mapNum    = flag.Int("map", 0, "Argentum map number to convert into the bundle")
+		mundosDir = flag.String("mundos", "", "directory holding Mapa*.map (default <assets>/Mundos)")
+		serverOut = flag.String("server-out", "", "directory to write the server's map JSON into")
 	)
 	flag.Parse()
 
@@ -93,9 +97,42 @@ func main() {
 	}
 	fmt.Printf("Cuerpos.ini:  %d cuerpos (solo para inspección)\n", len(bodies))
 
+	var aoMap *AOMap
+	var displayName string
+	if *mapNum > 0 {
+		dir := *mundosDir
+		if dir == "" {
+			dir = filepath.Join(*assets, "Mundos")
+		}
+		base := filepath.Join(dir, fmt.Sprintf("Mapa%d", *mapNum))
+
+		aoMap, err = readAOMap(base+".map", *mapNum)
+		if err != nil {
+			fatal("%v", err)
+		}
+		displayName = mapName(base+".dat", *mapNum)
+		blocked := 0
+		for i := range aoMap.Tiles {
+			if aoMap.Tiles[i].Blocked {
+				blocked++
+			}
+		}
+		fmt.Printf("Mapa%d:        \"%s\", versión %d, %d de %d tiles bloqueados\n",
+			*mapNum, displayName, aoMap.Version, blocked, len(aoMap.Tiles))
+
+		if *serverOut != "" {
+			path := filepath.Join(*serverOut, fmt.Sprintf("map%d.json", *mapNum))
+			if err := writeJSON(path, aoMap.serverMap(displayName)); err != nil {
+				fatal("%v", err)
+			}
+			fmt.Printf("              %s escrito para el servidor\n", path)
+		}
+	}
+
 	if *bundleDir != "" {
 		if err := writeBundle(grhs, heads,
-			*assets, parseList(*bodyList), parseList(*headList), *bundleDir); err != nil {
+			*assets, parseList(*bodyList), parseList(*headList), *bundleDir,
+			aoMap, displayName); err != nil {
 			fatal("%v", err)
 		}
 	}

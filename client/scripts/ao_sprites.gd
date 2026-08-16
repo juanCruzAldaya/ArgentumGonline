@@ -109,6 +109,12 @@ func head_offset_y(body: int, head: int, overlap: float) -> float:
 	return body_content_top(body) - head_content_bottom(head) + overlap
 
 
+## grh_rect resolves any graphic — a map tile, most often. Animated tiles like
+## water always run, since nothing is standing still for them to wait on.
+func grh_rect(grh: int, anim_time: float) -> Rect2:
+	return _resolve(grh, anim_time, true)
+
+
 ## _resolve turns a grh into a rectangle, walking into an animation if needed.
 ## A standing character holds frame 0 rather than cycling in place.
 func _resolve(grh: int, anim_time: float, moving: bool) -> Rect2:

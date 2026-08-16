@@ -91,8 +91,12 @@ type Pong struct {
 // needs to draw the world, including the collision map, which never changes
 // during a match and so is sent exactly once.
 type Welcome struct {
-	EntityID  uint32 `json:"id"`
-	TickRate  int    `json:"tickRate"`
+	EntityID uint32 `json:"id"`
+	TickRate int    `json:"tickRate"`
+	// MapNumber is the Argentum map the match runs on, so the client knows which
+	// bundled tile data to load. Zero means the generated demo arena.
+	MapNumber int    `json:"map"`
+	MapName   string `json:"mapName,omitempty"`
 	MapWidth  int    `json:"w"`
 	MapHeight int    `json:"h"`
 	// Blocked is a base64 row-major bitset, one bit per tile, LSB first.

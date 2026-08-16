@@ -12,10 +12,10 @@ import (
 	"strings"
 )
 
-// atlasWidth is the packing width. Character frames top out around 50px a side,
-// so this stays comfortably inside every GPU's texture limit while keeping the
-// sheet roughly square.
-const atlasWidth = 512
+// atlasWidth is the packing width. A map contributes hundreds of distinct
+// tiles on top of the character frames, so this is wide enough to keep the
+// sheet roughly square while staying far inside every GPU's texture limit.
+const atlasWidth = 1024
 
 // Rect is where a static grh ended up inside the atlas.
 type Rect struct {
@@ -185,7 +185,7 @@ func loadBodySeeds(path string) ([]int, error) {
 
 // writeBundle packs every frame the given bodies and heads need into one atlas
 // and writes it alongside its JSON index.
-func writeBundle(grhs map[int]Grh, heads map[int][4]int, assets string, wantBodies, wantHeads []int, outDir string) error {
+func writeBundle(grhs map[int]Grh, heads map[int][4]int, assets string, wantBodies, wantHeads []int, outDir string, aoMap *AOMap, mapDisplayName string) error {
 	seeds, err := loadBodySeeds(filepath.Join(assets, "INIT", "Cuerpos.ini"))
 	if err != nil {
 		return err
@@ -253,6 +253,22 @@ func writeBundle(grhs map[int]Grh, heads map[int][4]int, assets string, wantBodi
 			}
 		}
 		b.Heads[id] = Head{Facings: append([]int(nil), facings...)}
+	}
+
+	if aoMap != nil {
+		// A tile referencing a graphic that is not in the index is a data bug in
+		// a twenty year old map, not a reason to refuse the whole conversion.
+		missing := 0
+		for grh := range aoMap.usedGrhs() {
+			if err := collect(grh); err != nil {
+				missing++
+			}
+		}
+		fmt.Printf("mapa %d: %d grh distintos", aoMap.Number, len(aoMap.usedGrhs()))
+		if missing > 0 {
+			fmt.Printf(", %d sin entrada en el índice (se omiten)", missing)
+		}
+		fmt.Println()
 	}
 
 	// Pack tallest first so the shelves stay tight.
@@ -352,6 +368,15 @@ func writeBundle(grhs map[int]Grh, heads map[int][4]int, assets string, wantBodi
 	info, _ := os.Stat(atlasPath)
 	fmt.Printf("\natlas.png   %dx%d, %d KB, %d frames\n", atlasWidth, atlasHeight, info.Size()/1024, len(b.Frames))
 	fmt.Printf("bundle.json %d cuerpos, %d cabezas, %d animaciones\n", len(b.Bodies), len(b.Heads), len(b.Anims))
+
+	if aoMap != nil {
+		mapPath := filepath.Join(outDir, fmt.Sprintf("map%d.json", aoMap.Number))
+		if err := writeJSON(mapPath, aoMap.clientMap(mapDisplayName)); err != nil {
+			return err
+		}
+		mapInfo, _ := os.Stat(mapPath)
+		fmt.Printf("map%d.json  %d KB  \"%s\"\n", aoMap.Number, mapInfo.Size()/1024, mapDisplayName)
+	}
 	return nil
 }
 
