@@ -2,6 +2,10 @@
 
 Argentum Online (estilo Alkon 0.13 clásico) reimaginado como battle royale.
 
+**Licencia: [AGPL-3.0](LICENSE).** Usa los assets de Argentum Online, que Pablo
+Márquez liberó bajo AGPL. Eso es copyleft de red: si hosteás esto, tenés que
+ofrecerle el código fuente completo a quien juegue. Ver [CREDITS.md](CREDITS.md).
+
 Servidor autoritativo headless en Go. Godot es **solo cliente**: renderiza e
 manda input, no simula nada.
 
@@ -163,10 +167,33 @@ client/
   scripts/         net_client.gd, world_view.gd, hud.gd, minimap.gd, main.gd
   scenes/main.tscn estructura y posiciones; lo cosmético vive en hud.gd
   export_presets.cfg
+tools/aoconv/      lee los indices de AO (grh, cuerpos, cabezas) y extrae sprites
 scripts/
   build-web.ps1    export a WebAssembly
 Dockerfile         servidor + cliente web en una imagen
 fly.toml           deploy de test compartido
+```
+
+## Assets de Argentum
+
+`tools/aoconv` lee los índices originales. El formato, ya descifrado:
+
+- **`Graficos.ini`** — `GrhN=frames-...`. Con `frames=1` es `1-hoja-x-y-w-h`, un
+  recorte de una hoja PNG numerada. Con `frames>1` es una lista de grhs más una
+  velocidad, o sea una animación que referencia otros grh.
+- **`Cabezas.ini`** — `Head1..4` por dirección, sprites estáticos de 17x50.
+- **`Cuerpos.ini`** / **`Cuerpos.ind`** — coinciden entre sí (4 Longs + 2
+  Integers por registro, header ASCII de 265 bytes en el binario). **Pero las
+  etiquetas de dirección no coinciden con el contenido real**: el cuerpo 1 son
+  los grh 4581-4584 con frames contiguos 2531-2552, agrupados 6/6/5/5. Ese
+  agrupamiento dice que el orden es {arriba,abajo} y {izq,der}, no el
+  `arriba,derecha,abajo,izq` que declaran los comentarios. El orden exacto se
+  fija al renderizar un personaje con cabeza.
+- **Transparencia por color key**: el negro puro es transparente, no hay canal
+  alfa. Hay que convertirlo.
+
+```powershell
+go run -C tools/aoconv . -assets <dir> -body 1 -info -out ./sprites
 ```
 
 ## Referencia de diseño
