@@ -20,6 +20,9 @@ type Player struct {
 	X, Y    int
 	Heading protocol.Heading
 
+	// Vitals are this player's own numbers, sent back only to them.
+	Vitals protocol.Vitals
+
 	conn transport.Conn
 
 	// lastMoveTick gates walking speed; see moveCooldownTicks.

@@ -41,6 +41,16 @@ const (
 	spawnAttempts = 200
 )
 
+// Starting vitals. Every player is identical for now: classes and races decide
+// these in classic AO, and that table comes over from the VB6 source once class
+// selection exists.
+var startingVitals = protocol.Vitals{
+	Level: 1,
+	HP:    100, MaxHP: 100,
+	Mana: 100, MaxMana: 100,
+	Stamina: 100, MaxStamina: 100,
+}
+
 // ErrWorldClosed is returned when the simulation has stopped.
 var ErrWorldClosed = errors.New("world: closed")
 
@@ -217,9 +227,16 @@ func (w *World) movePlayer(p *Player, dir protocol.Heading) {
 }
 
 func (w *World) broadcast() {
+	alive := len(w.players)
 	for _, p := range w.players {
+		// Vitals go out every tick even though they change rarely. At this
+		// scale the extra bytes are noise, and the alternative — tracking what
+		// each client last saw — is a cache to keep correct for no gain yet.
+		vitals := p.Vitals
 		w.sendTo(p, protocol.TypeSnapshot, protocol.Snapshot{
 			Tick:     w.tick,
+			Alive:    alive,
+			Self:     &vitals,
 			Entities: w.viewportOf(p),
 		})
 	}
@@ -257,7 +274,7 @@ func (w *World) addPlayer(req joinReq) EntityID {
 	id := EntityID(w.nextID)
 
 	x, y := w.freeSpawn()
-	p := &Player{ID: id, Name: req.name, X: x, Y: y, conn: req.conn}
+	p := &Player{ID: id, Name: req.name, X: x, Y: y, Vitals: startingVitals, conn: req.conn}
 	w.players[id] = p
 	w.occupied[tileKey{x, y}] = id
 

@@ -25,6 +25,7 @@ func main() {
 		mapH     = flag.Int("map-height", 100, "demo map height in tiles")
 		seed     = flag.Int64("seed", 1, "demo map generation seed")
 		debug    = flag.Bool("debug", false, "enable debug logging")
+		webDir   = flag.String("web-dir", "", "directory holding the exported web client; empty disables it")
 	)
 	flag.Parse()
 
@@ -52,9 +53,10 @@ func main() {
 	go w.Run(ctx)
 
 	srv := &transport.WSServer{
-		Addr:    *addr,
-		Handler: w.HandleConn,
-		Logger:  log,
+		Addr:      *addr,
+		Handler:   w.HandleConn,
+		Logger:    log,
+		StaticDir: *webDir,
 	}
 	if err := srv.ListenAndServe(ctx); err != nil {
 		log.Error("server failed", "err", err)

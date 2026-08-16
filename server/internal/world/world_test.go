@@ -206,6 +206,37 @@ func TestSnapshotOnlyIncludesTheViewport(t *testing.T) {
 	}
 }
 
+func TestSnapshotCarriesAliveCountAndOwnVitalsOnly(t *testing.T) {
+	w := newTestWorld(t, 100, 100)
+
+	_, conn := place(t, w, "wachin", 50, 50)
+	place(t, w, "vecino", 51, 50)
+	// Far enough to be outside the viewport, so it must not appear in entities
+	// while still counting towards alive.
+	place(t, w, "lejano", 90, 90)
+
+	w.step()
+
+	var snap protocol.Snapshot
+	if err := w.codec.DecodePayload(conn.lastOfType(t, protocol.TypeSnapshot), &snap); err != nil {
+		t.Fatalf("decode snapshot: %v", err)
+	}
+
+	if snap.Alive != 3 {
+		t.Errorf("alive = %d, want 3: the count is match-wide, not viewport-scoped", snap.Alive)
+	}
+	if len(snap.Entities) != 2 {
+		t.Errorf("entities = %d, want 2: the far player must stay out of the viewport", len(snap.Entities))
+	}
+	if snap.Self == nil {
+		t.Fatal("snapshot carried no vitals for the local player")
+	}
+	if snap.Self.HP != startingVitals.HP || snap.Self.MaxHP != startingVitals.MaxHP {
+		t.Errorf("vitals = %d/%d, want %d/%d",
+			snap.Self.HP, snap.Self.MaxHP, startingVitals.HP, startingVitals.MaxHP)
+	}
+}
+
 func TestSlowClientIsDisconnected(t *testing.T) {
 	w := newTestWorld(t, 20, 20)
 	p, conn := place(t, w, "lento", 5, 5)

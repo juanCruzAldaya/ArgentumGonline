@@ -103,6 +103,22 @@ type Welcome struct {
 	SpawnY  int    `json:"sy"`
 }
 
+// Vitals are a player's own numbers, sent only to that player — nobody else's
+// HP belongs in your snapshot, and leaking it would be an aimbot's best friend.
+//
+// Combat does not exist yet, so these currently only ever hold their starting
+// values. The field is here now so the HUD is driven by the server from the
+// start rather than by placeholders it would later have to unlearn.
+type Vitals struct {
+	Level      int `json:"lvl"`
+	HP         int `json:"hp"`
+	MaxHP      int `json:"maxHp"`
+	Mana       int `json:"mana"`
+	MaxMana    int `json:"maxMana"`
+	Stamina    int `json:"sta"`
+	MaxStamina int `json:"maxSta"`
+}
+
 // EntityState is one entity as seen from some player's viewport.
 type EntityState struct {
 	ID      uint32  `json:"id"`
@@ -115,7 +131,13 @@ type EntityState struct {
 // Snapshot is the per-tick view sent to a single player: only the entities
 // inside that player's viewport, never the whole world.
 type Snapshot struct {
-	Tick     uint64        `json:"tick"`
+	Tick uint64 `json:"tick"`
+	// Alive is the whole-match player count. It is deliberately global rather
+	// than viewport-scoped — knowing how many are left is the core battle
+	// royale readout, and it reveals no position.
+	Alive int     `json:"alive"`
+	Self  *Vitals `json:"self,omitempty"`
+	// Entities is everyone inside the viewport, including the player itself.
 	Entities []EntityState `json:"e"`
 }
 

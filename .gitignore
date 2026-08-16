@@ -5,8 +5,13 @@
 # Godot
 /client/.godot/
 /client/android/
-/client/export_presets.cfg
-/build/
+
+# Export output. The web/ directory itself is tracked (empty) so that a fresh
+# clone can `docker build` without having exported the client first.
+/build/*
+!/build/web/
+/build/web/*
+!/build/web/.gitkeep
 
 # Editor / OS
 .vscode/

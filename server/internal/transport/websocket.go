@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"mime"
 	"net"
 	"net/http"
 	"sync"
@@ -32,6 +33,11 @@ type WSServer struct {
 	Handler Handler
 	Logger  *slog.Logger
 
+	// StaticDir, when set, serves the exported Godot web client at /. One
+	// process then serves both the page and the protocol, which is why the
+	// browser client needs no configuration: its own origin is the server.
+	StaticDir string
+
 	mu       sync.Mutex
 	listener net.Listener
 }
@@ -46,6 +52,15 @@ func (s *WSServer) ListenAndServe(ctx context.Context) error {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})
+
+	if s.StaticDir != "" {
+		// Windows registry entries routinely override the built-in MIME table
+		// and hand back the wrong type for .wasm, which browsers refuse to
+		// stream-compile. Setting it explicitly costs nothing.
+		_ = mime.AddExtensionType(".wasm", "application/wasm")
+		mux.Handle("/", crossOriginIsolated(http.FileServer(http.Dir(s.StaticDir))))
+		s.Logger.Info("serving web client", "dir", s.StaticDir)
+	}
 
 	ln, err := net.Listen("tcp", s.Addr)
 	if err != nil {
@@ -79,6 +94,17 @@ func (s *WSServer) BoundAddr() string {
 		return ""
 	}
 	return s.listener.Addr().String()
+}
+
+// crossOriginIsolated grants the page SharedArrayBuffer, which Godot's threaded
+// web export needs. WebSocket connections are exempt from COEP, so this affects
+// the client page only and never the game protocol.
+func crossOriginIsolated(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cross-Origin-Opener-Policy", "same-origin")
+		w.Header().Set("Cross-Origin-Embedder-Policy", "require-corp")
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (s *WSServer) handleWS(w http.ResponseWriter, r *http.Request) {

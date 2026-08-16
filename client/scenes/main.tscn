@@ -1,22 +1,140 @@
-[gd_scene load_steps=4 format=3]
+; Layout is the classic Argentum arrangement: game viewport top-left, character
+; panel down the right, console along the bottom. The battle royale readouts
+; (alive count, zone timer, minimap) sit on top of the viewport rather than
+; stealing panel space.
+;
+; This file holds structure and position only. Everything cosmetic is built in
+; hud.gd, so colours and slot counts live in one readable place.
+
+[gd_scene load_steps=6 format=3]
 
 [ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
 [ext_resource type="Script" path="res://scripts/net_client.gd" id="2_net"]
 [ext_resource type="Script" path="res://scripts/world_view.gd" id="3_view"]
+[ext_resource type="Script" path="res://scripts/hud.gd" id="4_hud"]
+[ext_resource type="Script" path="res://scripts/minimap.gd" id="5_minimap"]
 
 [node name="Main" type="Node2D"]
 script = ExtResource("1_main")
 
-[node name="Net" type="Node" parent="."]
-script = ExtResource("2_net")
-
 [node name="WorldView" type="Node2D" parent="."]
 script = ExtResource("3_view")
 
-[node name="HUD" type="CanvasLayer" parent="."]
+[node name="Net" type="Node" parent="."]
+script = ExtResource("2_net")
 
-[node name="Status" type="Label" parent="HUD"]
-offset_left = 8.0
-offset_top = 8.0
+[node name="UI" type="CanvasLayer" parent="."]
+
+[node name="Screen" type="Control" parent="UI"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 2
+script = ExtResource("4_hud")
+
+[node name="TopBar" type="Panel" parent="UI/Screen"]
+offset_right = 816.0
+offset_bottom = 34.0
+mouse_filter = 2
+
+[node name="Alive" type="Label" parent="UI/Screen/TopBar"]
+offset_left = 12.0
+offset_top = 6.0
+offset_right = 400.0
+offset_bottom = 28.0
+mouse_filter = 2
+
+[node name="Zone" type="Label" parent="UI/Screen/TopBar"]
+offset_left = 416.0
+offset_top = 6.0
+offset_right = 804.0
+offset_bottom = 28.0
+horizontal_alignment = 2
+mouse_filter = 2
+
+[node name="Minimap" type="Control" parent="UI/Screen"]
+offset_left = 660.0
+offset_top = 468.0
 offset_right = 808.0
-offset_bottom = 48.0
+offset_bottom = 616.0
+mouse_filter = 2
+script = ExtResource("5_minimap")
+
+[node name="Console" type="Panel" parent="UI/Screen"]
+offset_top = 624.0
+offset_right = 816.0
+offset_bottom = 756.0
+mouse_filter = 2
+
+[node name="Log" type="RichTextLabel" parent="UI/Screen/Console"]
+offset_left = 10.0
+offset_top = 8.0
+offset_right = 806.0
+offset_bottom = 124.0
+bbcode_enabled = true
+scroll_following = true
+mouse_filter = 2
+
+[node name="SidePanel" type="Panel" parent="UI/Screen"]
+offset_left = 816.0
+offset_right = 1056.0
+offset_bottom = 756.0
+mouse_filter = 2
+
+[node name="Portrait" type="Panel" parent="UI/Screen/SidePanel"]
+offset_left = 84.0
+offset_top = 14.0
+offset_right = 156.0
+offset_bottom = 86.0
+mouse_filter = 2
+
+[node name="CharName" type="Label" parent="UI/Screen/SidePanel"]
+offset_left = 8.0
+offset_top = 92.0
+offset_right = 232.0
+offset_bottom = 114.0
+horizontal_alignment = 1
+mouse_filter = 2
+
+[node name="CharClass" type="Label" parent="UI/Screen/SidePanel"]
+offset_left = 8.0
+offset_top = 114.0
+offset_right = 232.0
+offset_bottom = 134.0
+horizontal_alignment = 1
+mouse_filter = 2
+
+[node name="Bars" type="VBoxContainer" parent="UI/Screen/SidePanel"]
+offset_left = 12.0
+offset_top = 146.0
+offset_right = 228.0
+offset_bottom = 254.0
+mouse_filter = 2
+
+[node name="InvTitle" type="Label" parent="UI/Screen/SidePanel"]
+offset_left = 12.0
+offset_top = 268.0
+offset_right = 228.0
+offset_bottom = 288.0
+mouse_filter = 2
+
+[node name="InvGrid" type="GridContainer" parent="UI/Screen/SidePanel"]
+offset_left = 12.0
+offset_top = 292.0
+offset_right = 228.0
+offset_bottom = 468.0
+columns = 5
+mouse_filter = 2
+
+[node name="SpellTitle" type="Label" parent="UI/Screen/SidePanel"]
+offset_left = 12.0
+offset_top = 482.0
+offset_right = 228.0
+offset_bottom = 502.0
+mouse_filter = 2
+
+[node name="SpellList" type="VBoxContainer" parent="UI/Screen/SidePanel"]
+offset_left = 12.0
+offset_top = 506.0
+offset_right = 228.0
+offset_bottom = 744.0
+mouse_filter = 2

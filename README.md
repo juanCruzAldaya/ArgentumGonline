@@ -13,11 +13,16 @@ Vertical slice del loop de red. Andando hoy:
 - Movimiento por casillas con cooldown de paso (5 tiles/s, cadencia AO)
 - Colisiones contra paredes y contra otros jugadores
 - Snapshots por viewport (17x13 tiles, la ventana clásica de AO)
-- Cliente Godot que conecta, camina y ve a los demás
+- Cliente Godot con la interfaz clásica de AO (panel lateral con vida/maná/
+  energía, inventario, hechizos; consola abajo) más los datos de battle royale
+  encima del viewport: vivos, minimapa, y el lugar reservado para la zona
+- Export web: el mismo proceso Go sirve el cliente HTML5 y el protocolo
 - Bots headless para llenar la partida en tests de carga
 
 Todavía **no**: combate, clases, razas, facciones, zona que se achica, loot,
-persistencia, matchmaking.
+persistencia, matchmaking. La lista de hechizos del panel es decorativa y está
+dibujada en gris justamente por eso; vida/maná/energía y el contador de vivos
+sí vienen del servidor.
 
 ## Por qué esta arquitectura
 
@@ -73,6 +78,28 @@ Controles: WASD o flechas.
 Flags del servidor: `-addr`, `-tick`, `-map-width`, `-map-height`, `-seed`,
 `-debug`.
 
+### Cliente web
+
+Es la mejor forma de que alguien lo pruebe: entra a una URL y listo, sin
+instalar nada. Funciona porque el transporte es WebSocket — con UDP puro el
+cliente en browser sería imposible.
+
+Necesita Godot 4.3+ **y** los export templates (se bajan aparte, desde el editor:
+`Editor > Manage Export Templates`).
+
+```powershell
+.\scripts\build-web.ps1                          # o -Godot "C:\ruta\a\Godot.exe"
+go run -C server ./cmd/server -web-dir ..\build\web
+# abrí http://localhost:8080
+```
+
+El cliente web no necesita configuración: deduce el servidor del origen de la
+página. Se puede pisar con query params — `?name=wachin`, o `?server=ws://otro:8080/ws`
+para apuntar a otro lado.
+
+El server manda los headers COOP/COEP que el export con threads necesita, y
+sirve `.wasm` con el MIME correcto.
+
 ### Bots
 
 Nunca vas a juntar 50 humanos para probar. Los bots hablan exactamente el mismo
@@ -105,13 +132,15 @@ go run ./cmd/server
 godot --path client -- --server=ws://100.x.y.z:8080/ws --name=compañero
 ```
 
-**Test real — Fly.io.** Latencia de verdad desde dos conexiones distintas.
+**Test real — Fly.io.** Latencia de verdad desde dos conexiones distintas. La
+imagen incluye el cliente web, así que tu compañero solo abre el link.
 
 ```powershell
-fly launch --no-deploy   # una sola vez
+.\scripts\build-web.ps1   # exportá ANTES de deployar
+fly launch --no-deploy    # una sola vez
 fly deploy
-# los dos apuntan al mismo lado
-godot --path client -- --server=wss://juegito.fly.dev/ws --name=quiensea
+# y le pasás esto y nada más:
+# https://juegito.fly.dev
 ```
 
 La región es `eze` (Ezeiza). La máquina duerme cuando no hay nadie conectado y
@@ -131,9 +160,12 @@ server/
     transport/     frames opacos; implementación WebSocket
     world/         simulación autoritativa, tick loop, sesiones
 client/
-  scripts/         net_client.gd, world_view.gd, main.gd
-  scenes/main.tscn
-Dockerfile         imagen del servidor
+  scripts/         net_client.gd, world_view.gd, hud.gd, minimap.gd, main.gd
+  scenes/main.tscn estructura y posiciones; lo cosmético vive en hud.gd
+  export_presets.cfg
+scripts/
+  build-web.ps1    export a WebAssembly
+Dockerfile         servidor + cliente web en una imagen
 fly.toml           deploy de test compartido
 ```
 

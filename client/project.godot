@@ -13,9 +13,12 @@ config/features=PackedStringArray("4.3", "GL Compatibility")
 
 [display]
 
-; 17x13 tiles at 48px, matching the server's classic-AO viewport exactly.
-window/size/viewport_width=816
-window/size/viewport_height=624
+; 816x624 of game viewport (17x13 tiles at 48px, the classic AO window) plus a
+; 240px side panel and a 132px console.
+window/size/viewport_width=1056
+window/size/viewport_height=756
+window/stretch/mode="canvas_items"
+window/stretch/aspect="keep"
 
 [rendering]
 
