@@ -11,10 +11,17 @@ extends Node2D
 ## why the node is scaled up rather than the tiles being made bigger.
 const TILE_SIZE := 32
 
-## Tiles per second, matching the server's move cooldown. Running faster than
-## the server allows would make characters arrive and then wait; running slower
-## would make them lag further behind with every step.
-const WALK_SPEED := 5.0
+## Tiles per second, sent by the server in the Welcome. Running faster than the
+## server allows would make characters arrive and then wait out the rest of the
+## cooldown, a visible stutter at every tile edge; running slower would make
+## them fall further behind with every step.
+##
+## This used to be a hardcoded 5.0, correct only while the server's cooldown
+## was a flat 4 ticks. The moment walk speed became tunable a second copy of it
+## over here was a bug waiting for the first retune, so the server is now the
+## only place the number lives. The default matches classic Argentum, and only
+## applies before the Welcome lands.
+var walk_speed := 5.0
 
 ## Past this distance a move is a teleport or a resync, not a walk, so the
 ## render position snaps instead of sliding across the map.
@@ -22,7 +29,6 @@ const SNAP_DISTANCE := 2.5
 
 ## How far the neck sinks into the shoulders. Butting the two exactly together
 ## leaves a visible seam at this sprite scale.
-const HEAD_OVERLAP := 2.0
 
 const COLOR_VOID := Color(0.04, 0.04, 0.06)
 const COLOR_FLOOR := Color(0.16, 0.18, 0.15)
@@ -49,9 +55,14 @@ var view_h := 13
 var local_id := 0
 
 var _sprites := AOSprites.new()
+var _data := AOData.new()
 var _blocked := PackedByteArray()
 ## id -> { tile, render, heading, body, head, name, anim, moving }
 var _entities: Dictionary = {}
+## "x,y" -> { item_id, amount }. Only what the server put in the last
+## snapshot's Ground list — the same viewport-limited interest management as
+## _entities, so nothing here reveals loot the player hasn't actually seen.
+var _ground: Dictionary = {}
 var _camera := Vector2.ZERO
 
 ## Argentum tile layers, loaded from the map the server named in its welcome.
@@ -61,6 +72,9 @@ var _layer1 := PackedInt32Array()
 var _layer2: Dictionary = {}
 var _layer3: Dictionary = {}
 var _layer4: Dictionary = {}
+## Tile index -> true for every tile the map marks BAJOTECHO or CASA. Drives
+## whether the roof layer is drawn at all this frame; see _draw_layers.
+var _roofed: Dictionary = {}
 ## Drives animated tiles such as water, which run whether or not anyone moves.
 var _world_time := 0.0
 
@@ -78,6 +92,7 @@ var local_invisible := false
 
 func _ready() -> void:
 	_sprites.load_bundle()
+	_data.load_data()
 
 
 func configure(welcome: Dictionary) -> void:
@@ -86,9 +101,11 @@ func configure(welcome: Dictionary) -> void:
 	view_w = int(welcome.get("vw", view_w))
 	view_h = int(welcome.get("vh", view_h))
 	local_id = int(welcome.get("id", 0))
+	walk_speed = float(welcome.get("walkSpeed", walk_speed))
 	_blocked = Marshalls.base64_to_raw(str(welcome.get("blocked", "")))
 	_camera = Vector2(int(welcome.get("sx", 0)), int(welcome.get("sy", 0)))
 	_entities.clear()
+	_ground.clear()
 	_load_map(int(welcome.get("map", 0)))
 	queue_redraw()
 
@@ -114,6 +131,9 @@ func _load_map(number: int) -> void:
 	_layer2 = parsed.get("layer2", {})
 	_layer3 = parsed.get("layer3", {})
 	_layer4 = parsed.get("layer4", {})
+	_roofed.clear()
+	for index in parsed.get("roofed", []):
+		_roofed[int(index)] = true
 	_has_map = _layer1.size() == map_width * map_height
 	if not _has_map:
 		push_error(
@@ -141,6 +161,19 @@ func set_entities(entities: Array) -> void:
 		entity["head"] = int(e.get("hd", 0))
 		entity["name"] = str(e.get("n", ""))
 		entity["dead"] = bool(e.get("d", false))
+		# Carried for the click-to-inspect line rather than for drawing. Clan
+		# is always empty today: there is no guild system, and the line omits
+		# the bracket when it is, exactly as the original does for a clanless
+		# character.
+		entity["clan"] = str(e.get("cl", ""))
+		entity["desc"] = str(e.get("ds", ""))
+		entity["kills"] = int(e.get("k", 0))
+		# Worn equipment, drawn as its own layer over the body. There is no
+		# "armor" field on purpose: in Argentum armour *is* the body, so it
+		# arrives as `b` above rather than as a fourth accessory.
+		entity["weapon"] = int(e.get("wp", 0))
+		entity["shield"] = int(e.get("sh", 0))
+		entity["helmet"] = int(e.get("hm", 0))
 		entity["paralyzed"] = bool(e.get("pz", false))
 		entity["immobilized"] = bool(e.get("im", false))
 		_entities[id] = entity
@@ -148,6 +181,21 @@ func set_entities(entities: Array) -> void:
 	for id: int in _entities.keys():
 		if not seen.has(id):
 			_entities.erase(id)
+
+
+## Ground stacks are wholesale-replaced every snapshot rather than diffed —
+## there are never more than a viewport's worth of them, and unlike entities
+## nothing here needs to persist state (no render-smoothing, no anim) between
+## calls.
+func set_ground(items: Array) -> void:
+	_ground.clear()
+	for it in items:
+		var x := int(it.get("x", 0))
+		var y := int(it.get("y", 0))
+		_ground["%d,%d" % [x, y]] = {
+			"item_id": int(it.get("i", 0)),
+			"amount": int(it.get("n", 0)),
+		}
 
 
 func _process(delta: float) -> void:
@@ -166,7 +214,7 @@ func _process(delta: float) -> void:
 			entity["render"] = target
 			entity["moving"] = false
 		elif to_go.length() > 0.001:
-			var step := WALK_SPEED * delta
+			var step := walk_speed * delta
 			if to_go.length() <= step:
 				entity["render"] = target
 			else:
@@ -211,6 +259,50 @@ func entity_name(id: int) -> String:
 	return "alguien" if entity == null else str(entity["name"])
 
 
+## Everything the inspect line needs about one visible character. Empty if the
+## id is not in view — the snapshot only ever carries the viewport, so asking
+## about someone out of sight is answered with nothing rather than with stale
+## data from when they were last seen.
+func entity_info(id: int) -> Dictionary:
+	var entity: Variant = _entities.get(id)
+	if entity == null:
+		return {}
+	return {
+		"name": str(entity["name"]),
+		"clan": str(entity.get("clan", "")),
+		"desc": str(entity.get("desc", "")),
+		"kills": int(entity.get("kills", 0)),
+		"dead": bool(entity.get("dead", false)),
+	}
+
+
+## The viewport's own bounds in local coordinates, for callers that need to
+## know whether a click landed on the world at all.
+##
+## This is not get_rect(): the view is a Node2D, not a Control, so it has no
+## rect of its own — its extent is the tile window it draws, which is what this
+## computes.
+func view_rect() -> Rect2:
+	return Rect2(Vector2.ZERO, Vector2(view_w, view_h) * TILE_SIZE)
+
+
+## The ground stack under a point, or empty if that tile has nothing on it.
+## Counts are no longer painted on the floor, so this is how a player finds out
+## what a pile is and how much of it there is.
+func ground_at(local_pos: Vector2) -> Dictionary:
+	var origin := Vector2(_camera.x - view_w / 2.0, _camera.y - view_h / 2.0)
+	var tile := (local_pos / TILE_SIZE + origin).floor()
+	var stack: Variant = _ground.get("%d,%d" % [int(tile.x), int(tile.y)])
+	if stack == null:
+		return {}
+	return {
+		"item_id": int(stack["item_id"]),
+		"amount": int(stack["amount"]),
+		"x": int(tile.x),
+		"y": int(tile.y),
+	}
+
+
 ## _entity_box is roughly what the character covers on screen: one tile wide,
 ## and one and a half tall reaching up from the feet.
 func _entity_box(entity: Dictionary, origin: Vector2) -> Rect2:
@@ -248,6 +340,8 @@ func _draw() -> void:
 	else:
 		_draw_placeholder_floor(first, shift)
 
+	_draw_ground(origin)
+
 	var ids: Array = _entities.keys()
 	# Painter's order: whoever stands further down overlaps whoever is behind.
 	ids.sort_custom(func(a, b): return _entities[a]["render"].y < _entities[b]["render"].y)
@@ -258,7 +352,29 @@ func _draw() -> void:
 
 	if _has_map and _sprites.is_loaded():
 		_draw_layer(_layer3, first, shift, false)
-		_draw_layer(_layer4, first, shift, false)
+		# Layer 4 is the roofs, and it is skipped entirely while the player is
+		# standing under one. Argentum does the same: walk into a house and the
+		# roof comes off so you can see what you are doing.
+		#
+		# Drawing it unconditionally is what made a house feel like a trap —
+		# 118 of Ullathorpe's walkable tiles are roofed, and standing on one
+		# put an opaque roof over the player, the doorway and everything else.
+		# Nothing was blocking the way out; there was just no way to see it.
+		if not _under_roof():
+			_draw_layer(_layer4, first, shift, false)
+
+
+## Whether the local player is standing on a tile the map marks as being under
+## a roof. The whole roof layer is hidden while they are, rather than only the
+## tiles immediately around them: a building's roof is one visual object, and
+## punching a player-shaped hole in it looks worse than taking it off.
+func _under_roof() -> bool:
+	var me: Variant = _entities.get(local_id)
+	if me == null:
+		return false
+	var tile: Vector2 = me["render"].round()
+	var index := int(tile.y) * map_width + int(tile.x)
+	return _roofed.has(index)
 
 
 ## _draw_layer paints one Argentum layer across the visible window. Layer 1 is a
@@ -292,6 +408,32 @@ func _draw_layer(layer: Variant, first: Vector2i, shift: Vector2, dense: bool) -
 			draw_texture_rect_region(_sprites.atlas, Rect2(at, src.size), src)
 
 
+## Ground loot draws between the floor and the characters — the same order
+## Argentum itself uses, so a dropped sword reads as lying on the tile rather
+## than floating over whoever is standing near it.
+func _draw_ground(origin: Vector2) -> void:
+	if not _sprites.is_loaded() or _ground.is_empty():
+		return
+	var font := ThemeDB.fallback_font
+	for key: String in _ground:
+		var parts := key.split(",")
+		var tile := Vector2(float(parts[0]), float(parts[1]))
+		var stack: Dictionary = _ground[key]
+		var item := _data.item(int(stack.get("item_id", 0)))
+		if item.is_empty():
+			continue
+
+		var rect: Rect2 = _sprites.grh_rect(int(item.get("grh", 0)), _world_time)
+		if rect.size.x <= 0.0:
+			continue
+		var at := (tile - origin) * TILE_SIZE + Vector2((TILE_SIZE - rect.size.x) * 0.5, TILE_SIZE - rect.size.y)
+		draw_texture_rect_region(_sprites.atlas, Rect2(at, rect.size), rect)
+		# No count is painted on the tile. Argentum does not label the floor
+		# either, and with potions now lying on a quarter of the map the labels
+		# were the densest thing on screen — a field of "x25" over the actual
+		# sprites. Clicking a stack reports what it is instead; see ground_at.
+
+
 func _draw_placeholder_floor(first: Vector2i, shift: Vector2) -> void:
 	for vy in view_h + 2:
 		for vx in view_w + 2:
@@ -303,6 +445,75 @@ func _draw_placeholder_floor(first: Vector2i, shift: Vector2) -> void:
 				color = COLOR_WALL if is_blocked(tile.x, tile.y) else COLOR_FLOOR
 			draw_rect(rect, color)
 			draw_rect(rect, COLOR_GRID, false, 1.0)
+
+
+## Draws one character's five layers in Argentum's own order: body, head,
+## helmet, weapon, shield (CharRender, TileEngine.bas:1362-1398).
+##
+## The order matters and is not the obvious one — weapon and shield go on top
+## of the head, not under it, which is what lets a weapon correctly occlude the
+## head on north-facing frames.
+##
+## Positioning is equally deliberate. Body, weapon and shield all draw at the
+## character's own position with no offset: they are full-body overlay sprites,
+## not accessories anchored to a hand, and treating them as attachments is the
+## classic way to get this subtly wrong. Head and helmet are the only offset
+## layers, by the body's own HeadOffset from Personajes.ini, with the helmet
+## taking a further +1 on X and OFFSET_HEAD on Y.
+##
+## Returns false when the body could not be resolved, so the caller can fall
+## back to a placeholder rather than drawing a floating head.
+func _draw_character(entity: Dictionary, foot: Vector2, tint: Color) -> bool:
+	var heading := int(entity["heading"])
+	var anim := float(entity["anim"])
+	var moving := bool(entity["moving"])
+
+	var body := _sprites.body_rect(int(entity["body"]), heading, anim, moving)
+	if body.size.x <= 0.0:
+		return false
+
+	draw_texture_rect_region(_sprites.atlas, Rect2(_anchor(foot, body.size), body.size), body, tint)
+
+	# Head and helmet are the only layers with an offset, and it is the body's
+	# own — different bodies wear their head at different heights, which is why
+	# it is per-body data rather than one constant.
+	var head_base := foot + _sprites.body_head_offset(int(entity["body"]))
+
+	var head := _sprites.head_rect(int(entity["head"]), heading)
+	if head.size.x > 0.0:
+		draw_texture_rect_region(_sprites.atlas, Rect2(_anchor(head_base, head.size), head.size), head, tint)
+
+	var helmet := _sprites.helmet_rect(int(entity.get("helmet", 0)), heading)
+	if helmet.size.x > 0.0:
+		var helmet_base := head_base + Vector2(1, AOSprites.OFFSET_HEAD)
+		draw_texture_rect_region(
+			_sprites.atlas, Rect2(_anchor(helmet_base, helmet.size), helmet.size), helmet, tint
+		)
+
+	# Weapon and shield share the body's anchor exactly: full-body overlay
+	# sprites, not accessories pinned to a hand.
+	var weapon := _sprites.weapon_rect(int(entity.get("weapon", 0)), heading, anim, moving)
+	if weapon.size.x > 0.0:
+		draw_texture_rect_region(_sprites.atlas, Rect2(_anchor(foot, weapon.size), weapon.size), weapon, tint)
+
+	var shield := _sprites.shield_rect(int(entity.get("shield", 0)), heading, anim, moving)
+	if shield.size.x > 0.0:
+		draw_texture_rect_region(_sprites.atlas, Rect2(_anchor(foot, shield.size), shield.size), shield, tint)
+
+	return true
+
+
+## Places one sprite the way Draw_Grh's Center=1 does: horizontally centred on
+## the tile and bottom-anchored to it, using **that sprite's own** size.
+##
+## The "own size" part is the whole point and is what I got wrong first time
+## round. Every character layer passes Center=1, so each one is anchored
+## independently from the same base point — the head is not positioned relative
+## to the body's top-left corner. Anchoring the 17x50 head box by the body's
+## ~25x45 box instead floats the head off the shoulders, which is exactly how
+## it looked.
+func _anchor(base: Vector2, size: Vector2) -> Vector2:
+	return base - Vector2(size.x * 0.5, size.y)
 
 
 func _draw_entity(id: int, entity: Dictionary, origin: Vector2, font: Font) -> void:
@@ -339,27 +550,7 @@ func _draw_entity(id: int, entity: Dictionary, origin: Vector2, font: Font) -> v
 
 	var drawn := false
 	if _sprites.is_loaded():
-		var body := _sprites.body_rect(
-			int(entity["body"]), int(entity["heading"]), float(entity["anim"]), bool(entity["moving"])
-		)
-		if body.size.x > 0.0:
-			var body_at := foot - Vector2(body.size.x * 0.5, body.size.y)
-			draw_texture_rect_region(
-				_sprites.atlas, Rect2(body_at, body.size), body, tint
-			)
-			var head := _sprites.head_rect(int(entity["head"]), int(entity["heading"]))
-			if head.size.x > 0.0:
-				# Both sprites are padded, so the head is placed by the measured
-				# bounds of the artwork rather than by the rectangles. Lining the
-				# rectangles up instead floats the head well above the shoulders.
-				var head_y := _sprites.head_offset_y(
-					int(entity["body"]), int(entity["head"]), HEAD_OVERLAP
-				)
-				var head_at := body_at + Vector2((body.size.x - head.size.x) * 0.5, head_y)
-				draw_texture_rect_region(
-					_sprites.atlas, Rect2(head_at, head.size), head, tint
-				)
-			drawn = true
+		drawn = _draw_character(entity, foot, tint)
 
 	if not drawn:
 		var side := TILE_SIZE * 0.7

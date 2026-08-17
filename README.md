@@ -9,6 +9,12 @@ ofrecerle el código fuente completo a quien juegue. Ver [CREDITS.md](CREDITS.md
 Servidor autoritativo headless en Go. Godot es **solo cliente**: renderiza e
 manda input, no simula nada.
 
+## Documentos
+
+- [RESUMEN-EJECUTIVO.md](RESUMEN-EJECUTIVO.md) — qué es, qué se logró, qué falta
+- [RESUMEN-FUNCIONAL.md](RESUMEN-FUNCIONAL.md) — todo lo que hace el juego hoy, en detalle
+- [DIFICULTADES.md](DIFICULTADES.md) — lo que costó y por qué
+
 ## Estado
 
 Vertical slice del loop de red. Andando hoy:

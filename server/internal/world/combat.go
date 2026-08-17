@@ -201,11 +201,52 @@ func (w *World) attack(p *Player) {
 	w.reportCombat(p, victim, result)
 
 	if result.Killed {
-		victim.Dead = true
-		// The body stays on the map but stops blocking, so a corpse cannot
-		// wall off a doorway for the rest of the match.
-		delete(w.occupied, tileKey{victim.X, victim.Y})
+		w.kill(victim, p)
 		w.log.Info("player killed", "victim", victim.Name, "by", p.Name, "alive", w.aliveCount())
+	}
+}
+
+// Argentum's ghost, from Declares.bas: a dead character is redrawn as body
+// iCuerpoMuerto with head iCabezaMuerto, weapon, shield and helmet cleared,
+// facing south (General.bas does all five together). Body 8 really is the
+// corpse in the original index — its Cuerpos.ini record has Walk2 and Walk4 at
+// zero, because a corpse has no sideways walk frames — which is also why the
+// live spawn pool in world.go stops at 7.
+const (
+	ghostBody = 8   // iCuerpoMuerto
+	ghostHead = 500 // iCabezaMuerto
+)
+
+// kill is the one place a player stops being alive, whether a sword, a spell or
+// the black potion did it. All three used to inline the same four steps and had
+// already drifted apart — the potion path forgot to scatter until after the
+// bottle was consumed, and none of them turned the body into a ghost.
+//
+// killer may be nil: the black potion has no one to credit.
+func (w *World) kill(victim, killer *Player) {
+	if victim.Dead {
+		return
+	}
+	victim.Dead = true
+	victim.Vitals.HP = 0
+
+	// The ghost stays on the map but stops blocking, so a corpse cannot wall
+	// off a doorway for the rest of the match.
+	delete(w.occupied, tileKey{victim.X, victim.Y})
+	victim.Body, victim.Head = ghostBody, ghostHead
+	victim.Heading = protocol.South
+
+	// A ghost is not hidden, paralyzed or buffed — death clears the lot rather
+	// than leaving a corpse that is still counting down someone's Celeridad.
+	victim.revealHidden()
+	victim.ParalyzedUntil, victim.ImmobilizedUntil = 0, 0
+	victim.AgilityDelta, victim.AgilityUntil = 0, 0
+	victim.StrengthDelta, victim.StrengthUntil = 0, 0
+
+	w.scatterInventory(victim)
+
+	if killer != nil && killer.ID != victim.ID {
+		killer.Kills++
 	}
 }
 

@@ -1,6 +1,10 @@
 package world
 
-import "juegito/server/internal/protocol"
+import (
+	"math"
+
+	"juegito/server/internal/protocol"
+)
 
 // Argentum's class and race tables, ported from Balance.dat.
 //
@@ -131,11 +135,21 @@ var allRaces = []Race{Humano, Elfo, Drow, Enano, Gnomo}
 const maxLevel = 45
 
 // baseAttribute is what every character starts from before its race adjusts
-// it. Argentum rolls dice across a match's worth of characters; here, with
-// everyone spawning at the level cap and nobody grinding, only the race
-// modifiers create the spread between characters. 30 approximates a
-// maxed-out roll under Argentum's usual attribute range (roughly 6-38).
-const baseAttribute = 30
+// it. Argentum rolls dice per character; here, with everyone spawning at the
+// level cap and nobody grinding, only the race modifiers create the spread.
+//
+// 20 is MaxDados from the original's own Server.ini, where character creation
+// rolls RandomNumber(MinDados, MaxDados) — 18 to 20 — into all five
+// attributes (Protocol.bas, HandleThrowDices). Taking the top of that range is
+// the "everyone spawns maxed" rule applied to the dice.
+//
+// This was 30 on the guess that Argentum's range ran to roughly 38, which is
+// wrong: 40 is MAXATRIBUTOS, the ceiling a *potion* may buff you to, not
+// anything creation can roll. The error was invisible in isolation and loud
+// once it reached mana, where every caster term is a multiple of Inteligencia:
+// it inflated an Asesino at the level cap to 1370 mana, half again what the
+// original's own numbers produce.
+const baseAttribute = 20
 
 func rolledAttributes(race Race) Attributes {
 	mod := raceModifiers[race]
@@ -153,14 +167,91 @@ func rolledAttributes(race Race) Attributes {
 // poderAtaque assume a character can actually reach the top band.
 var startingSkills = Skills{Armas: 100, Wrestling: 100, Tacticas: 100, Defensa: 100, Magia: 100}
 
+// statMaxMana is STAT_MAXMAN from Declares.bas — the source's hard ceiling on
+// mana, applied on every level-up. Nothing here reaches it (the richest build
+// lands around 4300), but it is the real cap and costs nothing to honour.
+const statMaxMana = 9999
+
+// initialMana is the mana block of SetAttributesToNewUser (TCP.bas): what a
+// level 1 character is handed before any level-up runs.
+func initialMana(class Class, inteligencia int) int {
+	switch class {
+	case Mago:
+		return inteligencia * 3
+	case Clerigo, Druida, Bardo, Asesino, Bandido, Paladin:
+		return 50
+	default:
+		// Guerrero, Cazador, Pirata, Ladrón and Trabajador. The source gives
+		// them no mana at all, and no level-up ever adds any, so they finish
+		// the climb still at zero — see manaFor.
+		return 0
+	}
+}
+
+// manaPerLevel is the AumentoMANA arm of the level-up switch in
+// SubirNivel (Modulo_UsUaRiOs.bas).
+//
+// The source declares `AumentoMANA As Integer`, so each fractional formula is
+// rounded once per level-up and the rounded value is what gets added — it is
+// not accumulated at full precision and rounded at the end. That distinction
+// is worth 8 mana on a Mago over 44 levels, which is why the rounding happens
+// here rather than in manaFor. VB6 rounds half to even, which is exactly what
+// math.RoundToEven does; none of the five race Inteligencia values actually
+// land on a .5 with these coefficients, but matching the source's rule costs
+// nothing and survives someone retuning baseAttribute later.
+func manaPerLevel(class Class, inteligencia int) int {
+	intel := float64(inteligencia)
+	switch class {
+	case Mago:
+		return int(math.RoundToEven(2.8 * intel))
+	case Clerigo, Druida, Bardo:
+		return int(math.RoundToEven(2 * intel))
+	case Paladin, Asesino:
+		return int(math.RoundToEven(intel))
+	case Bandido:
+		// Written `.Stats.UserAtributos(Inteligencia) / 3 * 2` in the source —
+		// two thirds, evaluated left to right in floating point, so it is not
+		// the same as integer-dividing by 3 first.
+		return int(math.RoundToEven(intel / 3 * 2))
+	default:
+		return 0
+	}
+}
+
+// manaFor is the mana a character has at the level cap, replaying the source's
+// two mana sites: initialMana for level 1, then manaPerLevel once for each of
+// the maxLevel-1 level-ups that would have followed.
+//
+// This is where class and race meet. Class picks the formula; race feeds it,
+// because every caster term is a multiple of Inteligencia and Inteligencia is
+// one of the five attributes raceModifiers moves. A Gnomo Mago (INT 34) and an
+// Enano Mago (INT 28) run the identical formula and land 766 mana apart, and a
+// Guerrero of any race lands on zero — non-casters having no mana at all is
+// the source's own design, not a gap in this port. It does mean five of the
+// twelve classes can never pay for a spell despite knowing the list, which is
+// what Argentum intends and what the spell gate in spells.go already reports
+// as "no tenés maná suficiente".
+func manaFor(class Class, race Race) int {
+	inteligencia := rolledAttributes(race).Inteligencia
+	mana := initialMana(class, inteligencia) + (maxLevel-1)*manaPerLevel(class, inteligencia)
+	if mana > statMaxMana {
+		mana = statMaxMana
+	}
+	return mana
+}
+
 // vitalsFor scales health by the class's MODVIDA column times maxLevel —
 // Argentum's Vida is health-per-level, so a warrior's 10/level against a
 // mage's 7.5/level compounds into a real gap at the cap: 450 HP vs 337.
-func vitalsFor(class Class) protocol.Vitals {
+//
+// Mana takes race as well as class, for the reason manaFor explains.
+func vitalsFor(class Class, race Race) protocol.Vitals {
 	vitals := startingVitals
 	vitals.Level = maxLevel
 	vitals.MaxExp = 0 // there is no next level to progress toward
 	vitals.MaxHP = int(classModifiers[class].Vida * maxLevel)
 	vitals.HP = vitals.MaxHP
+	vitals.MaxMana = manaFor(class, race)
+	vitals.Mana = vitals.MaxMana
 	return vitals
 }

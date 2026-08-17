@@ -53,6 +53,17 @@ type ClientMap struct {
 	Layer2 map[int]int `json:"layer2"`
 	Layer3 map[int]int `json:"layer3"`
 	Layer4 map[int]int `json:"layer4"`
+
+	// Roofed is every tile the map marks as being under a roof — eTrigger's
+	// BAJOTECHO (1) and CASA (2), from Declares.bas:301-311. Ullathorpe has
+	// 390 of them.
+	//
+	// Without this the client draws layer 4 unconditionally and a player who
+	// walks into a house disappears under an opaque roof: 118 of Ullathorpe's
+	// walkable tiles have one. That reads exactly like being trapped, because
+	// you can no longer see yourself or the door you came in through. The
+	// trigger was always parsed here and simply never handed on.
+	Roofed []int `json:"roofed"`
 }
 
 // ServerMap is what the simulation needs, and nothing more: where you cannot
@@ -192,6 +203,13 @@ func (m *AOMap) clientMap(name string) ClientMap {
 			if grh := m.Tiles[i].Layers[layer]; grh > 0 {
 				sparse[layer][i] = grh
 			}
+		}
+		// eTrigger BAJOTECHO=1, CASA=2. The rest — POSINVALIDA, ZONASEGURA,
+		// ANTIPIQUETE, ZONAPELEA — are rules about NPCs, stealing and faction
+		// state that this game does not have, so only the two roof triggers
+		// are carried.
+		if t := m.Tiles[i].Trigger; t == 1 || t == 2 {
+			c.Roofed = append(c.Roofed, i)
 		}
 	}
 	return c

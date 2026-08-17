@@ -10,7 +10,7 @@ const useCooldownTicks = 6 // 0.3s at 20Hz
 // the inventory click handler, folded into one entry point because that is
 // what a single inventory click is in the source: which branch runs depends
 // on the item's own ObjType, never on what the client claims to be doing.
-func (w *World) useItem(p *Player, slotIndex int) {
+func (w *World) useItem(p *Player, slotIndex int, action protocol.UseAction) {
 	if p.Dead {
 		w.sendTo(p, protocol.TypeUseResult, protocol.UseResult{Failed: "Estás muerto."})
 		return
@@ -25,7 +25,20 @@ func (w *World) useItem(p *Player, slotIndex int) {
 		return
 	}
 
-	if equipmentTypes[item.Type] {
+	// An explicit action that does not match the slot is refused and said out
+	// loud. The whole point of separating E from U is that neither one ever
+	// quietly does the other's job — a mistyped equip must not drink anything.
+	equipment := equipmentTypes[item.Type]
+	switch {
+	case action == protocol.UseEquip && !equipment:
+		w.sendTo(p, protocol.TypeUseResult, protocol.UseResult{Failed: "Eso no se equipa."})
+		return
+	case action == protocol.UseUseUp && equipment:
+		w.sendTo(p, protocol.TypeUseResult, protocol.UseResult{Failed: "Eso no se consume, se equipa."})
+		return
+	}
+
+	if equipment {
 		w.equip(p, idx, item)
 		return
 	}
@@ -45,6 +58,27 @@ func (w *World) useItem(p *Player, slotIndex int) {
 	}
 }
 
+// swapSlots is the inventory window's own drag-and-drop: reorder two bag
+// positions without touching what's equipped or how much of anything is
+// carried. Landing on an empty slot just relabels the moved item's own Slot
+// field rather than needing a partner to trade with — there's nothing there
+// to swap with.
+func (w *World) swapSlots(p *Player, from, to int) {
+	if p.Dead || from == to {
+		return
+	}
+	_, fi := findSlot(p.Inventory, from)
+	if fi < 0 {
+		return // nothing at the source; a stale client action
+	}
+	if _, ti := findSlot(p.Inventory, to); ti >= 0 {
+		p.Inventory[fi].Slot, p.Inventory[ti].Slot = to, from
+	} else {
+		p.Inventory[fi].Slot = to
+	}
+	w.sendLoadout(p)
+}
+
 func findSlot(inv []protocol.InventorySlot, slotIndex int) (protocol.InventorySlot, int) {
 	for i, s := range inv {
 		if s.Slot == slotIndex {
@@ -52,6 +86,23 @@ func findSlot(inv []protocol.InventorySlot, slotIndex int) (protocol.InventorySl
 		}
 	}
 	return protocol.InventorySlot{}, -1
+}
+
+// freeSlotNumber is the lowest slot index not already occupied. Inventories
+// here are unbounded and consumeStack removes slots from the middle rather
+// than leaving zeroed placeholders, so "lowest free index" — scanned fresh
+// each time — is simpler than a counter that would need seeding from
+// whatever the starting kit already used.
+func freeSlotNumber(inv []protocol.InventorySlot) int {
+	used := make(map[int]bool, len(inv))
+	for _, s := range inv {
+		used[s.Slot] = true
+	}
+	for i := 0; ; i++ {
+		if !used[i] {
+			return i
+		}
+	}
 }
 
 // equip is EquiparInvItem's weapon/shield/armour/helmet/ring branches, which
@@ -63,6 +114,15 @@ func (w *World) equip(p *Player, idx int, item Item) {
 		p.Inventory[idx].Equipped = false
 		w.sendLoadout(p)
 		w.sendTo(p, protocol.TypeUseResult, protocol.UseResult{ItemName: item.Name, Unequipped: true})
+		return
+	}
+
+	// Every class starts with gear it can already use (see loadout.go), but
+	// ground loot is unfiltered — this is the same ClasePuedeUsarItem gate
+	// classic AO runs in EquiparInvItem, and it only matters now that a class
+	// can pick up something it was never handed at spawn.
+	if classForbidsUse(item, p.Class) {
+		w.sendTo(p, protocol.TypeUseResult, protocol.UseResult{ItemName: item.Name, Failed: "Tu clase no puede usar este objeto."})
 		return
 	}
 
@@ -122,14 +182,17 @@ func (w *World) drinkPotion(p *Player, idx int, item Item) {
 		// The joke item: an instant, unconditional kill. classic AO gated
 		// this to non-GM accounts; there is no GM concept in a match, so it
 		// simply always fires.
-		p.Vitals.HP = 0
-		p.Dead = true
-		delete(w.occupied, tileKey{p.X, p.Y})
 		result.Died = true
 		w.log.Info("player drank the black potion", "who", p.Name, "alive", w.aliveCount())
 	}
 
+	// Consume the bottle before dying, not after: kill() scatters the bag and
+	// nils it, and consumeStack indexing into that afterward would panic.
+	// Nobody is credited with the kill — you did this to yourself.
 	consumeStack(p, idx)
+	if result.Died {
+		w.kill(p, nil)
+	}
 	w.sendLoadout(p)
 	w.sendTo(p, protocol.TypeUseResult, result)
 }

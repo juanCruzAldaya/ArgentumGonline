@@ -7,6 +7,10 @@ import (
 	"mime"
 	"net"
 	"net/http"
+	"os"
+	"path"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -58,7 +62,7 @@ func (s *WSServer) ListenAndServe(ctx context.Context) error {
 		// and hand back the wrong type for .wasm, which browsers refuse to
 		// stream-compile. Setting it explicitly costs nothing.
 		_ = mime.AddExtensionType(".wasm", "application/wasm")
-		mux.Handle("/", crossOriginIsolated(http.FileServer(http.Dir(s.StaticDir))))
+		mux.Handle("/", crossOriginIsolated(precompressed(s.StaticDir, http.FileServer(http.Dir(s.StaticDir)))))
 		s.Logger.Info("serving web client", "dir", s.StaticDir)
 	}
 
@@ -104,6 +108,56 @@ func crossOriginIsolated(next http.Handler) http.Handler {
 		w.Header().Set("Cross-Origin-Opener-Policy", "same-origin")
 		w.Header().Set("Cross-Origin-Embedder-Policy", "require-corp")
 		next.ServeHTTP(w, r)
+	})
+}
+
+// precompressed serves "<file>.gz" in place of "<file>" when one exists and
+// the client accepts gzip, falling through to next otherwise.
+//
+// The web export is 46MB on disk and 38MB of that is one wasm. http.FileServer
+// does not compress, so without this every single first load pulls the whole
+// 46MB even though the browser asked for gzip — against ~17MB compressed. The
+// files are compressed once at build time rather than per request, because the
+// machine serving them is a 256MB shared CPU and gzipping 38MB per visitor
+// would cost far more than the bandwidth saved.
+//
+// Content-Type has to be set from the *uncompressed* name: Go would otherwise
+// infer "application/gzip" from the .gz suffix and the browser would refuse to
+// stream-compile the wasm.
+func precompressed(dir string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+			next.ServeHTTP(w, r)
+			return
+		}
+		// path.Clean via http.ServeFile's own rules is not enough here because
+		// we build a filesystem path by hand; reject anything with a traversal
+		// rather than trying to normalise it.
+		name := path.Clean("/" + r.URL.Path)
+		if strings.Contains(name, "..") {
+			next.ServeHTTP(w, r)
+			return
+		}
+		gz := filepath.Join(dir, filepath.FromSlash(name)+".gz")
+		info, err := os.Stat(gz)
+		if err != nil || info.IsDir() {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		// Always set it, never leave it to ServeFile. Given a .gz path Go
+		// infers "application/x-gzip", which is both wrong and self-
+		// contradictory next to Content-Encoding: gzip — the body is a wasm
+		// or a pack that happens to be transfer-compressed, not a gzip file.
+		// Godot's own .pck has no registered MIME type, hence the fallback.
+		ctype := mime.TypeByExtension(filepath.Ext(name))
+		if ctype == "" {
+			ctype = "application/octet-stream"
+		}
+		w.Header().Set("Content-Type", ctype)
+		w.Header().Set("Content-Encoding", "gzip")
+		w.Header().Set("Vary", "Accept-Encoding")
+		http.ServeFile(w, r, gz)
 	})
 }
 

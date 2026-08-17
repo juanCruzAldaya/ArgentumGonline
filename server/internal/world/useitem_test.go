@@ -36,7 +36,7 @@ func TestEquipTogglesOnAndOff(t *testing.T) {
 	p, conn := place(t, w, "wachin", 5, 5)
 	p.Inventory = []protocol.InventorySlot{{Slot: 0, ItemID: 1, Amount: 1}}
 
-	w.useItem(p, 0)
+	w.useItem(p, 0, protocol.UseAuto)
 	if !p.Inventory[0].Equipped {
 		t.Fatal("weapon did not equip")
 	}
@@ -48,7 +48,7 @@ func TestEquipTogglesOnAndOff(t *testing.T) {
 		t.Error("UseResult did not report Equipped")
 	}
 
-	w.useItem(p, 0)
+	w.useItem(p, 0, protocol.UseAuto)
 	if p.Inventory[0].Equipped {
 		t.Error("clicking an equipped weapon should have taken it off")
 	}
@@ -62,7 +62,7 @@ func TestEquippingReplacesTheOldOneInThatSlot(t *testing.T) {
 		{Slot: 1, ItemID: 2, Amount: 1},                 // Espada Nueva, in the bag
 	}
 
-	w.useItem(p, 1)
+	w.useItem(p, 1, protocol.UseAuto)
 
 	if p.Inventory[0].Equipped {
 		t.Error("the old weapon is still marked equipped")
@@ -76,6 +76,48 @@ func TestEquippingReplacesTheOldOneInThatSlot(t *testing.T) {
 	}
 }
 
+func TestSwapSlotsExchangesTwoOccupiedSlots(t *testing.T) {
+	w := itemWorld(t)
+	p, _ := place(t, w, "wachin", 5, 5)
+	p.Inventory = []protocol.InventorySlot{
+		{Slot: 0, ItemID: 1, Amount: 1},
+		{Slot: 1, ItemID: 3, Amount: 1},
+	}
+
+	w.swapSlots(p, 0, 1)
+
+	if p.Inventory[0].Slot != 1 || p.Inventory[0].ItemID != 1 {
+		t.Errorf("first slot = %+v, want the sword moved to slot 1", p.Inventory[0])
+	}
+	if p.Inventory[1].Slot != 0 || p.Inventory[1].ItemID != 3 {
+		t.Errorf("second slot = %+v, want the shield moved to slot 0", p.Inventory[1])
+	}
+}
+
+func TestSwapSlotsMovesIntoAnEmptySlot(t *testing.T) {
+	w := itemWorld(t)
+	p, _ := place(t, w, "wachin", 5, 5)
+	p.Inventory = []protocol.InventorySlot{{Slot: 0, ItemID: 1, Amount: 1}}
+
+	w.swapSlots(p, 0, 5)
+
+	if len(p.Inventory) != 1 || p.Inventory[0].Slot != 5 {
+		t.Errorf("inventory = %+v, want the only item relabeled to slot 5", p.Inventory)
+	}
+}
+
+func TestSwapSlotsIgnoresAStaleSourceSlot(t *testing.T) {
+	w := itemWorld(t)
+	p, _ := place(t, w, "wachin", 5, 5)
+	p.Inventory = []protocol.InventorySlot{{Slot: 0, ItemID: 1, Amount: 1}}
+
+	w.swapSlots(p, 9, 0) // nothing at 9
+
+	if p.Inventory[0].Slot != 0 {
+		t.Error("swapping from an empty source should not have touched the real item")
+	}
+}
+
 func TestHealthPotionHealsAndCapsAtMax(t *testing.T) {
 	w := itemWorld(t)
 	p, conn := place(t, w, "wachin", 5, 5)
@@ -84,7 +126,7 @@ func TestHealthPotionHealsAndCapsAtMax(t *testing.T) {
 	p.Vitals.HP = 90
 	p.Inventory = []protocol.InventorySlot{{Slot: 0, ItemID: 10, Amount: 2}}
 
-	w.useItem(p, 0)
+	w.useItem(p, 0, protocol.UseAuto)
 
 	if p.Vitals.HP != 100 {
 		t.Errorf("hp = %d, want 100 (30 rolled, capped at max)", p.Vitals.HP)
@@ -113,7 +155,7 @@ func TestManaPotionUsesTheFormulaNotItemFields(t *testing.T) {
 	p.Vitals.Mana = 0
 	p.Inventory = []protocol.InventorySlot{{Slot: 0, ItemID: 11, Amount: 1}}
 
-	w.useItem(p, 0)
+	w.useItem(p, 0, protocol.UseAuto)
 
 	want := 200*4/100 + maxLevel/2 + 40/maxLevel
 	if p.Vitals.Mana != want {
@@ -128,7 +170,7 @@ func TestAgilityPotionAppliesATemporaryBuff(t *testing.T) {
 	p.Attributes.Agilidad = 20
 	p.Inventory = []protocol.InventorySlot{{Slot: 0, ItemID: 12, Amount: 1}}
 
-	w.useItem(p, 0)
+	w.useItem(p, 0, protocol.UseAuto)
 
 	if got := w.effectiveAttributes(p).Agilidad; got != 25 {
 		t.Errorf("effective agility = %d, want 25 (20 base + 5 from the potion)", got)
@@ -145,9 +187,9 @@ func TestFoodRestoresHungerAndDrinkRestoresThirst(t *testing.T) {
 		{Slot: 1, ItemID: 21, Amount: 1},
 	}
 
-	w.useItem(p, 0)
+	w.useItem(p, 0, protocol.UseAuto)
 	w.tick += useCooldownTicks // otherwise the second use is dropped by the cooldown
-	w.useItem(p, 1)
+	w.useItem(p, 1, protocol.UseAuto)
 
 	if p.Vitals.Hunger != 65 {
 		t.Errorf("hunger = %d, want 65 (50 + 15 from the apple)", p.Vitals.Hunger)
@@ -162,7 +204,7 @@ func TestConsumingRemovesTheSlotAtZero(t *testing.T) {
 	p, _ := place(t, w, "wachin", 5, 5)
 	p.Inventory = []protocol.InventorySlot{{Slot: 0, ItemID: 20, Amount: 1}}
 
-	w.useItem(p, 0)
+	w.useItem(p, 0, protocol.UseAuto)
 
 	if len(p.Inventory) != 0 {
 		t.Errorf("inventory = %+v, want empty after the last unit was consumed", p.Inventory)
@@ -175,9 +217,9 @@ func TestUseCooldownBlocksChuggingPotions(t *testing.T) {
 	p.Vitals.MaxHP, p.Vitals.HP = 100, 10
 	p.Inventory = []protocol.InventorySlot{{Slot: 0, ItemID: 10, Amount: 3}}
 
-	w.useItem(p, 0)
+	w.useItem(p, 0, protocol.UseAuto)
 	afterFirst := p.Vitals.HP
-	w.useItem(p, 0) // immediately again, same tick
+	w.useItem(p, 0, protocol.UseAuto) // immediately again, same tick
 
 	if p.Vitals.HP != afterFirst {
 		t.Errorf("hp changed on the second drink, want the cooldown to have blocked it")
@@ -192,7 +234,7 @@ func TestBlackPotionKillsTheDrinker(t *testing.T) {
 	p, conn := place(t, w, "wachin", 5, 5)
 	p.Inventory = []protocol.InventorySlot{{Slot: 0, ItemID: 15, Amount: 1}}
 
-	w.useItem(p, 0)
+	w.useItem(p, 0, protocol.UseAuto)
 
 	if !p.Dead {
 		t.Error("the black potion did not kill the drinker")
@@ -213,60 +255,70 @@ func TestDeadPlayersCannotUseItems(t *testing.T) {
 	p.Dead = true
 	p.Inventory = []protocol.InventorySlot{{Slot: 0, ItemID: 10, Amount: 1}}
 
-	w.useItem(p, 0)
+	w.useItem(p, 0, protocol.UseAuto)
 
 	if p.Vitals.HP != 50 {
 		t.Error("a dead player drank a healing potion")
 	}
 }
 
-func TestBestLoadoutPicksTheStrongestOfEachSlotAndOneOfEachPotion(t *testing.T) {
-	loadout := computeBestLoadout(map[int]Item{
-		1:  {ID: 1, Type: ItemWeapon, MaxHit: 3},
-		2:  {ID: 2, Type: ItemWeapon, MaxHit: 10}, // strongest weapon
-		3:  {ID: 3, Type: ItemShield, MaxDef: 2},
-		10: {ID: 10, Type: ItemPotion, PotionType: PotionHealth},
-		11: {ID: 11, Type: ItemPotion, PotionType: PotionMana},
-		15: {ID: 15, Type: ItemPotion, PotionType: PotionBlack}, // must be excluded
-		20: {ID: 20, Type: ItemFood, Restores: 15},
-	}, Guerrero)
+// The starting kit is deliberately minimal — a battle royale spawn, not the
+// "best gear for the class" loadout an earlier design used. Only newbie-tagged
+// items are eligible at all, so an objectively stronger non-newbie weapon must
+// never show up here; that is what makes finding one on the ground later feel
+// like something.
+func TestStartingKitOnlyUsesNewbieGearAndOneOfEachPotion(t *testing.T) {
+	kit := computeStartingKit(map[int]Item{
+		1:  {ID: 1, Name: "Espada Legendaria", Type: ItemWeapon, MaxHit: 50}, // not newbie: must be excluded
+		2:  {ID: 2, Name: "Daga (Newbie)", Type: ItemWeapon, MaxHit: 3},
+		3:  {ID: 3, Name: "Tunica (H/E/EO) (Newbie)", Type: ItemArmor, MaxDef: 0},
+		10: {ID: 10, Name: "Poción Roja (Newbie)", Type: ItemPotion, PotionType: PotionHealth},
+		11: {ID: 11, Name: "Poción Azul (Newbie)", Type: ItemPotion, PotionType: PotionMana},
+		15: {ID: 15, Name: "Poción Negra (Newbie)", Type: ItemPotion, PotionType: PotionBlack}, // must be excluded
+		20: {ID: 20, Name: "Manzana (Newbie)", Type: ItemFood, Restores: 15},
+		21: {ID: 21, Name: "Botella (Newbie)", Type: ItemDrink, Restores: 20},
+	}, Guerrero, Humano)
 
 	byItem := map[int]bool{}
-	for _, slot := range loadout.slots {
+	for _, slot := range kit.slots {
 		byItem[slot.ItemID] = true
 		if slot.ItemID == 15 {
 			t.Error("the black potion ended up in the spawn loadout")
 		}
 	}
-	if !byItem[2] {
-		t.Error("did not pick the strongest weapon (id 2, 10 max hit)")
-	}
 	if byItem[1] {
-		t.Error("picked the weaker weapon alongside the stronger one")
+		t.Error("gave a non-newbie weapon at spawn; battle royale gear should start minimal")
 	}
-	if !byItem[3] || !byItem[10] || !byItem[11] || !byItem[20] {
-		t.Errorf("missing an expected slot: %+v", loadout.slots)
+	if !byItem[2] || !byItem[3] || !byItem[10] || !byItem[11] || !byItem[20] || !byItem[21] {
+		t.Errorf("missing an expected newbie slot: %+v", kit.slots)
 	}
 }
 
-// The point of computing a loadout per class: a Mago should never spawn
-// holding a weapon Mago is barred from — even if it is objectively the
-// strongest one on offer. classForbidsUse is exactly EquiparInvItem's own
-// check, so this is really asserting the loadout picker respects it.
-func TestBestLoadoutSkipsItemsForbiddenToTheClass(t *testing.T) {
-	loadout := computeBestLoadout(map[int]Item{
-		1: {ID: 1, Name: "Espada Larga", Type: ItemWeapon, MaxHit: 10, ForbiddenClasses: []string{"MAGO"}},
-		2: {ID: 2, Name: "Daga Vieja", Type: ItemWeapon, MaxHit: 3},
-	}, Mago)
+// The point of computing a kit per class: a Mago should never spawn holding a
+// weapon Mago is barred from, even among newbie-tier items. classForbidsUse is
+// exactly EquiparInvItem's own check, so this is really asserting the kit
+// picker respects it — and that among the newbie weapons Mago may use, it
+// picks the class-flavored staff over the universal dagger (see loadout.go's
+// comment on why forbidden-class-count is the tell, not StaffPower).
+func TestStartingKitSkipsForbiddenWeaponsAndPrefersTheClassFlavoredOne(t *testing.T) {
+	kit := computeStartingKit(map[int]Item{
+		1: {ID: 1, Name: "Espada (Newbie)", Type: ItemWeapon, MaxHit: 10, ForbiddenClasses: []string{"MAGO"}},
+		2: {ID: 2, Name: "Daga (Newbie)", Type: ItemWeapon, MaxHit: 3},
+		3: {ID: 3, Name: "Baston de Mago (Newbie)", Type: ItemWeapon, MaxHit: 1,
+			ForbiddenClasses: []string{"GUERRERO", "CAZADOR", "PALADIN"}},
+	}, Mago, Humano)
 
 	byItem := map[int]bool{}
-	for _, slot := range loadout.slots {
+	for _, slot := range kit.slots {
 		byItem[slot.ItemID] = true
 	}
 	if byItem[1] {
 		t.Error("gave a Mago a weapon explicitly forbidden to Mago")
 	}
-	if !byItem[2] {
-		t.Error("skipped the only weapon a Mago may actually use")
+	if byItem[2] {
+		t.Error("fell back to the universal dagger despite a class-flavored staff being allowed")
+	}
+	if !byItem[3] {
+		t.Error("did not pick the staff, the only class-flavored weapon Mago may use")
 	}
 }

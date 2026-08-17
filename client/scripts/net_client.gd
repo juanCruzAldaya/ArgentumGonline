@@ -49,6 +49,35 @@ func send_hide() -> void:
 	_send("hide", {})
 
 
+## Agarrar: no payload — always takes from the tile the player stands on.
+func send_pickup() -> void:
+	_send("pickup", {})
+
+
+## Tirar: drops one whole inventory slot onto the player's own tile.
+func send_drop(slot: int) -> void:
+	_send("drop", {"slot": slot})
+
+
+## Reorders two bag positions — the inventory window's own drag-and-drop.
+## Acting on a bag slot. action is "" for the original's overloaded click (what
+## a double-click sends, where the item's own type picks the branch), "equip"
+## for E, or "use" for U — the server refuses an action that does not match the
+## slot rather than silently doing the other one.
+func send_use_action(slot: int, action: String) -> void:
+	_send("use", {"slot": slot, "a": action})
+
+
+func send_swap(from_slot: int, to_slot: int) -> void:
+	_send("swap", {"from": from_slot, "to": to_slot})
+
+
+## Reordering the spell book. Same payload shape as send_swap, different
+## message, because the bag and the book are separate lists server-side.
+func send_swap_spell(from_slot: int, to_slot: int) -> void:
+	_send("swapSpell", {"from": from_slot, "to": to_slot})
+
+
 ## Attacking carries no target: Argentum melee hits whatever stands on the tile
 ## you face, and the server works that out from your own heading.
 func send_attack() -> void:

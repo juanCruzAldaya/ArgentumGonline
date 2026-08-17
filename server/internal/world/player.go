@@ -31,8 +31,15 @@ type Player struct {
 	Skills     Skills
 
 	// Dead means eliminated. Argentum revives you; a battle royale does not,
-	// so this is terminal for the match.
+	// so this is terminal for the match. A dead player keeps playing in the
+	// only sense the original allows: as a ghost. See kill().
 	Dead bool
+
+	// Kills is how many players this one has eliminated. Argentum has no such
+	// counter — it has experience, which this game deleted along with levelling
+	// — so this is the battle royale's own replacement for "how am I doing",
+	// and it is what the click-to-inspect line reports.
+	Kills int
 
 	// Status effects. Each "Until" is an absolute world tick: the effect is
 	// active exactly while w.tick < the field. Zero means never applied, which
@@ -69,8 +76,9 @@ type Player struct {
 
 	conn transport.Conn
 
-	// lastMoveTick gates walking speed; see moveCooldownTicks.
-	lastMoveTick uint64
+	// moveReadyAt is the milltick this player may next step on; see
+	// moveCooldownMilliticks for why the clock is finer than a tick.
+	moveReadyAt uint64
 
 	// consecutiveDrops counts snapshots the client failed to accept in a row.
 	// A client that is merely stuttering recovers; one that never drains gets

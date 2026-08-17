@@ -71,15 +71,44 @@ func LoadSpells(path string) (map[int]Spell, error) {
 // SetSpells installs the spell table. Call before Run.
 func (w *World) SetSpells(spells map[int]Spell) { w.spells = spells }
 
+// SpellSlots is how many positions the spell book holds. Argentum's own spell
+// window is a fixed list you arrange yourself, gaps and all, rather than a
+// list that closes up behind whatever you happen to know — so Spells is a
+// fixed-length slice with 0 meaning "empty slot", and the order in it is the
+// player's, not the server's.
+const SpellSlots = 30
+
 // knowsSpell reports whether the player has this spell in their book. The
 // client shows only what it was told, but a modified one can name anything.
 func knowsSpell(p *Player, id int) bool {
+	if id == 0 {
+		return false // the empty-slot marker is not a castable spell
+	}
 	for _, known := range p.Spells {
 		if known == id {
 			return true
 		}
 	}
 	return false
+}
+
+// swapSpells is the spell window's drag-and-drop, the counterpart to
+// swapSlots. The book is a fixed set of positions, so unlike the bag there is
+// no "landing on nothing" case to special-case: every index in range holds
+// something, even if that something is the 0 that means empty, and swapping
+// two of them is the whole operation.
+//
+// Both indices are bounds-checked against the server's own SpellSlots rather
+// than trusted, for the same reason every other client-named index is.
+func (w *World) swapSpells(p *Player, from, to int) {
+	if p.Dead || from == to {
+		return
+	}
+	if from < 0 || from >= len(p.Spells) || to < 0 || to >= len(p.Spells) {
+		return
+	}
+	p.Spells[from], p.Spells[to] = p.Spells[to], p.Spells[from]
+	w.sendLoadout(p)
 }
 
 // cast resolves one spell against one target.
@@ -134,14 +163,15 @@ func (w *World) cast(caster *Player, spellID int, targetID EntityID) {
 		w.spellFailed(caster, "No tenés suficiente maná.")
 		return
 	}
-	if caster.Vitals.Stamina < spell.Stamina {
-		w.spellFailed(caster, "No tenés suficiente energía.")
-		return
-	}
-
+	// Stamina is deliberately not a gate and deliberately not spent. Argentum
+	// meters energy because it is an MMO where you fight for hours; this game
+	// is a battle royale where a match is minutes, and an energy floor there
+	// only ever decides a fight by who ran out rather than who played better —
+	// the same reasoning that made potions effectively unlimited (see
+	// startingKit). Spell.Stamina is still parsed from Hechizos.dat, so
+	// turning the cost back on is deleting this comment and subtracting it.
 	caster.lastCastTick = w.tick
 	caster.Vitals.Mana -= spell.Mana
-	caster.Vitals.Stamina -= spell.Stamina
 
 	// Casting reveals whoever was hidden, spell or skill alike — including a
 	// caster who is about to re-hide themselves with Invisibilidad below,
@@ -214,10 +244,8 @@ func (w *World) applySpellDamage(caster, victim *Player, spell Spell, event *pro
 	victim.Vitals.HP -= damage
 	event.Damage = damage
 	if victim.Vitals.HP <= 0 {
-		victim.Vitals.HP = 0
-		victim.Dead = true
 		event.Killed = true
-		delete(w.occupied, tileKey{victim.X, victim.Y})
+		w.kill(victim, caster)
 		w.log.Info("player killed by spell",
 			"victim", victim.Name, "by", caster.Name, "spell", spell.Name, "alive", w.aliveCount())
 	}

@@ -154,10 +154,75 @@ func TestMoveCooldownLimitsWalkSpeed(t *testing.T) {
 		t.Errorf("x = %d, want 6: cooldown let a second step through", p.X)
 	}
 
-	w.tick += moveCooldownTicks
+	// The cooldown is 4.444 ticks, so the fifth tick is the first that can
+	// carry a step.
+	w.tick += moveCooldownMilliticks / 1000
+	w.movePlayer(p, protocol.East)
+	if p.X != 6 {
+		t.Errorf("x = %d, want 6: a step went through before the cooldown elapsed", p.X)
+	}
+	w.tick++
 	w.movePlayer(p, protocol.East)
 	if p.X != 7 {
 		t.Errorf("x = %d, want 7: step refused after the cooldown elapsed", p.X)
+	}
+}
+
+// The fractional cooldown only means anything if the remainder actually
+// survives from step to step: 4.444 ticks has to come out as a 4/5 tick
+// pattern averaging the real figure, not as a flat 5 that would be a 20% cut
+// rather than the 10% asked for.
+func TestWalkCadenceAveragesTheFractionalCooldown(t *testing.T) {
+	w := newTestWorld(t, 200, 20)
+	w.tick = 100
+	p, _ := place(t, w, "wachin", 2, 5)
+
+	const steps = 45
+	start := w.tick
+	taken := 0
+	for taken < steps {
+		before := p.X
+		w.movePlayer(p, protocol.East)
+		if p.X != before {
+			taken++
+			continue
+		}
+		w.tick++
+	}
+
+	// 45 steps at 4.444 ticks each is 200 ticks; the first step is free, so
+	// the elapsed span covers 44 cooldowns.
+	elapsed := float64(w.tick - start)
+	got := elapsed / float64(steps-1)
+	want := float64(moveCooldownMilliticks) / 1000
+	if got < want-0.05 || got > want+0.05 {
+		t.Errorf("cadence = %.3f ticks per step over %d steps, want %.3f", got, steps, want)
+	}
+
+	tilesPerSecond := 20 / got
+	if tilesPerSecond < 4.4 || tilesPerSecond > 4.6 {
+		t.Errorf("walk speed = %.2f tiles/s, want ~4.5 (90%% of Argentum's 5)", tilesPerSecond)
+	}
+}
+
+// Idling must not bank steps: a player who stood still for ten seconds should
+// start walking at the normal cadence, not sprint off with a stored-up burst.
+func TestIdlingDoesNotBankSteps(t *testing.T) {
+	w := newTestWorld(t, 60, 20)
+	w.tick = 100
+	p, _ := place(t, w, "wachin", 2, 5)
+
+	w.movePlayer(p, protocol.East)
+	w.tick += 200 // ten seconds of standing around
+
+	x := p.X
+	w.movePlayer(p, protocol.East)
+	if p.X != x+1 {
+		t.Fatalf("the first step after idling did not happen")
+	}
+	w.movePlayer(p, protocol.East)
+	if p.X != x+1 {
+		t.Errorf("x moved %d tiles in one tick: idling banked credit", p.X-x)
 	}
 }
 

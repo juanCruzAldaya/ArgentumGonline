@@ -36,9 +36,18 @@ func statusWorld(t *testing.T) *World {
 	return w
 }
 
+// castKnown makes p able to cast spellID, so the tests below fail on the rule
+// they are actually about rather than on a precondition.
+//
+// The mana line is not incidental. place() rolls a random class, and manaFor
+// gives five of the twelve classes no mana whatsoever — a caster that happened
+// to roll Guerrero would fail every cast here on the mana gate. Pinning a
+// round 100 keeps that out of the way and keeps the spell-cost assertions
+// ("mana = 90 after one 10-cost cast") readable.
 func castKnown(w *World, p *Player, spellID int) {
 	p.Spells = []int{spellID}
 	p.lastCastTick = 0 // clear any cooldown from a previous cast in the same test
+	p.Vitals.Mana, p.Vitals.MaxMana = 100, 100
 }
 
 func TestParalysisBlocksMovementAndMelee(t *testing.T) {

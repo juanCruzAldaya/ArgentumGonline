@@ -20,6 +20,19 @@ const (
 	ObjRing   = 18
 )
 
+// nakedBodies is DarCuerpoDesnudo (General.bas:45-114): the body a character
+// wears with no armour on, one per race. The source's table is per race AND
+// gender; these are the male column, since this game has no gender. Read the
+// values off here rather than off the source's Select Case, whose arm order
+// (Humano/Drow/Elfo/Gnomo/Enano) is not the enum order.
+//
+// Keyed by Argentum's eRaza: 1 Humano, 2 Elfo, 3 Drow, 4 Gnomo, 5 Enano.
+var nakedBodies = map[int]int{1: 21, 2: 210, 3: 32, 4: 222, 5: 53}
+
+// ghostBody is iCuerpoMuerto (Declares.bas:560) — what a dead character is
+// redrawn as, together with head iCabezaMuerto 500.
+const ghostBody = 8
+
 // carriableTypes are the object types worth putting in a battle royale
 // inventory. Argentum also defines trees, doors, signs, forums and campfires as
 // objects; those are scenery the map places, not loot a player carries.
@@ -34,12 +47,43 @@ type Item struct {
 	ID   int    `json:"id"`
 	Name string `json:"name"`
 	// Grh is the inventory icon.
-	Grh    int `json:"grh"`
-	Type   int `json:"type"`
-	MinHit int `json:"minHit,omitempty"`
-	MaxHit int `json:"maxHit,omitempty"`
-	MinDef int `json:"minDef,omitempty"`
-	MaxDef int `json:"maxDef,omitempty"`
+	Grh int `json:"grh"`
+
+	// Body is what this item makes the wearer's body look like: obj.dat's
+	// NumRopaje, which the source loads into ObjData.Ropaje and assigns
+	// straight to Char.body when armour is equipped (InvUsuario.bas:1395).
+	//
+	// Read only for armour. FileIO.bas:1110 loads NumRopaje for *every* object
+	// type because that line sits outside the ObjType switch, and 13 of 13
+	// shields and 20 of 21 helmets carry a leftover NumRopaje=2 — copy-paste
+	// of the "none" sentinel. The server never reads it for them, and a
+	// converter that did would turn a character's body into 2 the moment they
+	// put on a shield.
+	Body int `json:"body,omitempty"`
+
+	// Anim is the weapon/shield/helmet animation index, obj.dat's own `Anim`
+	// key for all three. Which table it indexes depends on the item's type:
+	// weapons into Armas.dat, shields into Escudos.dat, helmets into
+	// Cascos.ini. The three are separate tables and the numbers are not
+	// interchangeable.
+	Anim int `json:"anim,omitempty"`
+
+	// DwarfAnim is RazaEnanaAnim: an alternate weapon animation used when the
+	// wielder is an Enano *or a Gnomo* (GetWeaponAnim, Modulo_UsUaRiOs.bas:358
+	// — the field name says Enana but the check covers both short races).
+	// Weapons only; shields and helmets have no such variant.
+	DwarfAnim int `json:"dwarfAnim,omitempty"`
+	Type      int `json:"type"`
+	MinHit    int `json:"minHit,omitempty"`
+	MaxHit    int `json:"maxHit,omitempty"`
+	MinDef    int `json:"minDef,omitempty"`
+	MaxDef    int `json:"maxDef,omitempty"`
+	// StaffPower is real obj.dat data — modHechizos.bas gates NeedStaff
+	// spells on a Mago's equipped weapon meeting this — carried over for
+	// when spell casting enforces it server-side. Every newbie-tier weapon,
+	// including the newbie staff, is StaffPower 0 in the real data, so it
+	// does not help tell newbie weapons apart from one another.
+	StaffPower int `json:"staffPower,omitempty"`
 	// Restores is how much food or drink an item gives back.
 	Restores int `json:"restores,omitempty"`
 	Value    int `json:"value,omitempty"`
@@ -170,11 +214,24 @@ func loadItems(path string) (map[int]Item, error) {
 			MaxHit:         sectionInt(section, "MaxHit"),
 			MinDef:         sectionInt(section, "MinDef"),
 			MaxDef:         sectionInt(section, "MaxDef"),
+			StaffPower:     sectionInt(section, "StaffPower"),
 			Value:          sectionInt(section, "Valor"),
 			PotionType:     sectionInt(section, "TipoPocion"),
 			MinModificador: sectionInt(section, "MinModificador"),
 			MaxModificador: sectionInt(section, "MaxModificador"),
 			DuracionEfecto: sectionInt(section, "DuracionEfecto"),
+		}
+		// Appearance. NumRopaje is a body only for armour — see the note on
+		// Item.Body for why reading it unconditionally would be a bug — and
+		// Anim only means something for the three worn types.
+		switch objType {
+		case ObjArmor:
+			item.Body = sectionInt(section, "NumRopaje")
+		case ObjWeapon:
+			item.Anim = sectionInt(section, "Anim")
+			item.DwarfAnim = sectionInt(section, "RazaEnanaAnim")
+		case ObjShield, ObjHelmet:
+			item.Anim = sectionInt(section, "Anim")
 		}
 		// Food and drink restore different vitals through different .dat keys
 		// that both end up meaning "how much this refills." Drinks are the one

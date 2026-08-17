@@ -16,6 +16,10 @@ const INPUT_INTERVAL := 0.05
 var _url := DEFAULT_URL
 var _player_name := ""
 var _local_id := 0
+## Fed into the TopBar's Zone label alongside the player's own tile every
+## snapshot — see _on_snapshot. Empty for the generated demo arena, which has
+## no name of its own.
+var _map_name := ""
 var _time_since_input := 0.0
 var _connected := false
 ## Spell awaiting a target. Argentum casts in two steps — pick the spell, then
@@ -54,6 +58,9 @@ func _ready() -> void:
 	_net.use_result_received.connect(_on_use_result)
 	_hud.cast_requested.connect(_on_cast_requested)
 	_hud.item_used.connect(_net.send_use)
+	_hud.swap_requested.connect(_net.send_swap)
+	_hud.spell_swap_requested.connect(_net.send_swap_spell)
+	_hud.drop_requested.connect(_net.send_drop)
 
 	# The world and the HUD have nothing to show until a character exists, so
 	# they stay hidden — and the server stays untouched — until the picker
@@ -72,6 +79,7 @@ func _on_character_confirmed(class_id: int, race_id: int, picker: Control) -> vo
 	_hud.visible = true
 
 	_hud.set_character(_player_name)
+	_hud.set_identity(class_id, race_id)
 	_hud.log_line("conectando a %s ..." % _url, _hud.COLOR_TEXT_DIM)
 	_net.connect_to_server(_url, _player_name, class_id, race_id)
 
@@ -293,18 +301,37 @@ func _stop_targeting() -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
-	# Ocultarse: a discrete "try to hide" trigger on the key edge, not the
-	# held-and-repeated polling _process() uses for movement/attack — holding
-	# H should not spam the server with an attempt every frame; the server's
-	# own cooldown would just drop them anyway, but there's no reason to send
-	# them.
-	if _connected and event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_H:
-		if _paralyzed:
-			_tell_blocked("No podés ocultarte, estás paralizado.")
-		else:
-			_net.send_hide()
+	# Ocultarse (O), Agarrar (A) and Usar/Equipar (U/E): Argentum's own hotkeys
+	# for these, each a discrete "try once" trigger on the key edge rather than
+	# the held-and-repeated polling _process() uses for movement/attack —
+	# holding the key down should not spam the server with an attempt every
+	# frame. U and E used to send the identical action and let the item's own
+	# type pick the branch; they now say which they mean, because a key you
+	# press expecting to put a sword on should never drink a potion instead.
+	# The overloaded action still exists and is what a double-click sends.
+	if _connected and event is InputEventKey and event.pressed and not event.echo:
+		match event.keycode:
+			KEY_O:
+				if _paralyzed:
+					_tell_blocked("No podés ocultarte, estás paralizado.")
+				else:
+					_net.send_hide()
+			KEY_A:
+				_net.send_pickup()
+			KEY_U, KEY_E:
+				var slot: int = _hud.selected_slot()
+				if slot < 0:
+					_hud.log_line("Primero seleccioná un objeto del inventario.", _hud.COLOR_TEXT_DIM)
+				else:
+					# E equips and only equips; U consumes and only consumes.
+					# They used to send the identical message and let the item
+					# type decide, which meant pressing E on a potion drank it.
+					# A double-click still sends the overloaded action.
+					var action := "equip" if event.keycode == KEY_E else "use"
+					_net.send_use_action(slot, action)
 
 	if _targeting_spell == 0:
+		_handle_inspect_click(event)
 		return
 
 	var cancel: bool = event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE
@@ -327,8 +354,63 @@ func _unhandled_input(event: InputEvent) -> void:
 	_stop_targeting()
 
 
+## A left click on the world with no spell armed inspects whatever is under it:
+## Argentum answers a click on a character with "Nombre <Clan> <Descripción>",
+## and this extends the same gesture to a pile on the floor, which is now the
+## only way to learn what one holds since the counts came off the tiles.
+##
+## Characters win over ground when both are under the cursor — somebody
+## standing on a pile is the more interesting answer, and the pile is still
+## reachable by stepping off it.
+func _handle_inspect_click(event: InputEvent) -> void:
+	if not (event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT):
+		return
+	var local: Vector2 = _view.to_local(event.position)
+	if not _view.view_rect().has_point(local):
+		return
+
+	var id: int = _view.entity_at(local)
+	if id != 0:
+		_log_character(_view.entity_info(id))
+		return
+
+	var stack: Dictionary = _view.ground_at(local)
+	if not stack.is_empty():
+		_log_ground(stack)
+
+
+## Argentum's own inspect line. The clan bracket is omitted when there is no
+## clan — which today is always, since no guild system exists — exactly as the
+## original does for a clanless character.
+func _log_character(info: Dictionary) -> void:
+	if info.is_empty():
+		return
+	var line := str(info["name"])
+	var clan := str(info["clan"])
+	if clan != "":
+		line += " <%s>" % clan
+	var desc := str(info["desc"])
+	if desc != "":
+		line += " <%s>" % desc
+	if bool(info["dead"]):
+		line += " <muerto>"
+	line += " - Kills: %d" % int(info["kills"])
+	_hud.log_line(line, _hud.COLOR_ACCENT)
+
+
+func _log_ground(stack: Dictionary) -> void:
+	var item: Dictionary = _hud.item_data(int(stack["item_id"]))
+	var label := "objeto %d" % int(stack["item_id"]) if item.is_empty() else str(item.get("name", ""))
+	_hud.log_line("En el piso: %s (%d)." % [label, int(stack["amount"])], _hud.COLOR_TEXT_DIM)
+
+
 ## Raw key checks rather than input actions, so the project needs no input map
 ## and the controls read the same as the server's heading constants.
+##
+## West drops the WASD alt (KEY_A) that the other three directions keep: A is
+## Agarrar, Argentum's own pickup hotkey, and holding it to walk west would
+## fire a pickup attempt on every step. Classic AO only ever used the arrow
+## keys for movement anyway — this just stops being wrong about it on one side.
 func _pressed_direction() -> int:
 	if Input.is_key_pressed(KEY_UP) or Input.is_key_pressed(KEY_W):
 		return 0  # north
@@ -336,7 +418,7 @@ func _pressed_direction() -> int:
 		return 1  # east
 	if Input.is_key_pressed(KEY_DOWN) or Input.is_key_pressed(KEY_S):
 		return 2  # south
-	if Input.is_key_pressed(KEY_LEFT) or Input.is_key_pressed(KEY_A):
+	if Input.is_key_pressed(KEY_LEFT):
 		return 3  # west
 	return -1
 
@@ -389,10 +471,11 @@ func _on_welcomed(welcome: Dictionary) -> void:
 	_local_id = int(welcome.get("id", 0))
 	_view.configure(welcome)
 	_minimap.configure(welcome)
+	_hud.set_spell_slots(int(welcome.get("spellSlots", 0)))
 
-	var map_name := str(welcome.get("mapName", ""))
-	if map_name != "":
-		_hud.log_line("Has llegado a %s." % map_name, _hud.COLOR_ACCENT)
+	_map_name = str(welcome.get("mapName", ""))
+	if _map_name != "":
+		_hud.log_line("Has llegado a %s." % _map_name, _hud.COLOR_ACCENT)
 	_hud.log_line(
 		(
 			"mapa %dx%d  ·  %d Hz  ·  spawn en (%d, %d)"
@@ -412,6 +495,7 @@ func _on_snapshot(snapshot: Dictionary) -> void:
 	var entities: Array = snapshot.get("e", [])
 
 	_view.set_entities(entities)
+	_view.set_ground(snapshot.get("g", []))
 	_minimap.set_entities(entities)
 	_hud.set_alive(int(snapshot.get("alive", 0)))
 
@@ -420,7 +504,20 @@ func _on_snapshot(snapshot: Dictionary) -> void:
 		_hud.set_vitals(vitals)
 		_update_own_status(vitals)
 
+	_update_zone(entities)
 	_report_arrivals_and_departures(entities)
+
+
+## The bottom status readout classic AO always shows: where you actually are.
+## Pulled from the entity list rather than tracked separately — the server
+## already puts the local player in their own snapshot, so there's no reason
+## to duplicate that position client-side.
+func _update_zone(entities: Array) -> void:
+	for entity in entities:
+		if int(entity.get("id", 0)) == _local_id:
+			var label := _map_name if _map_name != "" else "mapa"
+			_hud.set_zone("%s   X:%d  Y:%d" % [label, int(entity.get("x", 0)), int(entity.get("y", 0))])
+			return
 
 
 ## Edge-detects status transitions from the raw booleans the server sends

@@ -31,21 +31,34 @@ type Anim struct {
 	Speed  float64 `json:"speed"`
 }
 
-// Body is one character body: four facings plus where its artwork actually
-// starts. The sprite rectangle is padded, so ContentTop is what a head has to
-// line up against.
+// Body is one character body: the four walk animations in heading order, plus
+// the offset the head is drawn at relative to the body's own position.
+//
+// HeadOffset is real data out of Personajes.ini, not a measurement. The client
+// draws the head at the body position plus this, so it varies per body — the
+// tall races carry -4 on Y, Gnomo and Enano +6 — and no amount of inspecting
+// pixels recovers it, which is what the old ContentTop/ContentBottom pair was
+// trying and failing to do.
 type Body struct {
-	Facings []int `json:"facings"`
-	// ContentTop is the first row with any opaque pixel, relative to the frame.
-	ContentTop int `json:"top"`
+	Facings    []int  `json:"facings"`
+	HeadOffset [2]int `json:"headOffset"`
 }
 
-// Head is one character head. Heads are drawn in a tall rectangle whose lower
-// half is empty, so ContentBottom — not the rectangle — is where the neck is.
+// Head is one character head, four facings in heading order. Static: the real
+// client passes Animate=0 for heads and helmets, so they never cycle.
 type Head struct {
 	Facings []int `json:"facings"`
-	// ContentBottom is the last row with any opaque pixel, relative to the rect.
-	ContentBottom int `json:"bottom"`
+}
+
+// Gear is one weapon, shield or helmet animation set — four facings, indexed
+// by the same heading order as everything else.
+//
+// Weapons and shields are full-body overlay sprites drawn at the character's
+// own position with no offset, not attachments anchored to a hand. Helmets are
+// the exception: they follow the head, offset by the body's HeadOffset plus
+// OFFSET_HEAD.
+type Gear struct {
+	Facings []int `json:"facings"`
 }
 
 // Bundle is everything the client needs to draw Argentum characters.
@@ -69,6 +82,13 @@ type Bundle struct {
 	// Heads holds four grhs per head in file order, which for Cabezas.ini is
 	// self-consistent: up, right, down, left.
 	Heads map[int]Head `json:"heads"`
+
+	// Worn equipment, keyed by the anim index obj.dat gives each item. Three
+	// separate tables from three separate files, and the numbering does NOT
+	// carry across them: weapon 4, shield 4 and helmet 4 are unrelated.
+	Weapons map[int]Gear `json:"weapons"`
+	Shields map[int]Gear `json:"shields"`
+	Helmets map[int]Gear `json:"helmets"`
 }
 
 // deriveBodies reconstructs bodies from Graficos.ini instead of from Cuerpos.
@@ -185,20 +205,16 @@ func loadBodySeeds(path string) ([]int, error) {
 
 // writeBundle packs every frame the given bodies and heads need into one atlas
 // and writes it alongside its JSON index.
-func writeBundle(grhs map[int]Grh, heads map[int][4]int, assets string, wantBodies, wantHeads []int, outDir string, aoMap *AOMap, mapDisplayName string, items map[int]Item) error {
-	seeds, err := loadBodySeeds(filepath.Join(assets, "INIT", "Cuerpos.ini"))
-	if err != nil {
-		return err
-	}
-	bodies := deriveBodies(grhs, seeds)
-	fmt.Printf("cuerpos derivados: %d (desde %d semillas de Cuerpos.ini)\n", len(bodies), len(seeds))
-
+func writeBundle(grhs map[int]Grh, bodies map[int]BodyIndex, heads, weapons, shields, helmets map[int][4]int, assets string, wantBodies, wantHeads []int, outDir string, aoMap *AOMap, mapDisplayName string, items map[int]Item) error {
 	b := Bundle{
-		Atlas:  "atlas.png",
-		Frames: map[int]Rect{},
-		Anims:  map[int]Anim{},
-		Bodies: map[int]Body{},
-		Heads:  map[int]Head{},
+		Atlas:   "atlas.png",
+		Frames:  map[int]Rect{},
+		Anims:   map[int]Anim{},
+		Bodies:  map[int]Body{},
+		Heads:   map[int]Head{},
+		Weapons: map[int]Gear{},
+		Shields: map[int]Gear{},
+		Helmets: map[int]Gear{},
 	}
 
 	// needed collects the static grhs to pack. Animations contribute their
@@ -225,18 +241,98 @@ func writeBundle(grhs map[int]Grh, heads map[int][4]int, assets string, wantBodi
 		return nil
 	}
 
+	skippedBodies := 0
 	for _, id := range wantBodies {
-		facings, ok := bodies[id]
+		body, ok := bodies[id]
 		if !ok {
-			return fmt.Errorf("cuerpo %d no existe (hay %d)", id, len(bodies))
+			// obj.dat points a few armours at bodies past the end of
+			// Personajes.ini (5771 against 692 records). The real client
+			// tolerates this — Char_SetBody falls back to body 0 rather than
+			// failing — so a stale NumRopaje must not take the whole build
+			// down. The server falls back the same way; see appearance.go.
+			skippedBodies++
+			continue
 		}
-		for _, grhNum := range facings {
+		usable := true
+		for _, grhNum := range body.Facings {
+			if grhNum == 0 {
+				// Personajes.ini has a handful of records with a hole in one
+				// direction. A body that cannot face all four ways would draw
+				// nothing when turned that way, so skip it here and let the
+				// server fall back rather than ship a character that vanishes
+				// when it walks east.
+				usable = false
+				break
+			}
 			if err := collect(grhNum); err != nil {
-				return fmt.Errorf("cuerpo %d: %w", id, err)
+				usable = false
+				break
 			}
 		}
-		b.Bodies[id] = Body{Facings: append([]int(nil), facings...)}
+		if !usable {
+			skippedBodies++
+			continue
+		}
+		b.Bodies[id] = Body{
+			Facings:    append([]int(nil), body.Facings[:]...),
+			HeadOffset: body.HeadOffset,
+		}
 	}
+	fmt.Printf("cuerpos: %d empaquetados, %d omitidos (inexistentes o con una dirección vacía)\n",
+		len(b.Bodies), skippedBodies)
+
+	// Worn equipment. Anim index 2 is deliberately absent from all three
+	// tables — it is the source's "nothing equipped" sentinel (NingunArma,
+	// NingunEscudo and NingunCasco are all 2, not 0), and Escudos.dat even
+	// says so in a comment on its first line. Anything else that fails to
+	// resolve is dropped rather than fatal, the same as a body with a hole.
+	gear := func(name string, table map[int][4]int, want map[int]bool, into map[int]Gear) {
+		for id := range want {
+			set, ok := table[id]
+			if !ok {
+				continue
+			}
+			usable := true
+			for _, grhNum := range set {
+				if grhNum == 0 {
+					usable = false
+					break
+				}
+				if err := collect(grhNum); err != nil {
+					usable = false
+					break
+				}
+			}
+			if usable {
+				into[id] = Gear{Facings: append([]int(nil), set[:]...)}
+			}
+		}
+		fmt.Printf("%s: %d de %d pedidos\n", name, len(into), len(want))
+	}
+
+	wantWeapons, wantShields, wantHelmets := map[int]bool{}, map[int]bool{}, map[int]bool{}
+	for _, item := range items {
+		switch item.Type {
+		case ObjWeapon:
+			if item.Anim > 0 {
+				wantWeapons[item.Anim] = true
+			}
+			if item.DwarfAnim > 0 {
+				wantWeapons[item.DwarfAnim] = true
+			}
+		case ObjShield:
+			if item.Anim > 0 {
+				wantShields[item.Anim] = true
+			}
+		case ObjHelmet:
+			if item.Anim > 0 {
+				wantHelmets[item.Anim] = true
+			}
+		}
+	}
+	gear("armas", weapons, wantWeapons, b.Weapons)
+	gear("escudos", shields, wantShields, b.Shields)
+	gear("cascos", helmets, wantHelmets, b.Helmets)
 
 	for _, id := range wantHeads {
 		set, ok := heads[id]
@@ -254,6 +350,7 @@ func writeBundle(grhs map[int]Grh, heads map[int][4]int, assets string, wantBodi
 		}
 		b.Heads[id] = Head{Facings: append([]int(nil), facings...)}
 	}
+	_ = assets
 
 	if len(items) > 0 {
 		// Every carriable item contributes its inventory icon, so slots can
@@ -366,18 +463,12 @@ func writeBundle(grhs map[int]Grh, heads map[int][4]int, assets string, wantBodi
 
 	keyBlackToTransparent(atlas)
 
-	// Measure the artwork only now that transparency is real. The rectangles
-	// are padded — a head is drawn in a 17x50 box whose lower 35 rows are
-	// empty — so aligning by rectangle puts heads well above the shoulders.
-	// Alignment has to key off where the pixels actually are.
-	for id, body := range b.Bodies {
-		body.ContentTop = contentTop(atlas, b.Frames[firstStaticFrame(grhs, body.Facings[0])])
-		b.Bodies[id] = body
-	}
-	for id, head := range b.Heads {
-		head.ContentBottom = contentBottom(atlas, b.Frames[firstStaticFrame(grhs, head.Facings[0])])
-		b.Heads[id] = head
-	}
+	// Head alignment used to be measured here, by finding the topmost opaque
+	// row of a body and the bottommost of a head. That was a workaround for
+	// reading head offsets out of Cuerpos.ini, where the field holds grh
+	// numbers rather than pixels. Personajes.ini carries the real offsets, so
+	// the measurement is gone: the client now places heads the way the
+	// original does, at the body's position plus the body's own HeadOffset.
 
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		return err

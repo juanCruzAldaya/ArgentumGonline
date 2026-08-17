@@ -23,7 +23,14 @@ const (
 	TypeCast   MsgType = "cast"
 	TypeUse    MsgType = "use"
 	TypeHide   MsgType = "hide"
-	TypePing   MsgType = "ping"
+	TypePickup MsgType = "pickup"
+	TypeDrop   MsgType = "drop"
+	TypeSwap   MsgType = "swap"
+	// TypeSwapSpell reorders the spell book, the same drag-and-drop Argentum
+	// gives its own spell list. Separate from TypeSwap because the two lists
+	// are separate server state and a bag index is not a spell index.
+	TypeSwapSpell MsgType = "swapSpell"
+	TypePing      MsgType = "ping"
 
 	// Server -> client.
 	TypeWelcome   MsgType = "welcome"
@@ -120,6 +127,16 @@ type Welcome struct {
 	ViewH   int    `json:"vh"`
 	SpawnX  int    `json:"sx"`
 	SpawnY  int    `json:"sy"`
+	// WalkSpeed is tiles per second, so the client's movement interpolation is
+	// driven by the server's real cadence instead of a second copy of it. The
+	// client used to hardcode 5.0 to match a 4-tick cooldown; the moment the
+	// cooldown became tunable, a hardcoded twin would have the sprite arriving
+	// early and stuttering at the tile edge.
+	WalkSpeed float64 `json:"walkSpeed"`
+	// SpellSlots is how many slots the spell book holds. The client draws that
+	// many and the server refuses a reorder outside the range, so the two
+	// cannot disagree about the size of the list being dragged around.
+	SpellSlots int `json:"spellSlots"`
 }
 
 // Vitals are a player's own numbers, sent only to that player — nobody else's
@@ -148,6 +165,17 @@ type Vitals struct {
 	Thirst    int `json:"thi"`
 	MaxThirst int `json:"maxThi"`
 
+	// Attributes drive the Estadísticas panel. Sent fresh every tick rather
+	// than once at join, the same tradeoff as the status booleans below —
+	// Fuerza/Agilidad move under a temporary buff or debuff (see
+	// World.effectiveAttributes), so a value read once at spawn would go
+	// stale the moment a spell landed.
+	Fuerza       int `json:"str"`
+	Agilidad     int `json:"agi"`
+	Inteligencia int `json:"int"`
+	Carisma      int `json:"cha"`
+	Constitucion int `json:"con"`
+
 	// Status effects, computed fresh each tick rather than tracked as
 	// standing state — see World.broadcast.
 	Paralyzed   bool `json:"paralyzed,omitempty"`
@@ -168,6 +196,18 @@ type EntityState struct {
 	Body    int     `json:"b"`
 	Head    int     `json:"hd"`
 	Name    string  `json:"n,omitempty"`
+	// Weapon, Shield and Helmet are the worn-equipment animation indices, the
+	// same three Argentum puts in CharacterCreate. Body above already carries
+	// the armour: in Argentum equipping armour replaces your body rather than
+	// layering over it, so there is no separate "armor" field here and there
+	// is not meant to be one.
+	//
+	// 2 means nothing equipped, not 0 — the source's NingunArma/NingunEscudo/
+	// NingunCasco are all 2. Sent unconditionally rather than omitempty for
+	// exactly that reason: 0 would be a different, wrong thing to say.
+	Weapon int `json:"wp"`
+	Shield int `json:"sh"`
+	Helmet int `json:"hm"`
 	// Dead marks an eliminated player, so the client can draw a body rather
 	// than a character standing around.
 	Dead bool `json:"d,omitempty"`
@@ -177,6 +217,20 @@ type EntityState struct {
 	// everyone's Entities except their own.
 	Paralyzed   bool `json:"pz,omitempty"`
 	Immobilized bool `json:"im,omitempty"`
+
+	// Clan, Desc and Kills are what clicking a character reports, the way
+	// Argentum answers a click with "Nombre <Clan> <Descripción>". They ride
+	// along in the snapshot rather than answering a separate request because
+	// the viewport already limits who is in it: a client can only ever read
+	// these for characters it can see, which is the same rule that protects
+	// positions, so a lookup message would buy nothing but a round trip.
+	//
+	// Clan is always empty today — there is no guild system — and the client
+	// omits the bracket when it is, exactly as the original does for a
+	// clanless character.
+	Clan  string `json:"cl,omitempty"`
+	Desc  string `json:"ds,omitempty"`
+	Kills int    `json:"k,omitempty"`
 }
 
 // Snapshot is the per-tick view sent to a single player: only the entities
@@ -190,6 +244,8 @@ type Snapshot struct {
 	Self  *Vitals `json:"self,omitempty"`
 	// Entities is everyone inside the viewport, including the player itself.
 	Entities []EntityState `json:"e"`
+	// Ground is every item stack lying on the map inside the viewport.
+	Ground []GroundItem `json:"g,omitempty"`
 }
 
 // InventorySlot is one bag slot. ItemID indexes Argentum's obj.dat, which the
@@ -269,12 +325,56 @@ type CombatEvent struct {
 	Mine bool `json:"mine"`
 }
 
-// Use asks to equip/unequip or consume whatever sits in one bag slot. Argentum
-// overloads a single "use item" click this way — the branch is decided by the
-// item's own type, not by the client.
-type Use struct {
+// Drop asks to place one inventory slot's whole stack on the ground at the
+// player's own tile. Pickup has no payload — Agarrar in the source always
+// takes from the tile you're standing on, never a tile you point at.
+type Drop struct {
 	Slot int `json:"slot"`
 }
+
+// GroundItem is one item stack lying on the map, inside a player's viewport —
+// the same interest-management rule as Entities, so a modified client cannot
+// learn about loot it hasn't actually seen.
+type GroundItem struct {
+	X      int `json:"x"`
+	Y      int `json:"y"`
+	ItemID int `json:"i"`
+	Amount int `json:"n"`
+}
+
+// Swap asks to reorder two bag slots — Argentum's own drag-and-drop within
+// the inventory window. Landing on an empty slot is just as valid as landing
+// on an occupied one; either way the server decides what actually moves
+// where, never the client.
+type Swap struct {
+	From int `json:"from"`
+	To   int `json:"to"`
+}
+
+// Use asks to act on one bag slot.
+//
+// Argentum overloads a single "use item" click and lets the item's own ObjType
+// pick the branch, which is what Action "" still does — it is what a
+// double-click sends. The two explicit actions exist because overloading is
+// only pleasant when you meant either outcome: pressing a key expecting to put
+// a sword on and instead drinking the potion that shares that habit is not the
+// item type being clever, it is the input being ambiguous. E asks to equip and
+// U asks to consume, and asking the wrong one of a slot is answered with a
+// message rather than with the other thing happening.
+type Use struct {
+	Slot   int       `json:"slot"`
+	Action UseAction `json:"a,omitempty"`
+}
+
+// UseAction narrows what a Use means. Empty is the original's own overloaded
+// click and stays the default, so an older client is unaffected.
+type UseAction string
+
+const (
+	UseAuto  UseAction = ""
+	UseEquip UseAction = "equip"
+	UseUseUp UseAction = "use"
+)
 
 // UseResult narrates what a Use actually did. Exactly one of the outcome
 // fields is meaningful per call: equipment toggles Equipped/Unequipped,

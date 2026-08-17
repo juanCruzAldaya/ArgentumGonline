@@ -1,7 +1,10 @@
-; Godot project file for the juegito client.
+; Engine configuration file.
+; It's best edited using the editor UI and not directly,
+; since the parameters that go here are not all obvious.
 ;
-; The client is a renderer and an input device. All authoritative state lives in
-; the Go server, so nothing in here simulates the game.
+; Format:
+;   [section] ; section goes between []
+;   param=value ; assign values to parameters
 
 config_version=5
 
@@ -13,16 +16,16 @@ config/features=PackedStringArray("4.7", "GL Compatibility")
 
 [display]
 
-; Argentum's arrangement: a console strip across the top with the minimap beside
-; it, the 1088x832 game viewport below (17x13 tiles at the native 32px, drawn at
-; 2x so the pixel art stays sharp), and the character panel down the right.
-window/size/viewport_width=1360
+; 1088 for the world column (17 tiles x 32px at 2x) plus 525 for the side
+; panel, which is the baked panel_bg.png at its native size. Changing either
+; number without regenerating the panel image will misalign every control
+; sitting on top of it — see the offsets in main.tscn.
+window/size/viewport_width=1613
 window/size/viewport_height=962
 window/stretch/mode="canvas_items"
-window/stretch/aspect="keep"
 
 [rendering]
 
+textures/canvas_textures/default_texture_filter=0
 renderer/rendering_method="gl_compatibility"
 renderer/rendering_method.mobile="gl_compatibility"
-textures/canvas_textures/default_texture_filter=0

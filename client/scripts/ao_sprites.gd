@@ -14,21 +14,32 @@ const ATLAS_PATH := "res://assets/ao/atlas.png"
 ## Heads are stored in that same order, because Cabezas.ini is self-consistent.
 const HEAD_FACING := [0, 1, 2, 3]
 
-## Bodies are stored sorted ascending, and the source index does NOT follow the
-## wire order — Cuerpos' direction labels do not match its sprites, so aoconv
-## refuses to guess and the mapping was settled by walking around and looking.
+## Bodies, weapons, shields and helmets are all stored in the source's own
+## heading order now that they come from the files the real client reads:
+## index 0 north, 1 east, 2 south, 3 west. That is E_Heading, and it is what
+## every one of Personajes.ini/Armas.dat/Escudos.dat/Cascos.ini indexes by.
 ##
-## Ascending grh order turned out to be south, north, west, east: the frame
-## counts pair the facings {north,south} then {east,west}, and within each pair
-## the lower grh is the one AO lists second. Both pairs needed swapping from the
-## first guess. This is the one table to edit if a character faces wrong.
-const BODY_FACING := [1, 3, 0, 2]
+## This used to be a lookup table of [1, 3, 0, 2], discovered by walking around
+## and watching which way characters faced. It was compensating for bodies
+## derived out of Cuerpos.ini — a stale file with two of four directions
+## missing. With the real data there is nothing to compensate for, so the
+## indirection is gone rather than re-tuned.
+##
+## Our protocol's Heading happens to agree: North=0, East=1, South=2, West=3.
+const BODY_FACING := [0, 1, 2, 3]
+
+## OFFSET_HEAD from the client's Declares.bas: the extra Y a helmet takes on
+## top of the body's own head offset.
+const OFFSET_HEAD := -34
 
 var atlas: Texture2D
 var _frames: Dictionary = {}
 var _anims: Dictionary = {}
 var _bodies: Dictionary = {}
 var _heads: Dictionary = {}
+var _weapons: Dictionary = {}
+var _shields: Dictionary = {}
+var _helmets: Dictionary = {}
 var _loaded := false
 
 
@@ -54,6 +65,9 @@ func load_bundle() -> bool:
 	_anims = parsed.get("anims", {})
 	_bodies = parsed.get("bodies", {})
 	_heads = parsed.get("heads", {})
+	_weapons = parsed.get("weapons", {})
+	_shields = parsed.get("shields", {})
+	_helmets = parsed.get("helmets", {})
 	_loaded = true
 	return true
 
@@ -90,23 +104,45 @@ func head_rect(head: int, heading: int) -> Rect2:
 	return _rect_of(int(entry["facings"][HEAD_FACING[heading]]))
 
 
-## Sprite rectangles are padded, so these measured bounds — not the rectangles —
-## are what a head and a body have to be aligned by. aoconv measures them off
-## the finished atlas; see head_offset_y.
-func body_content_top(body: int) -> float:
+## Where the head goes on this body, in pixels, straight out of Personajes.ini.
+##
+## This replaces a pair of measured content bounds that existed only because
+## the old body source had grh numbers sitting in its offset field. The real
+## client does exactly this: head position is body position plus the body's own
+## HeadOffset, no measuring involved.
+func body_head_offset(body: int) -> Vector2:
 	var entry: Variant = _bodies.get(str(body))
-	return 0.0 if entry == null else float(entry.get("top", 0))
+	if entry == null:
+		return Vector2.ZERO
+	var off: Array = entry.get("headOffset", [0, 0])
+	return Vector2(float(off[0]), float(off[1]))
 
 
-func head_content_bottom(head: int) -> float:
-	var entry: Variant = _heads.get(str(head))
-	return 0.0 if entry == null else float(entry.get("bottom", 0))
+## Worn equipment. Weapons and shields animate with the walk exactly as the
+## body does; helmets are static, like heads.
+func weapon_rect(anim: int, heading: int, anim_time: float, moving: bool) -> Rect2:
+	return _gear_rect(_weapons, anim, heading, anim_time, moving)
 
 
-## head_offset_y is how far below the body sprite's top edge the head sprite
-## should be drawn, so that the neck lands on the shoulders.
-func head_offset_y(body: int, head: int, overlap: float) -> float:
-	return body_content_top(body) - head_content_bottom(head) + overlap
+func shield_rect(anim: int, heading: int, anim_time: float, moving: bool) -> Rect2:
+	return _gear_rect(_shields, anim, heading, anim_time, moving)
+
+
+func helmet_rect(anim: int, heading: int) -> Rect2:
+	return _gear_rect(_helmets, anim, heading, 0.0, false)
+
+
+func _gear_rect(table: Dictionary, anim: int, heading: int, anim_time: float, moving: bool) -> Rect2:
+	# 2 is the source's "nothing equipped" sentinel for all three of weapon,
+	# shield and helmet — NingunArma/NingunEscudo/NingunCasco are 2, not 0. It
+	# is never bundled, so the lookup would miss anyway; checking it explicitly
+	# says why.
+	if anim <= 0 or anim == 2:
+		return Rect2()
+	var entry: Variant = table.get(str(anim))
+	if entry == null:
+		return Rect2()
+	return _resolve(int(entry["facings"][BODY_FACING[heading]]), anim_time, moving)
 
 
 ## grh_rect resolves any graphic — a map tile, most often. Animated tiles like

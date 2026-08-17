@@ -16,6 +16,12 @@ const COLOR_TEXT := Color("ddd0b4")
 const COLOR_TEXT_DIM := Color("8a7c63")
 const COLOR_ACCENT := Color("d9b45b")
 
+## Where a player can get the source. The AGPL requires this to be reachable by
+## anyone playing a hosted build, so it has to point at the real repository
+## before this is deployed anywhere — a placeholder here is a licence problem,
+## not a TODO.
+const SOURCE_URL := "https://github.com/juanCruzAldaya/ArgentumGonline"
+
 const LIST_WIDTH := 300
 const LIST_HEIGHT := 380
 
@@ -81,6 +87,35 @@ func _ready() -> void:
 	play_button.add_theme_stylebox_override("pressed", _flat(COLOR_INSET, COLOR_ACCENT))
 	play_button.pressed.connect(_on_play_pressed)
 	root.add_child(play_button)
+
+	_build_source_notice(root)
+
+
+## The AGPL notice, on the first screen everyone sees.
+##
+## This is not decoration and not politeness. The AGPL is a network copyleft:
+## the moment somebody other than the author plays this on a hosted server,
+## they are entitled to the complete source. A hosted build without a visible
+## way to reach the source is not compliant, and the Argentum assets this game
+## is built on are AGPL themselves — the licence is not ours to opt out of.
+##
+## The URL is a clickable link where the platform supports it (the web export
+## does), and readable text everywhere else.
+func _build_source_notice(root: VBoxContainer) -> void:
+	var notice := RichTextLabel.new()
+	notice.bbcode_enabled = true
+	notice.fit_content = true
+	notice.scroll_active = false
+	notice.custom_minimum_size = Vector2(560, 0)
+	notice.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	notice.add_theme_font_size_override("normal_font_size", 12)
+	notice.add_theme_color_override("default_color", COLOR_TEXT_DIM)
+	notice.text = (
+		"[center]juegito — [url=%s]código fuente[/url] · AGPL-3.0\n"
+		+ "Assets de Argentum Online, liberados por Pablo Márquez bajo AGPL.[/center]"
+	) % SOURCE_URL
+	notice.meta_clicked.connect(func(meta: Variant) -> void: OS.shell_open(str(meta)))
+	root.add_child(notice)
 
 
 func _build_column(parent: HBoxContainer, caption: String, names: Array) -> ItemList:

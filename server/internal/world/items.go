@@ -33,14 +33,31 @@ const (
 // same file the client does, so the numbers combat runs on and the icons the
 // player sees can never describe different objects.
 type Item struct {
-	ID     int    `json:"id"`
-	Name   string `json:"name"`
-	Grh    int    `json:"grh"`
-	Type   int    `json:"type"`
-	MinHit int    `json:"minHit"`
-	MaxHit int    `json:"maxHit"`
-	MinDef int    `json:"minDef"`
-	MaxDef int    `json:"maxDef"`
+	ID   int    `json:"id"`
+	Name string `json:"name"`
+	Grh  int    `json:"grh"`
+
+	// Appearance, straight from obj.dat via tools/aoconv. Body is NumRopaje
+	// and is only ever populated for armour; Anim is the weapon/shield/helmet
+	// animation index; DwarfAnim is a weapon's short-race variant. See
+	// appearance.go for how they combine, and the converter for why Body is
+	// not read for shields and helmets.
+	Body      int `json:"body,omitempty"`
+	Anim      int `json:"anim,omitempty"`
+	DwarfAnim int `json:"dwarfAnim,omitempty"`
+
+	Type   int `json:"type"`
+	MinHit int `json:"minHit"`
+	MaxHit int `json:"maxHit"`
+	MinDef int `json:"minDef"`
+	MaxDef int `json:"maxDef"`
+	// StaffPower is real obj.dat data (modHechizos.bas gates NeedStaff spells
+	// on a Mago's equipped weapon meeting this), carried over for when spell
+	// casting enforces it. Nothing reads it yet — casting does not check it,
+	// and it does not distinguish newbie-tier weapons from one another; every
+	// newbie weapon, including the newbie staff, is StaffPower 0 in the real
+	// data. See loadout.go for how the starting kit actually picks a weapon.
+	StaffPower int `json:"staffPower,omitempty"`
 	// Restores is the flat hunger (food) or thirst (drink) a UseOnce/Bebidas
 	// item gives back.
 	Restores int `json:"restores"`
@@ -106,17 +123,63 @@ func LoadItems(path string) (map[int]Item, error) {
 	return byID, nil
 }
 
-// SetItems installs the item table and derives the spawn loadout for every
-// class from it. It must be called before Run, since the world goroutine
-// reads both afterwards. Precomputing all twelve here — rather than
-// recomputing per join — keeps Join itself cheap; there are only twelve
-// classes, so the up-front cost is trivial.
+// startingKitKey identifies one (class, race) starting kit — the newbie
+// armour varies by race as well as the weapon by class, so the cache is
+// keyed on both.
+type startingKitKey struct {
+	class Class
+	race  Race
+}
+
+// Ground spawn densities, both expressed as "one stack per N walkable tiles".
+//
+// Walkable, not raw W*H, which is what groundLootTiles used to divide. Half of
+// Ullathorpe is wall, so the old figure delivered half the density it claimed,
+// and on a denser map it would have delivered less still. groundLootTiles is
+// 30 rather than 60 purely to absorb that correction: 4962 walkable tiles / 30
+// is 165 gear spawns, which is what 100*100/60 was already producing there.
+// Gear on the map is unchanged; only the arithmetic behind it now means
+// something on a map that isn't half open ground.
+//
+// groundPotionTiles is deliberately an order of magnitude denser: one stack of
+// groundPotionStack every four walkable tiles, which on Ullathorpe is ~1220
+// stacks and ~30.000 loose potions. Potions are not meant to be a find you
+// hunt for here — see the note on startingKit for why a battle royale treats
+// them as ammunition rather than as the gold sink Argentum metered them into.
+//
+// minGroundLoot is a floor for small maps, so a tiny arena still has gear.
+const (
+	groundLootTiles   = 30
+	minGroundLoot     = 30
+	groundPotionTiles = 4
+	groundPotionStack = 25
+)
+
+// SetItems installs the item table and the starting kit for every class/race
+// pair, then scatters ground loot across the map. Must be called after New
+// (which sets the grid loot is scattered onto) and before Run. Precomputing
+// all 60 starting-kit combinations here — rather than per join — keeps Join
+// itself cheap; there are only twelve classes and five races.
 func (w *World) SetItems(items map[int]Item) {
 	w.items = items
-	w.loadouts = make(map[Class]bestLoadout, len(allClasses))
+	w.startingKits = make(map[startingKitKey]startingKit, len(allClasses)*len(allRaces))
 	for _, class := range allClasses {
-		w.loadouts[class] = computeBestLoadout(items, class)
+		for _, race := range allRaces {
+			w.startingKits[startingKitKey{class, race}] = computeStartingKit(items, class, race)
+		}
 	}
+
+	// One shuffled pool of free tiles, drained by both passes, so gear and
+	// potions can never be assigned the same tile — Argentum's map format
+	// carries one object per tile and groundStack keeps that constraint.
+	pool := w.freeTilePool()
+
+	gear := len(pool) / groundLootTiles
+	if gear < minGroundLoot {
+		gear = minGroundLoot
+	}
+	pool = w.spawnGroundLoot(pool, gear)
+	w.spawnGroundPotions(pool, len(pool)/groundPotionTiles)
 }
 
 // equippedOfType returns the equipped item of a given type, if any.

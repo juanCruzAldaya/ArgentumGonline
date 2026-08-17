@@ -26,11 +26,20 @@ const (
 	ViewportW = 17
 	ViewportH = 13
 
-	// moveCooldownTicks is how many ticks must pass between steps. At the
-	// default 20 Hz that is 5 tiles per second, which matches classic AO walk
-	// speed. Facing changes are free — you turn instantly, you walk on a
-	// cadence.
-	moveCooldownTicks = 4
+	// Walk speed. Argentum's cadence is 5 tiles per second, which at the
+	// default 20 Hz is exactly 4 ticks per step; walkSpeedPercent trims that
+	// to taste and is the one number to turn when it needs retuning. Facing
+	// changes stay free — you turn instantly, you walk on a cadence.
+	//
+	// The cooldown is carried in thousandths of a tick rather than in whole
+	// ticks because whole ticks cannot express the trim. 4 ticks is 5 tiles/s
+	// and 5 ticks is 4 tiles/s, so the nearest integer move away from 100% is
+	// a 20% cut — there is nothing in between. At 90% the honest figure is
+	// 4.444 ticks, and rounding it to either neighbour would quietly deliver
+	// 0% or -20% instead of what was asked for.
+	baseMoveCooldownMilliticks = 4000
+	walkSpeedPercent           = 90
+	moveCooldownMilliticks     = baseMoveCooldownMilliticks * 100 / walkSpeedPercent
 
 	// maxConsecutiveDrops is how many snapshots a client may miss in a row
 	// before it is disconnected.
@@ -45,7 +54,12 @@ const (
 // hundreds; these are the ones tools/aoconv currently packs into the atlas, and
 // the two lists must stay in step with that bundle.
 var (
-	availableBodies = []int{1, 2, 3, 4, 5, 6, 7, 8}
+	// Body 8 and head 500 are bundled but deliberately absent here: they are
+	// Argentum's corpse (ghostBody/ghostHead in combat.go), not appearances a
+	// living player should be handed. Body 8 was in this pool until the ghost
+	// went in, which meant a share of players spawned already looking dead —
+	// and with no sideways walk frames, since a corpse has none.
+	availableBodies = []int{1, 2, 3, 4, 5, 6, 7}
 	availableHeads  = []int{1, 2, 3, 4, 5, 6, 7, 8}
 )
 
@@ -63,11 +77,67 @@ var startingInventory = []protocol.InventorySlot{
 	{Slot: 4, ItemID: 43, Amount: 20},               // Botella de Agua
 }
 
-// Known spells, by Hechizos.dat id. Casting does not exist yet; these are what
-// the spell list shows.
-// startingSpells is 1-12 plus, by id, the specific status-effect spells:
-// 14 Invisibilidad, 18 Celeridad, 19 Torpeza, 20 Fuerza, 21 Debilidad.
+// Known spells, by Hechizos.dat id: 1-12 plus, by id, the specific
+// status-effect spells 14 Invisibilidad, 18 Celeridad, 19 Torpeza, 20 Fuerza,
+// 21 Debilidad.
 var startingSpells = []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14, 18, 19, 20, 21}
+
+// The three heavy attack spells, by Hechizos.dat id, with the mana each costs
+// in that same file. They are handed out by what a class can actually pay for
+// rather than to everyone, because a spell you can never afford is a dead row
+// in the book — the same reason the mana formulas were worth porting exactly.
+//
+// The figures to compare against are manaFor's, which for a Humano are: Mago
+// 2524, Clérigo/Bardo/Druida 1810, Paladín/Asesino 930, Bandido 622, everyone
+// else 0.
+const (
+	spellFireStorm  = 15 // Tormenta de Fuego, 250 mana, 45-55 damage
+	spellLightning  = 23 // Descarga Eléctrica, 460 mana, 55-85 damage
+	spellApocalypse = 25 // Apocalipsis, 1000 mana, 85-100 damage
+)
+
+// heavySpellsFor is which of the three a class gets.
+//
+// Apocalipsis at 1000 mana is a Mago spell and reads as one: a Clérigo could
+// pay for it exactly once and then be empty for the rest of the match, which
+// is not a spell so much as a single button. Descarga Eléctrica at 460 is
+// affordable two to four times over by everyone from Paladín up, and Tormenta
+// de Fuego at 250 by anyone with mana at all — including the Bandido, whose
+// 622 is the lowest non-zero pool in the game.
+//
+// The five classes with no mana get none of them, which is not a special case
+// here: they get the whole spell list already and can cast none of it.
+func heavySpellsFor(class Class) []int {
+	switch class {
+	case Mago:
+		return []int{spellFireStorm, spellLightning, spellApocalypse}
+	case Clerigo, Druida, Bardo:
+		return []int{spellFireStorm, spellLightning}
+	case Paladin, Asesino:
+		return []int{spellFireStorm, spellLightning}
+	case Bandido:
+		return []int{spellFireStorm}
+	default:
+		return nil
+	}
+}
+
+// spellBook lays the starting spells into a fixed SpellSlots-long book, the
+// trailing slots empty. Every player gets their own copy: the order is theirs
+// to rearrange (see swapSpells), so a shared backing array would have one
+// player's drag reshuffle everyone else's list.
+func spellBook(class Class) []int {
+	book := make([]int, SpellSlots)
+	n := copy(book, startingSpells)
+	for _, id := range heavySpellsFor(class) {
+		if n >= len(book) {
+			break // the book is full; better a missing spell than a panic
+		}
+		book[n] = id
+		n++
+	}
+	return book
+}
 
 var startingVitals = protocol.Vitals{
 	Level: 1,
@@ -113,11 +183,10 @@ type World struct {
 	// items and spells are the converted obj.dat and Hechizos.dat.
 	items  map[int]Item
 	spells map[int]Spell
-	// loadouts is derived from items by SetItems: per class, the best weapon,
-	// shield, armour, helmet and ring that class may actually equip, plus
-	// every potion type, food and drink (unrestricted by class). Nil map (no
+	// startingKits is derived from items by SetItems: per (class, race) pair,
+	// the minimal newbie-tier loadout every player spawns with. Nil map (no
 	// items loaded) falls back to startingInventory below.
-	loadouts map[Class]bestLoadout
+	startingKits map[startingKitKey]startingKit
 
 	tickRate int
 	tick     uint64
@@ -126,6 +195,10 @@ type World struct {
 	// occupied indexes players by tile so a move only has to look at one entry
 	// instead of scanning everyone.
 	occupied map[tileKey]EntityID
+	// ground indexes item stacks lying on the map by tile — the loot a match
+	// scatters at start (see loot.go) plus whatever drops on death or by hand.
+	// Argentum's own map format holds one object per tile, so this does too.
+	ground map[tileKey]groundStack
 
 	joinCh  chan joinReq
 	leaveCh chan EntityID
@@ -147,6 +220,7 @@ func New(grid *Grid, codec protocol.Codec, tickRate int, log *slog.Logger) *Worl
 		tickRate: tickRate,
 		players:  make(map[EntityID]*Player),
 		occupied: make(map[tileKey]EntityID),
+		ground:   make(map[tileKey]groundStack),
 		joinCh:   make(chan joinReq),
 		leaveCh:  make(chan EntityID),
 		cmdCh:    make(chan command, 1024),
@@ -265,9 +339,29 @@ func (w *World) apply(cmd command) {
 		if err := w.codec.DecodePayload(cmd.payload, &u); err != nil {
 			return
 		}
-		w.useItem(p, u.Slot)
+		w.useItem(p, u.Slot, u.Action)
 	case protocol.TypeHide:
 		w.hide(p)
+	case protocol.TypePickup:
+		w.pickup(p)
+	case protocol.TypeDrop:
+		var d protocol.Drop
+		if err := w.codec.DecodePayload(cmd.payload, &d); err != nil {
+			return
+		}
+		w.dropItem(p, d.Slot)
+	case protocol.TypeSwap:
+		var s protocol.Swap
+		if err := w.codec.DecodePayload(cmd.payload, &s); err != nil {
+			return
+		}
+		w.swapSlots(p, s.From, s.To)
+	case protocol.TypeSwapSpell:
+		var s protocol.Swap
+		if err := w.codec.DecodePayload(cmd.payload, &s); err != nil {
+			return
+		}
+		w.swapSpells(p, s.From, s.To)
 	default:
 		w.log.Debug("ignoring unknown command", "id", cmd.id, "type", cmd.typ)
 	}
@@ -286,8 +380,20 @@ func (w *World) movePlayer(p *Player, dir protocol.Heading) {
 	}
 	p.Heading = dir
 
-	if w.tick-p.lastMoveTick < moveCooldownTicks {
+	// The step clock runs in milliticks so a fractional cadence is expressible;
+	// see moveCooldownMilliticks. The remainder has to survive from one step to
+	// the next, which is why moveReadyAt is advanced by the cooldown rather
+	// than reset to now — resetting would round every step up to a whole tick
+	// and collapse 4.444 back into a flat 5.
+	now := w.tick * 1000
+	if now < p.moveReadyAt {
 		return
+	}
+	// Standing still must not bank credit toward a burst of fast steps, so the
+	// carry is capped at a single cooldown. A player who just idled for ten
+	// seconds starts walking at the normal cadence, not with ten free steps.
+	if now-p.moveReadyAt > moveCooldownMilliticks {
+		p.moveReadyAt = now
 	}
 
 	dx, dy := dir.Delta()
@@ -302,7 +408,7 @@ func (w *World) movePlayer(p *Player, dir protocol.Heading) {
 	delete(w.occupied, tileKey{p.X, p.Y})
 	p.X, p.Y = nx, ny
 	w.occupied[tileKey{nx, ny}] = p.ID
-	p.lastMoveTick = w.tick
+	p.moveReadyAt += moveCooldownMilliticks
 
 	// Moving reveals a player hidden via Ocultarse, unless their class is one
 	// of the two the source lets keep walking while hidden. This does not
@@ -326,11 +432,18 @@ func (w *World) broadcast() {
 		vitals.Paralyzed = p.paralyzed(w.tick)
 		vitals.Immobilized = p.immobilized(w.tick)
 		vitals.Invisible = p.invisible(w.tick)
+		attrs := w.effectiveAttributes(p)
+		vitals.Fuerza = attrs.Fuerza
+		vitals.Agilidad = attrs.Agilidad
+		vitals.Inteligencia = attrs.Inteligencia
+		vitals.Carisma = attrs.Carisma
+		vitals.Constitucion = attrs.Constitucion
 		w.sendTo(p, protocol.TypeSnapshot, protocol.Snapshot{
 			Tick:     w.tick,
 			Alive:    alive,
 			Self:     &vitals,
 			Entities: w.viewportOf(p),
+			Ground:   w.groundItemsInView(p),
 		})
 	}
 }
@@ -354,17 +467,27 @@ func (w *World) viewportOf(p *Player) []protocol.EntityState {
 		if other.ID != p.ID && other.invisible(w.tick) {
 			continue
 		}
+		// Derived fresh rather than stored, so what a character looks like can
+		// never drift from what they are actually wearing.
+		look := w.appearanceOf(other)
 		out = append(out, protocol.EntityState{
 			ID:          uint32(other.ID),
 			X:           other.X,
 			Y:           other.Y,
 			Heading:     other.Heading,
-			Body:        other.Body,
-			Head:        other.Head,
+			Body:        look.Body,
+			Head:        look.Head,
+			Weapon:      look.Weapon,
+			Shield:      look.Shield,
+			Helmet:      look.Helmet,
 			Name:        other.Name,
 			Dead:        other.Dead,
 			Paralyzed:   other.paralyzed(w.tick),
 			Immobilized: other.immobilized(w.tick),
+			// Clan stays empty until a guild system exists; the field is
+			// carried now so the console line has the shape Argentum gives it.
+			Desc:  other.Class.String(),
+			Kills: other.Kills,
 		})
 	}
 	// Map iteration order is random in Go; sorting keeps snapshots stable so
@@ -390,7 +513,7 @@ func (w *World) addPlayer(req joinReq) EntityID {
 		race = allRaces[w.rng.Intn(len(allRaces))]
 	}
 
-	inventory := w.loadouts[class].inventory()
+	inventory := w.startingKits[startingKitKey{class, race}].inventory()
 	if len(inventory) == 0 {
 		// No item table loaded (e.g. running without -items-file): fall back
 		// to the fixed newbie kit rather than spawning with an empty bag.
@@ -408,9 +531,9 @@ func (w *World) addPlayer(req joinReq) EntityID {
 		Race:       race,
 		Attributes: rolledAttributes(race),
 		Skills:     startingSkills,
-		Vitals:     vitalsFor(class),
+		Vitals:     vitalsFor(class, race),
 		Inventory:  inventory,
-		Spells:     append([]int(nil), startingSpells...),
+		Spells:     spellBook(class),
 		conn:       req.conn,
 	}
 	w.players[id] = p
@@ -428,6 +551,10 @@ func (w *World) addPlayer(req joinReq) EntityID {
 		ViewH:     ViewportH,
 		SpawnX:    x,
 		SpawnY:    y,
+		// Tiles per second, derived from the same constant the step gate uses
+		// so the client's interpolation cannot drift from the server's cadence.
+		WalkSpeed:  float64(w.tickRate) * 1000 / moveCooldownMilliticks,
+		SpellSlots: SpellSlots,
 	})
 
 	w.sendTo(p, protocol.TypeLoadout, protocol.Loadout{

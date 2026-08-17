@@ -13,7 +13,7 @@ func arm(w *World, p *Player, class Class, weapon, shield, armor int) {
 	p.Class = class
 	p.Attributes = rolledAttributes(Humano)
 	p.Skills = startingSkills
-	p.Vitals = vitalsFor(class)
+	p.Vitals = vitalsFor(class, Humano)
 	p.Inventory = nil
 	for _, id := range []int{weapon, shield, armor} {
 		if id > 0 {

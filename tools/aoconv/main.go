@@ -21,6 +21,7 @@ import (
 	"image/png"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -90,13 +91,49 @@ func main() {
 	}
 	fmt.Printf("Cabezas.ini:  %d cabezas\n", len(heads))
 
-	// Cuerpos.ini is loaded for -body inspection only. It is not trusted for
-	// bundling: see deriveBodies.
-	bodies, err := loadFacings(filepath.Join(*assets, "INIT", "Cuerpos.ini"), "BODY", "Walk")
+	// Bodies come from Personajes.ini, NOT Cuerpos.ini.
+	//
+	// This is the file the real client actually loads — its CargarCuerpos
+	// reads Personajes.ind despite the sub's name, and the client source
+	// references Cuerpos.ini nowhere at all. Cuerpos.ini is stale leftover
+	// data and it is wrong in three ways at once: it stops at 597 bodies
+	// against Personajes.ini's 692, half its Walk2/Walk4 entries are 0 or -4
+	// so bodies only face two directions, and its HeadOffsetX holds grh
+	// numbers rather than pixel offsets. Body 1 side by side:
+	//
+	//	Cuerpos.ini      Walk 4582/0/4584/0     HeadOffset 4581,0
+	//	Personajes.ini   Walk 4582/4584/4581/4583  HeadOffset 0,-4
+	//
+	// Every earlier oddity in this converter traces back to that file: the
+	// facing order had to be found by trial because the data it was derived
+	// from was garbage, head alignment needed a content-bounds heuristic
+	// because the offsets were nonsense, and bodies had to be synthesised at
+	// all because two of four directions were missing.
+	bodies, err := loadBodies(filepath.Join(*assets, "INIT", "Personajes.ini"))
 	if err != nil {
 		fatal("%v", err)
 	}
-	fmt.Printf("Cuerpos.ini:  %d cuerpos (solo para inspección)\n", len(bodies))
+	fmt.Printf("Personajes.ini: %d cuerpos\n", len(bodies))
+
+	// The three worn-equipment tables. Separate files, separate numbering,
+	// and two different key names — Armas/Escudos use Dir1..4 while Cascos
+	// uses Head1..4. The index in all of them is the heading, and the code is
+	// authoritative that 1=N 2=E 3=S 4=W; the trailing comments in the files
+	// disagree with each other and are simply wrong.
+	weaponAnims, err := loadFacings(filepath.Join(*assets, "INIT", "Armas.dat"), "ARMA", "Dir")
+	if err != nil {
+		fatal("%v", err)
+	}
+	shieldAnims, err := loadFacings(filepath.Join(*assets, "INIT", "Escudos.dat"), "ESC", "Dir")
+	if err != nil {
+		fatal("%v", err)
+	}
+	helmetAnims, err := loadFacings(filepath.Join(*assets, "INIT", "Cascos.ini"), "HEAD", "Head")
+	if err != nil {
+		fatal("%v", err)
+	}
+	fmt.Printf("equipo:       %d armas, %d escudos, %d cascos\n",
+		len(weaponAnims), len(shieldAnims), len(helmetAnims))
 
 	dat := *datDir
 	if dat == "" {
@@ -147,8 +184,32 @@ func main() {
 	}
 
 	if *bundleDir != "" {
-		if err := writeBundle(grhs, heads,
-			*assets, parseList(*bodyList), parseList(*headList), *bundleDir,
+		// Which bodies to pack is not a list anyone should be maintaining by
+		// hand any more. Equipping armour *is* changing your body in Argentum
+		// — obj.dat's NumRopaje becomes Char.body — so every armour that can
+		// be found has to have its body in the atlas or the wearer turns
+		// invisible. That is 300-odd bodies, plus the naked ones a character
+		// falls back to with no armour on, plus the corpse.
+		wantBodies := map[int]bool{ghostBody: true}
+		for _, id := range nakedBodies {
+			wantBodies[id] = true
+		}
+		for _, item := range items {
+			if item.Type == ObjArmor && item.Body > 0 {
+				wantBodies[item.Body] = true
+			}
+		}
+		for _, id := range parseList(*bodyList) {
+			wantBodies[id] = true
+		}
+		bodyIDs := make([]int, 0, len(wantBodies))
+		for id := range wantBodies {
+			bodyIDs = append(bodyIDs, id)
+		}
+		sort.Ints(bodyIDs)
+
+		if err := writeBundle(grhs, bodies, heads, weaponAnims, shieldAnims, helmetAnims,
+			*assets, bodyIDs, parseList(*headList), *bundleDir,
 			aoMap, displayName, items); err != nil {
 			fatal("%v", err)
 		}
@@ -183,7 +244,9 @@ func main() {
 		wanted = append(wanted, describeSet(heads, *head, "cabeza")...)
 	}
 	if *body > 0 {
-		wanted = append(wanted, describeSet(bodies, *body, "cuerpo")...)
+		if b, ok := bodies[*body]; ok {
+			wanted = append(wanted, describeSet(map[int][4]int{*body: b.Facings}, *body, "cuerpo")...)
+		}
 	}
 	if len(wanted) == 0 {
 		return
@@ -369,19 +432,29 @@ func loadGraficos(path string) (map[int]Grh, error) {
 	return out, nil
 }
 
-// loadFacings parses Cuerpos.ini / Cabezas.ini, which share a shape: a section
-// per entity holding one grh per facing.
+// loadFacings parses the four-graphics-per-entity index files: Cabezas.ini
+// ([HEADn] Head1..4), Armas.dat ([ARMAn] Dir1..4), Escudos.dat ([ESCn] Dir1..4)
+// and Personajes.ini's walk half ([BODYn] Walk1..4).
+//
+// Matching is case-insensitive because Armas.dat genuinely mixes cases within
+// one file — it has both [Arma1] and [ARMA4].
+//
+// The facing index is the source's own E_Heading: 1 north, 2 east, 3 south,
+// 4 west. Do not take this from the trailing comments in the files; [Arma1]
+// labels Dir1 "norte" while [ESC3] labels Dir3 "norte", so they cannot both be
+// right, and the client's array subscript settles it.
 func loadFacings(path, section, key string) (map[int][4]int, error) {
 	lines, err := iniLines(path)
 	if err != nil {
 		return nil, err
 	}
+	section, key = strings.ToUpper(section), strings.ToUpper(key)
 
 	out := map[int][4]int{}
 	current := 0
 	for _, line := range lines {
 		if strings.HasPrefix(line, "[") {
-			name := strings.Trim(line, "[]")
+			name := strings.ToUpper(strings.Trim(line, "[]"))
 			current = 0
 			if strings.HasPrefix(name, section) {
 				current = atoi(strings.TrimPrefix(name, section))
@@ -393,7 +466,11 @@ func loadFacings(path, section, key string) (map[int][4]int, error) {
 		}
 
 		rawKey, rawValue, ok := strings.Cut(line, "=")
-		if !ok || !strings.HasPrefix(rawKey, key) {
+		if !ok {
+			continue
+		}
+		rawKey = strings.ToUpper(strings.TrimSpace(rawKey))
+		if !strings.HasPrefix(rawKey, key) {
 			continue
 		}
 		facing, err := strconv.Atoi(strings.TrimPrefix(rawKey, key))
@@ -404,6 +481,67 @@ func loadFacings(path, section, key string) (map[int][4]int, error) {
 		set := out[current]
 		set[facing-1] = atoi(rawValue)
 		out[current] = set
+	}
+	return out, nil
+}
+
+// BodyIndex is one Personajes.ini record: four walk animations plus where the
+// head sits on this body.
+type BodyIndex struct {
+	Facings    [4]int
+	HeadOffset [2]int
+}
+
+// loadBodies parses Personajes.ini. Same [BODYn] Walk1..4 shape loadFacings
+// handles, plus the two head-offset keys, which are the real reason this file
+// matters: the client draws the head at the body's own position *plus* this
+// offset, so it is per-body data and not something a converter can measure or
+// guess. Humano/Elfo/Drow bodies carry -4 on Y, the short races +6.
+func loadBodies(path string) (map[int]BodyIndex, error) {
+	facings, err := loadFacings(path, "BODY", "Walk")
+	if err != nil {
+		return nil, err
+	}
+	lines, err := iniLines(path)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make(map[int]BodyIndex, len(facings))
+	for id, set := range facings {
+		out[id] = BodyIndex{Facings: set}
+	}
+
+	current := 0
+	for _, line := range lines {
+		if strings.HasPrefix(line, "[") {
+			name := strings.ToUpper(strings.Trim(line, "[]"))
+			current = 0
+			if strings.HasPrefix(name, "BODY") {
+				current = atoi(strings.TrimPrefix(name, "BODY"))
+			}
+			continue
+		}
+		if current == 0 {
+			continue
+		}
+		rawKey, rawValue, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		body, known := out[current]
+		if !known {
+			continue
+		}
+		switch strings.ToUpper(strings.TrimSpace(rawKey)) {
+		case "HEADOFFSETX":
+			body.HeadOffset[0] = atoi(rawValue)
+		case "HEADOFFSETY":
+			body.HeadOffset[1] = atoi(rawValue)
+		default:
+			continue
+		}
+		out[current] = body
 	}
 	return out, nil
 }

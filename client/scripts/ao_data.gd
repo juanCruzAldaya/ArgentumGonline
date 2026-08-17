@@ -19,6 +19,16 @@ const TYPE_SHIELD := 16
 const TYPE_HELMET := 17
 const TYPE_RING := 18
 
+## obj.dat's ePocionType, in the server's own order (see items.go). The HUD
+## reads these to count red/blue potions for the two quick-slot boxes the
+## panel artwork draws.
+const POTION_AGILITY := 1
+const POTION_STRENGTH := 2
+const POTION_HEALTH := 3
+const POTION_MANA := 4
+const POTION_CURE_POISON := 5
+const POTION_BLACK := 6
+
 ## Class and race names, in the exact order the server's Class/Race enums
 ## define them (see server/internal/world/balance.go's allClasses/allRaces).
 ## The character picker sends the index, not the name, so this order is the

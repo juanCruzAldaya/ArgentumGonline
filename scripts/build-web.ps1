@@ -47,6 +47,30 @@ if (-not (Test-Path $outFile)) {
     throw "El export termino OK pero no aparecio $outFile"
 }
 
+# Pre-compress the big files. The server serves "<file>.gz" to any client that
+# accepts gzip (see transport.precompressed) and falls back to the plain file
+# otherwise, so this is an optimisation and never a requirement. It matters a
+# lot though: the wasm alone is 38MB raw against under 10MB gzipped, and
+# http.FileServer does not compress anything on its own.
+#
+# Done here rather than per request because the machine serving this is a
+# 256MB shared CPU — compressing 38MB for every visitor would cost far more
+# than the bandwidth it saves.
+Write-Host "Comprimiendo para servir..."
+foreach ($file in Get-ChildItem $outDir -File -Include *.wasm, *.pck, *.js, *.html -Recurse) {
+    $gz = "$($file.FullName).gz"
+    $in = [System.IO.File]::OpenRead($file.FullName)
+    try {
+        $out = [System.IO.File]::Create($gz)
+        try {
+            $stream = New-Object System.IO.Compression.GZipStream($out, [System.IO.Compression.CompressionLevel]::Optimal)
+            try { $in.CopyTo($stream) } finally { $stream.Dispose() }
+        } finally { $out.Dispose() }
+    } finally { $in.Dispose() }
+    $saved = [math]::Round((1 - (Get-Item $gz).Length / $file.Length) * 100)
+    Write-Host ("  {0,-28} -{1}%" -f $file.Name, $saved)
+}
+
 Write-Host ""
 Write-Host "Listo. Para servirlo:"
 Write-Host "  go run -C $repoRoot\server ./cmd/server -web-dir $outDir"

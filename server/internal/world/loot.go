@@ -1,0 +1,289 @@
+package world
+
+import "juegito/server/internal/protocol"
+
+// groundStack is one item stack lying on a tile. Argentum's own map format
+// carries exactly one object per tile (MapData().ObjInfo — a single
+// ObjIndex/Amount pair, not a list), so ground loot follows the same
+// constraint here: at most one stack per tile.
+type groundStack struct {
+	ItemID int
+	Amount int
+}
+
+// lootEntry is one item's chance of being the thing scattered at a given
+// ground spawn — see computeLootTable.
+type lootEntry struct {
+	Item   Item
+	Weight float64
+}
+
+// computeLootTable is every item worth finding, weighted so the strong stuff
+// is rare. Newbie-tier items are excluded — that is what everyone already
+// spawns with (see loadout.go), so finding one on the ground would be a
+// letdown, not a reward. The joke black potion is excluded too; nobody should
+// have to guess whether a mystery potion is going to kill them outright.
+//
+// Weight is 1/(1+power), power being MaxHit for weapons and MaxDef for
+// anything with armour class — a plain sword (MaxHit 8) and a warhammer
+// (MaxHit 40) end up roughly 5x apart in spawn odds. Items with no power stat
+// (potions, food, drink, rings) get a flat, comparatively generous weight so
+// the map isn't only weapons and armour.
+func computeLootTable(items map[int]Item) []lootEntry {
+	const flatWeight = 0.5
+
+	var table []lootEntry
+	for _, item := range items {
+		if item.PotionType == PotionBlack || isNewbie(item) {
+			continue
+		}
+		var power int
+		switch item.Type {
+		case ItemWeapon:
+			power = item.MaxHit
+		case ItemArmor, ItemShield, ItemHelmet:
+			power = item.MaxDef
+		default:
+			table = append(table, lootEntry{Item: item, Weight: flatWeight})
+			continue
+		}
+		table = append(table, lootEntry{Item: item, Weight: 1.0 / float64(1+power)})
+	}
+	return table
+}
+
+func isNewbie(item Item) bool {
+	return len(item.Name) >= len(newbieTag) &&
+		(func() bool {
+			for i := 0; i+len(newbieTag) <= len(item.Name); i++ {
+				if item.Name[i:i+len(newbieTag)] == newbieTag {
+					return true
+				}
+			}
+			return false
+		})()
+}
+
+// potionLootTable is every potion worth finding on the ground, flat-weighted.
+//
+// It is a separate table from computeLootTable on purpose. That one weights by
+// power so a warhammer stays a lucky find, and it excludes newbie-tier items
+// because everyone already spawns holding them. Neither rule applies to
+// potions: they are the thing you should always be able to top up on, so a
+// weak newbie potion and a full-strength one are equally welcome and both
+// belong on the map. Only the black potion is out, for the reason
+// computeLootTable already gives.
+func potionLootTable(items map[int]Item) []lootEntry {
+	var table []lootEntry
+	for _, item := range items {
+		if item.Type != ItemPotion || item.PotionType == PotionBlack {
+			continue
+		}
+		table = append(table, lootEntry{Item: item, Weight: 1})
+	}
+	return table
+}
+
+// pickWeighted rolls one entry from the table, proportional to Weight.
+func (w *World) pickWeighted(table []lootEntry) Item {
+	total := 0.0
+	for _, e := range table {
+		total += e.Weight
+	}
+	roll := w.rng.Float64() * total
+	for _, e := range table {
+		roll -= e.Weight
+		if roll <= 0 {
+			return e.Item
+		}
+	}
+	return table[len(table)-1].Item // float rounding fallback
+}
+
+// freeTilePool is every walkable, currently unoccupied tile, shuffled.
+//
+// Ground spawning draws from this rather than rejection-sampling random
+// coordinates, which is what it used to do with a 30-attempt budget per item.
+// That budget was fine while loot covered 166 of ~4900 walkable tiles; it is
+// not fine now that potions target a quarter of the map, because as occupancy
+// climbs a random tile is more often taken than not and a fixed budget starts
+// silently placing fewer items than asked without any error to notice. Drawing
+// from a shuffled pool places exactly what was asked for, in one pass, for as
+// long as tiles remain — and stays deterministic under a fixed seed.
+func (w *World) freeTilePool() []tileKey {
+	pool := make([]tileKey, 0, w.grid.W*w.grid.H)
+	for y := 0; y < w.grid.H; y++ {
+		for x := 0; x < w.grid.W; x++ {
+			if w.grid.Blocked(x, y) {
+				continue
+			}
+			if _, taken := w.ground[tileKey{x, y}]; taken {
+				continue
+			}
+			pool = append(pool, tileKey{x, y})
+		}
+	}
+	w.rng.Shuffle(len(pool), func(i, j int) { pool[i], pool[j] = pool[j], pool[i] })
+	return pool
+}
+
+// scatter places up to count stacks from table onto tiles taken off the front
+// of pool, and returns whatever is left of the pool for the next caller.
+// Called once at load, after the map and items are both in — ground contents
+// are part of the match's starting state, not something that regenerates
+// mid-match.
+func (w *World) scatter(pool []tileKey, table []lootEntry, count int, amount func(Item) int) []tileKey {
+	if len(table) == 0 {
+		return pool
+	}
+	if count > len(pool) {
+		count = len(pool)
+	}
+	for i := 0; i < count; i++ {
+		item := w.pickWeighted(table)
+		w.ground[pool[i]] = groundStack{ItemID: item.ID, Amount: amount(item)}
+	}
+	return pool[count:]
+}
+
+// spawnGroundLoot scatters the gear find — weapons, armour, rings, the
+// occasional non-newbie consumable — weighted so the strong stuff is rare.
+func (w *World) spawnGroundLoot(pool []tileKey, count int) []tileKey {
+	rest := w.scatter(pool, computeLootTable(w.items), count, stackAmountFor)
+	w.log.Info("loot esparcido", "pedido", count, "colocado", len(pool)-len(rest))
+	return rest
+}
+
+// spawnGroundPotions carpets the map with potions, in its own pass and at its
+// own density. Running them through the gear scatter would make a potion just
+// another rare find competing with swords for the same tile; the point here is
+// the opposite, that you are never more than a few tiles from a refill.
+func (w *World) spawnGroundPotions(pool []tileKey, count int) []tileKey {
+	rest := w.scatter(pool, potionLootTable(w.items), count, func(Item) int { return groundPotionStack })
+	w.log.Info("pociones esparcidas", "pedido", count, "colocado", len(pool)-len(rest),
+		"unidades", (len(pool)-len(rest))*groundPotionStack)
+	return rest
+}
+
+// stackAmountFor is how many units a single gear-scatter spawn carries — a
+// found weapon or piece of armour is one, a found consumable a small handful.
+// Potions scattered by spawnGroundPotions do not come through here; they use
+// groundPotionStack.
+func stackAmountFor(item Item) int {
+	switch item.Type {
+	case ItemPotion, ItemFood, ItemDrink:
+		return 3
+	default:
+		return 1
+	}
+}
+
+// groundItemsInView is Ground for one player's snapshot — same viewport
+// window as viewportOf, so loot obeys the same interest-management rule
+// entities do.
+func (w *World) groundItemsInView(p *Player) []protocol.GroundItem {
+	const halfW, halfH = ViewportW / 2, ViewportH / 2
+	var out []protocol.GroundItem
+	for key, stack := range w.ground {
+		dx, dy := key.X-p.X, key.Y-p.Y
+		if dx < -halfW || dx > halfW || dy < -halfH || dy > halfH {
+			continue
+		}
+		out = append(out, protocol.GroundItem{X: key.X, Y: key.Y, ItemID: stack.ItemID, Amount: stack.Amount})
+	}
+	return out
+}
+
+// pickup is Agarrar: take whatever sits on the player's own tile. Stacks onto
+// an existing unequipped slot of the same item if one exists, otherwise opens
+// a fresh slot.
+func (w *World) pickup(p *Player) {
+	if p.Dead {
+		return
+	}
+	key := tileKey{p.X, p.Y}
+	stack, ok := w.ground[key]
+	if !ok {
+		return
+	}
+
+	for i := range p.Inventory {
+		if !p.Inventory[i].Equipped && p.Inventory[i].ItemID == stack.ItemID {
+			p.Inventory[i].Amount += stack.Amount
+			delete(w.ground, key)
+			w.sendLoadout(p)
+			return
+		}
+	}
+
+	p.Inventory = append(p.Inventory, protocol.InventorySlot{
+		Slot: freeSlotNumber(p.Inventory), ItemID: stack.ItemID, Amount: stack.Amount,
+	})
+	delete(w.ground, key)
+	w.sendLoadout(p)
+}
+
+// dropItem is Tirar: place one whole inventory slot on the player's own tile,
+// only if it's currently empty — Argentum's one-object-per-tile rule applies
+// to what you leave behind too.
+func (w *World) dropItem(p *Player, slotIndex int) {
+	if p.Dead {
+		return
+	}
+	key := tileKey{p.X, p.Y}
+	if _, occupied := w.ground[key]; occupied {
+		return
+	}
+
+	slot, idx := findSlot(p.Inventory, slotIndex)
+	if idx < 0 {
+		return
+	}
+	w.ground[key] = groundStack{ItemID: slot.ItemID, Amount: slot.Amount}
+	p.Inventory = append(p.Inventory[:idx], p.Inventory[idx+1:]...)
+	w.sendLoadout(p)
+}
+
+// scatterInventory is what classic AO's hardcore drop-on-death already is —
+// dropping everything a player carried at the moment of elimination is a
+// battle royale mechanic that needed no invention, just wiring up. Each stack
+// looks for its own free tile working outward from the death spot, so five
+// items don't all collapse onto the one tile the rule allows.
+func (w *World) scatterInventory(p *Player) {
+	if len(p.Inventory) == 0 {
+		return
+	}
+	tiles := w.freeTilesNear(p.X, p.Y, len(p.Inventory))
+	for i, slot := range p.Inventory {
+		if i >= len(tiles) {
+			break // ran out of nearby free ground; the rest is lost, not stuck mid-air
+		}
+		w.ground[tiles[i]] = groundStack{ItemID: slot.ItemID, Amount: slot.Amount}
+	}
+	p.Inventory = nil
+}
+
+// freeTilesNear spiral-searches outward from (x,y) for up to want unblocked,
+// currently empty tiles.
+func (w *World) freeTilesNear(x, y, want int) []tileKey {
+	var out []tileKey
+	for radius := 0; radius <= 6 && len(out) < want; radius++ {
+		for dx := -radius; dx <= radius; dx++ {
+			for dy := -radius; dy <= radius; dy++ {
+				if len(out) >= want {
+					return out
+				}
+				tx, ty := x+dx, y+dy
+				if w.grid.Blocked(tx, ty) {
+					continue
+				}
+				key := tileKey{tx, ty}
+				if _, taken := w.ground[key]; taken {
+					continue
+				}
+				out = append(out, key)
+			}
+		}
+	}
+	return out
+}
