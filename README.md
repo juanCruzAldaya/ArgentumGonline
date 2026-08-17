@@ -9,6 +9,13 @@ ofrecerle el código fuente completo a quien juegue. Ver [CREDITS.md](CREDITS.md
 Servidor autoritativo headless en Go. Godot es **solo cliente**: renderiza e
 manda input, no simula nada.
 
+**Documentación:** [OPERACION.md](OPERACION.md) es el manual — todos los
+comandos para levantar, buildear, publicar y deployar, más cómo funciona el
+sistema por dentro. Los otros tres:
+[RESUMEN-EJECUTIVO](RESUMEN-EJECUTIVO.md) para decidir,
+[RESUMEN-FUNCIONAL](RESUMEN-FUNCIONAL.md) para saber qué hace el juego, y
+[DIFICULTADES](DIFICULTADES.md) para lo que costó y por qué.
+
 ## Documentos
 
 - [RESUMEN-EJECUTIVO.md](RESUMEN-EJECUTIVO.md) — qué es, qué se logró, qué falta

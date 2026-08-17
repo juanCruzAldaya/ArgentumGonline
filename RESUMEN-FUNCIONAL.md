@@ -3,6 +3,8 @@
 Qué hace el juego hoy, visto desde el jugador y desde el sistema. Todo lo
 listado acá está implementado y andando; lo que falta está al final, separado.
 
+Para correrlo y deployarlo, ver [OPERACION.md](OPERACION.md).
+
 ---
 
 ## 1. Entrar a la partida

@@ -41,6 +41,11 @@ const (
 	walkSpeedPercent           = 90
 	moveCooldownMilliticks     = baseMoveCooldownMilliticks * 100 / walkSpeedPercent
 
+	// turnCooldownMilliticks is INT_CHANGE_HEADING from the client's
+	// Declares.bas: 300ms, which at 20Hz is 6 ticks. It only gates turning in
+	// place; a turn that comes with a step rides the step's own cadence.
+	turnCooldownMilliticks = 6 * 1000
+
 	// maxConsecutiveDrops is how many snapshots a client may miss in a row
 	// before it is disconnected.
 	maxConsecutiveDrops = 30
@@ -367,6 +372,25 @@ func (w *World) apply(cmd command) {
 	}
 }
 
+// turn changes facing without taking a step, on its own interval.
+//
+// This is the source's INT_CHANGE_HEADING (Declares.bas), 300ms, and the
+// client only reaches it when the move itself is illegal — blocked, rooted, or
+// still mid-step. A legal step carries its own turn along with it and never
+// comes through here, which is why walking around a corner feels immediate
+// while pivoting against a wall does not.
+func (w *World) turn(p *Player, dir protocol.Heading) {
+	if p.Heading == dir {
+		return
+	}
+	now := w.tick * 1000
+	if now < p.turnReadyAt {
+		return
+	}
+	p.Heading = dir
+	p.turnReadyAt = now + turnCooldownMilliticks
+}
+
 func (w *World) movePlayer(p *Player, dir protocol.Heading) {
 	if !dir.Valid() || p.Dead {
 		return
@@ -375,10 +399,12 @@ func (w *World) movePlayer(p *Player, dir protocol.Heading) {
 	// rejects the move outright under either, though a rooted player can
 	// still turn to face a new direction and swing.
 	if !p.canMove(w.tick) {
-		p.Heading = dir
+		// A rooted player can still turn to face a new direction and swing,
+		// which is what the source does — on the turn timer, since there is no
+		// step to carry the turn along with.
+		w.turn(p, dir)
 		return
 	}
-	p.Heading = dir
 
 	// The step clock runs in milliticks so a fractional cadence is expressible;
 	// see moveCooldownMilliticks. The remainder has to survive from one step to
@@ -387,6 +413,17 @@ func (w *World) movePlayer(p *Player, dir protocol.Heading) {
 	// and collapse 4.444 back into a flat 5.
 	now := w.tick * 1000
 	if now < p.moveReadyAt {
+		// Mid-step. The step is refused, but a turn is not: it goes on the
+		// turn timer instead.
+		//
+		// Heading used to be assigned before this gate, on every command that
+		// arrived. The client polls the movement keys once per frame, so at
+		// 60fps that was up to 60 turns a second while a single step was still
+		// being drawn — the character spun in place while sliding sideways.
+		// Then it was quantised to the step cadence, which overcorrected: the
+		// source gives turning its own, separate interval and only falls back
+		// to it when the move itself is refused.
+		w.turn(p, dir)
 		return
 	}
 	// Standing still must not bank credit toward a burst of fast steps, so the
@@ -395,6 +432,11 @@ func (w *World) movePlayer(p *Player, dir protocol.Heading) {
 	if now-p.moveReadyAt > moveCooldownMilliticks {
 		p.moveReadyAt = now
 	}
+
+	// Past the gate, so this is a step boundary: turn now, and keep the turn
+	// even if the step below is refused. Walking into a wall in Argentum faces
+	// you at the wall.
+	p.Heading = dir
 
 	dx, dy := dir.Delta()
 	nx, ny := p.X+dx, p.Y+dy

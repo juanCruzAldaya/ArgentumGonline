@@ -4,9 +4,16 @@ extends Node2D
 
 const DEFAULT_URL := "ws://127.0.0.1:8080/ws"
 
-## How often held keys produce a move command. The server enforces the real walk
-## cadence, so this only has to be fast enough that input never feels dropped.
-const INPUT_INTERVAL := 0.05
+## How often held keys are read. Zero: every frame.
+##
+## This was 50ms, which put a throttle in front of the input on top of the
+## server's 50ms tick and the trip back — up to 150ms between pressing a key
+## and seeing the character react, which is the lag that made this feel unlike
+## the original. The rate limiting belongs to the walk cadence, which the
+## server enforces and the prediction mirrors, not to how often the keyboard is
+## sampled. Sampling every frame costs nothing: a command that arrives too
+## early is refused by a cooldown either way.
+const INPUT_INTERVAL := 0.0
 
 @onready var _net: Node = $Net
 @onready var _view: Node2D = $WorldView
@@ -109,6 +116,15 @@ func _process(delta: float) -> void:
 				else "No podés moverte, estás inmovilizado."
 			)
 			return
+		# Move first, tell the server second — the order Argentum's own
+		# Map_MoveTo uses. The character reacts on the frame the key is read
+		# instead of a round trip later; see WorldView.predict_step.
+		#
+		# The command is sent even when the prediction refuses the step: the
+		# server owns facing for everyone else's screen, and a walk into a wall
+		# is still a turn. It is the server's answer that is authoritative,
+		# never ours.
+		_view.predict_step(dir)
 		_net.send_move(dir)
 
 

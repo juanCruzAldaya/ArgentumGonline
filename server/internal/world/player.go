@@ -79,6 +79,9 @@ type Player struct {
 	// moveReadyAt is the milltick this player may next step on; see
 	// moveCooldownMilliticks for why the clock is finer than a tick.
 	moveReadyAt uint64
+	// turnReadyAt paces turning in place, which the source meters separately
+	// from walking. See World.turn.
+	turnReadyAt uint64
 
 	// consecutiveDrops counts snapshots the client failed to accept in a row.
 	// A client that is merely stuttering recovers; one that never drains gets

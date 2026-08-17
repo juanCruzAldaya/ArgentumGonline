@@ -75,6 +75,23 @@ var _layer4: Dictionary = {}
 ## Tile index -> true for every tile the map marks BAJOTECHO or CASA. Drives
 ## whether the roof layer is drawn at all this frame; see _draw_layers.
 var _roofed: Dictionary = {}
+
+## Tile offset per heading, in the server's own order: 0 N, 1 E, 2 S, 3 W.
+const HEADING_DELTA := [Vector2(0, -1), Vector2(1, 0), Vector2(0, 1), Vector2(-1, 0)]
+
+## Local step clock for prediction, mirroring the server's walk cadence.
+var _local_step_ready_at := 0.0
+
+## How many consecutive snapshots have disagreed with the predicted position.
+## A single disagreement is normal — the snapshot in flight was composed before
+## the server saw our last step — so only a run of them is a real desync.
+var _desync_frames := 0
+
+## How many snapshots must disagree in a row before the server's position is
+## forced onto the local player. At 20Hz this is 200ms — long enough that the
+## normal one-snapshot lag never triggers it, short enough that a genuinely
+## refused step is corrected before the player has walked far on a lie.
+const DESYNC_SNAPSHOTS := 4
 ## Drives animated tiles such as water, which run whether or not anyone moves.
 var _world_time := 0.0
 
@@ -155,8 +172,30 @@ func set_entities(entities: Array) -> void:
 			# First sighting: appear in place rather than sliding in from the
 			# last entity's position.
 			entity = {"render": tile, "anim": 0.0, "moving": false}
-		entity["tile"] = tile
-		entity["heading"] = int(e.get("h", 0))
+
+		if id == local_id and not entity.is_empty() and entity.has("tile"):
+			# Reconciliation. The local player's position is predicted (see
+			# predict_step), so the server's copy is normally one step behind
+			# ours and must NOT be written straight over it — doing that is what
+			# a rubber band is made of.
+			#
+			# A single disagreement is expected: the snapshot now arriving was
+			# composed before the server had seen our latest step. A *run* of
+			# them means the server genuinely refused something we predicted —
+			# somebody took the tile first, or a cooldown we mirrored wrong —
+			# and then the server wins, because it always does.
+			if entity["tile"] == tile:
+				_desync_frames = 0
+			else:
+				_desync_frames += 1
+				if _desync_frames >= DESYNC_SNAPSHOTS:
+					entity["tile"] = tile
+					_desync_frames = 0
+			# Heading is predicted too, so the server's is stale for the same
+			# reason. It rides along with the position correction above.
+		else:
+			entity["tile"] = tile
+			entity["heading"] = int(e.get("h", 0))
 		entity["body"] = int(e.get("b", 0))
 		entity["head"] = int(e.get("hd", 0))
 		entity["name"] = str(e.get("n", ""))
@@ -387,6 +426,57 @@ func _draw() -> void:
 		# Nothing was blocking the way out; there was just no way to see it.
 		if not _under_roof():
 			_draw_layer(_layer4, first, shift, false)
+
+
+## Steps the local player right now, without waiting for the server to agree.
+##
+## This is what Argentum's own client does. Map_MoveTo (mPooMap.bas:132) checks
+## the destination against the client's copy of the map and, if it is legal,
+## sends the walk AND moves the character in the same breath — the server finds
+## out afterwards. That is the whole reason the original feels direct: the
+## round trip never sits between the key and the character.
+##
+## We keep the server authoritative anyway, which the original does not — its
+## HandleWalk has no rate limit at all and simply trusts the client, backed by a
+## speedhack *detector*. Trusting the client is not an option in a battle
+## royale, so instead the prediction runs the same rules the server does and
+## set_entities reconciles when they disagree.
+##
+## Returns whether the step was taken, so the caller can skip telling the server
+## about a move that is locally impossible.
+func predict_step(dir: int) -> bool:
+	var me: Variant = _entities.get(local_id)
+	if me == null:
+		return false
+
+	var now := Time.get_ticks_msec() / 1000.0
+	if now < _local_step_ready_at:
+		return false
+
+	var tile: Vector2 = me["tile"]
+	var delta: Vector2 = HEADING_DELTA[dir]
+	var target: Vector2 = tile + delta
+
+	# Turning is free and immediate, exactly as the original has it: a legal
+	# step carries its own turn, and the facing is applied even when the step
+	# below is refused.
+	me["heading"] = dir
+
+	if is_blocked(int(target.x), int(target.y)):
+		return false
+	# The server also refuses to walk onto another character. Checking it here
+	# keeps the prediction from confidently walking through a crowd and then
+	# being yanked back a tile at a time.
+	for id: int in _entities:
+		if id != local_id and _entities[id]["tile"] == target:
+			return false
+
+	me["tile"] = target
+	# Mirror the server's cadence rather than inventing one, so a correct
+	# prediction stays correct instead of drifting ahead of the simulation.
+	_local_step_ready_at = now + 1.0 / walk_speed
+	_desync_frames = 0
+	return true
 
 
 ## Whether the local player is standing on a tile the map marks as being under
