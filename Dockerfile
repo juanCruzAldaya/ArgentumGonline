@@ -19,5 +19,14 @@ RUN CGO_ENABLED=0 go build -trimpath -o /out/server ./cmd/server
 FROM gcr.io/distroless/static-debian12
 COPY --from=build /out/server /server
 COPY build/web /web
+# The map, the item table and the spell table. Without these the server still
+# starts — and that is the trap: it comes up on a generated empty arena with no
+# objects and no spells, which looks like a broken game rather than like a
+# missing flag. The first deploy did exactly that.
+COPY server/maps /maps
 EXPOSE 8080
-ENTRYPOINT ["/server", "-web-dir", "/web"]
+ENTRYPOINT ["/server", \
+    "-web-dir", "/web", \
+    "-map-file", "/maps/map1.json", \
+    "-items-file", "/maps/items.json", \
+    "-spells-file", "/maps/spells.json"]

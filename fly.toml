@@ -5,7 +5,12 @@
 # machine per match, started at lobby close and destroyed when the match ends.
 
 app = "juegito"
-primary_region = "eze" # Ezeiza — lowest latency from Buenos Aires
+# São Paulo. This said "eze" (Ezeiza) until Fly deprecated that region and
+# refused to provision into it — gru is the only South American region left,
+# and the nearest thing to Buenos Aires available. Expect roughly 25-40ms from
+# there instead of single digits, which is well inside what a 20Hz tile game
+# with no client-side prediction tolerates.
+primary_region = "gru"
 
 [build]
   dockerfile = "Dockerfile"

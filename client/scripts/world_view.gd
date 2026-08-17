@@ -198,6 +198,35 @@ func set_ground(items: Array) -> void:
 		}
 
 
+## Moves render one frame's worth toward target, along ONE axis at a time.
+##
+## Argentum never moves a character diagonally, and neither does this server —
+## every step is one cardinal tile. The render position has to walk the same
+## shape, and interpolating straight at the target does not: it moves along the
+## vector between the two, which is diagonal whenever the two differ on both
+## axes.
+##
+## They differ on both axes routinely. A player walking east who turns north
+## gets a new target before the eastward step has finished drawing, so the
+## remaining vector points north-east and the sprite cuts the corner. That is
+## the "se mueve raro en diagonal al cambiar de sentido" — the simulation was
+## always correct, only the smoothing was taking a shortcut the game does not
+## allow.
+##
+## Whichever axis is mid-tile finishes first, because that is the step actually
+## in progress; the turn happens once the character is back on the grid. When
+## both axes are aligned and both differ — the server jumped more than one tile,
+## which only a resync does — Y goes first. Either order draws an L; what
+## matters is that it is an L and not a diagonal.
+func _step_toward(render: Vector2, target: Vector2, step: float) -> Vector2:
+	const ON_GRID := 0.001
+	var mid_x: bool = absf(render.x - roundf(render.x)) > ON_GRID
+
+	if mid_x or absf(target.y - render.y) < ON_GRID:
+		return Vector2(move_toward(render.x, target.x, step), render.y)
+	return Vector2(render.x, move_toward(render.y, target.y, step))
+
+
 func _process(delta: float) -> void:
 	_world_time += delta
 	_hovered = entity_at(get_local_mouse_position()) if targeting else 0
@@ -214,11 +243,7 @@ func _process(delta: float) -> void:
 			entity["render"] = target
 			entity["moving"] = false
 		elif to_go.length() > 0.001:
-			var step := walk_speed * delta
-			if to_go.length() <= step:
-				entity["render"] = target
-			else:
-				entity["render"] = render + to_go.normalized() * step
+			entity["render"] = _step_toward(render, target, walk_speed * delta)
 			entity["moving"] = true
 			entity["anim"] = float(entity["anim"]) + delta
 		else:

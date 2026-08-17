@@ -1,0 +1,20 @@
+# The image needs exactly two things: the Go server source and the exported web
+# client. Everything else in this repo is either build input that already got
+# turned into one of those two, or has no business on a server.
+#
+# Without this the whole 141MB working tree is uploaded to the builder on every
+# deploy, most of it the Godot project the web export was made *from*.
+*
+!server/
+!build/web/
+
+# The export is a build artifact, so the .gz files sit next to their originals
+# rather than in git (see .gitignore). They must reach the image: the server
+# serves them to any client that accepts gzip, and without them every first
+# load is 46MB instead of 17.7MB.
+!build/web/**
+
+# Never ship credentials or local state, even by accident.
+**/.env
+**/*.pem
+**/.DS_Store
