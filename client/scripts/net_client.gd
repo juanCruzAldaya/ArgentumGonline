@@ -43,6 +43,12 @@ func send_use(slot: int) -> void:
 	_send("use", {"slot": slot})
 
 
+## Ocultarse: no payload, no target — it's a self-only skill action gated
+## entirely server-side (cooldown, not-already-hidden).
+func send_hide() -> void:
+	_send("hide", {})
+
+
 ## Attacking carries no target: Argentum melee hits whatever stands on the tile
 ## you face, and the server works that out from your own heading.
 func send_attack() -> void:

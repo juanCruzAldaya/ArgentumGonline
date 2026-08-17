@@ -182,6 +182,11 @@ func (w *World) attack(p *Player) {
 	}
 	p.lastAttackTick = w.tick
 
+	// Swinging reveals whoever was hidden, spell or skill alike.
+	if p.invisible(w.tick) {
+		p.revealHidden()
+	}
+
 	dx, dy := p.Heading.Delta()
 	victimID, ok := w.occupied[tileKey{p.X + dx, p.Y + dy}]
 	if !ok {

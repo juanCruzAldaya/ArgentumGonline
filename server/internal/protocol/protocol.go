@@ -22,6 +22,7 @@ const (
 	TypeAttack MsgType = "attack"
 	TypeCast   MsgType = "cast"
 	TypeUse    MsgType = "use"
+	TypeHide   MsgType = "hide"
 	TypePing   MsgType = "ping"
 
 	// Server -> client.

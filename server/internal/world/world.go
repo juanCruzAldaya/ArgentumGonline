@@ -113,10 +113,11 @@ type World struct {
 	// items and spells are the converted obj.dat and Hechizos.dat.
 	items  map[int]Item
 	spells map[int]Spell
-	// loadout is derived from items by SetItems: the best weapon, shield,
-	// armour, helmet and ring plus every potion type, food and drink. Zero
-	// value (no items loaded) falls back to startingInventory below.
-	loadout bestLoadout
+	// loadouts is derived from items by SetItems: per class, the best weapon,
+	// shield, armour, helmet and ring that class may actually equip, plus
+	// every potion type, food and drink (unrestricted by class). Nil map (no
+	// items loaded) falls back to startingInventory below.
+	loadouts map[Class]bestLoadout
 
 	tickRate int
 	tick     uint64
@@ -265,6 +266,8 @@ func (w *World) apply(cmd command) {
 			return
 		}
 		w.useItem(p, u.Slot)
+	case protocol.TypeHide:
+		w.hide(p)
 	default:
 		w.log.Debug("ignoring unknown command", "id", cmd.id, "type", cmd.typ)
 	}
@@ -300,6 +303,15 @@ func (w *World) movePlayer(p *Player, dir protocol.Heading) {
 	p.X, p.Y = nx, ny
 	w.occupied[tileKey{nx, ny}] = p.ID
 	p.lastMoveTick = w.tick
+
+	// Moving reveals a player hidden via Ocultarse, unless their class is one
+	// of the two the source lets keep walking while hidden. This does not
+	// apply to Invisibilidad: the spell shares the same InvisibleUntil field,
+	// but only HiddenBySkill carries this rule, matching what the source
+	// actually ties to movement (Protocol.bas's walk handler, not the spell).
+	if p.invisible(w.tick) && p.HiddenBySkill && p.Class != Ladron && p.Class != Bandido {
+		p.revealHidden()
+	}
 }
 
 func (w *World) broadcast() {
@@ -378,7 +390,7 @@ func (w *World) addPlayer(req joinReq) EntityID {
 		race = allRaces[w.rng.Intn(len(allRaces))]
 	}
 
-	inventory := w.loadout.inventory()
+	inventory := w.loadouts[class].inventory()
 	if len(inventory) == 0 {
 		// No item table loaded (e.g. running without -items-file): fall back
 		// to the fixed newbie kit rather than spawning with an empty bag.

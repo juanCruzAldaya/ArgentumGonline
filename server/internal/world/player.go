@@ -41,6 +41,11 @@ type Player struct {
 	ParalyzedUntil   uint64
 	ImmobilizedUntil uint64
 	InvisibleUntil   uint64
+	// HiddenBySkill distinguishes Ocultarse from the Invisibilidad spell —
+	// both set InvisibleUntil and look identical to everyone else (SetInvisible
+	// in the source is the same call either way), but only Ocultarse breaks on
+	// movement. See movePlayer and hide() in status.go.
+	HiddenBySkill bool
 
 	// AgilityDelta/StrengthDelta are temporary attribute modifiers from Fuerza,
 	// Celeridad and their debuff counterparts. A new cast overwrites rather
@@ -53,6 +58,7 @@ type Player struct {
 	lastAttackTick uint64
 	lastCastTick   uint64
 	lastUseTick    uint64
+	lastHideTick   uint64
 
 	// Vitals are this player's own numbers, sent back only to them.
 	Vitals protocol.Vitals

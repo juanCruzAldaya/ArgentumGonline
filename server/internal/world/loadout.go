@@ -10,12 +10,16 @@ type bestLoadout struct {
 	slots []protocol.InventorySlot
 }
 
-// computeBestLoadout scans the item table once, at load time, for the
-// strongest item in each equipment slot and one representative of each potion
-// type plus food and drink. "Best" and "battle royale" have a natural
-// alliance here: every player armed with the best of everything is what
-// "empezá con el mejor equipo" concretely means.
-func computeBestLoadout(items map[int]Item) bestLoadout {
+// computeBestLoadout scans the item table once per class, at load time, for
+// the strongest item that class is actually allowed to wear in each
+// equipment slot, plus one representative of each potion type and food and
+// drink — those never carry a class restriction. "Best" and "battle royale"
+// have a natural alliance here: every player armed with the best of
+// everything THEIR CLASS CAN USE is what "empezá con el mejor equipo, según
+// tu clase" concretely means. A Mago handed the same greatsword a Guerrero
+// gets would spawn holding an item its own class is barred from equipping —
+// classForbidsUse is the same check EquiparInvItem itself runs.
+func computeBestLoadout(items map[int]Item, class Class) bestLoadout {
 	var best struct {
 		weapon, shield, armor, helmet, ring Item
 	}
@@ -26,6 +30,9 @@ func computeBestLoadout(items map[int]Item) bestLoadout {
 	haveFood, haveDrink := false, false
 
 	for _, item := range items {
+		if classForbidsUse(item, class) {
+			continue
+		}
 		switch item.Type {
 		case ItemWeapon:
 			if !haveWeapon || item.MaxHit > best.weapon.MaxHit {

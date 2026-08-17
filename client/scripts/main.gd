@@ -293,6 +293,17 @@ func _stop_targeting() -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
+	# Ocultarse: a discrete "try to hide" trigger on the key edge, not the
+	# held-and-repeated polling _process() uses for movement/attack — holding
+	# H should not spam the server with an attempt every frame; the server's
+	# own cooldown would just drop them anyway, but there's no reason to send
+	# them.
+	if _connected and event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_H:
+		if _paralyzed:
+			_tell_blocked("No podés ocultarte, estás paralizado.")
+		else:
+			_net.send_hide()
+
 	if _targeting_spell == 0:
 		return
 

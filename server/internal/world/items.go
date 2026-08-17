@@ -62,6 +62,35 @@ type Item struct {
 	MinModificador int `json:"minMod,omitempty"`
 	MaxModificador int `json:"maxMod,omitempty"`
 	DuracionEfecto int `json:"potionDuration,omitempty"`
+
+	// ForbiddenClasses is obj.dat's CP1..CP12: a deny list, not an allow list.
+	// See classForbidsUse.
+	ForbiddenClasses []string `json:"forbiddenClasses,omitempty"`
+}
+
+// aoClassNames are the literal uppercase tokens obj.dat's CP fields use —
+// the source's own eClass enum names, ASCII, no accents. This is the one
+// place that maps them to our Class ids; everything else reads Class.
+var aoClassNames = [...]string{
+	"GUERRERO", "CAZADOR", "PALADIN", "BANDIDO", "ASESINO", "PIRATA",
+	"LADRON", "CLERIGO", "BARDO", "MAGO", "DRUIDA", "TRABAJADOR",
+}
+
+// classForbidsUse is ClasePuedeUsarItem's actual check (InvUsuario.bas):
+// EquiparInvItem rejects equipping only when the wearer's class appears in
+// the item's own CP1..CP12 list. 213 of 363 carriable equippables (59%) name
+// at least one forbidden class in the real data; consumables never do.
+func classForbidsUse(item Item, class Class) bool {
+	if int(class) < 0 || int(class) >= len(aoClassNames) {
+		return false
+	}
+	name := aoClassNames[class]
+	for _, forbidden := range item.ForbiddenClasses {
+		if forbidden == name {
+			return true
+		}
+	}
+	return false
 }
 
 // LoadItems reads the converted obj.dat.
@@ -77,11 +106,17 @@ func LoadItems(path string) (map[int]Item, error) {
 	return byID, nil
 }
 
-// SetItems installs the item table and derives the spawn loadout from it. It
-// must be called before Run, since the world goroutine reads both afterwards.
+// SetItems installs the item table and derives the spawn loadout for every
+// class from it. It must be called before Run, since the world goroutine
+// reads both afterwards. Precomputing all twelve here — rather than
+// recomputing per join — keeps Join itself cheap; there are only twelve
+// classes, so the up-front cost is trivial.
 func (w *World) SetItems(items map[int]Item) {
 	w.items = items
-	w.loadout = computeBestLoadout(items)
+	w.loadouts = make(map[Class]bestLoadout, len(allClasses))
+	for _, class := range allClasses {
+		w.loadouts[class] = computeBestLoadout(items, class)
+	}
 }
 
 // equippedOfType returns the equipped item of a given type, if any.

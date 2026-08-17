@@ -32,6 +32,10 @@ const (
 	invisibilityDurationTicks = 12 * 20 // 12s: an escape tool, not a stun
 	buffDurationTicks         = 30 * 20 // 30s
 	debuffDurationTicks       = 20 * 20 // 20s
+
+	// hideCooldownTicks paces Ocultarse. There is no mana cost gating it the
+	// way there is for the spell, so this is what stops it being spammed.
+	hideCooldownTicks = 3 * 20 // 3s
 )
 
 func (p *Player) paralyzed(tick uint64) bool   { return tick < p.ParalyzedUntil }
@@ -42,6 +46,44 @@ func (p *Player) invisible(tick uint64) bool   { return tick < p.InvisibleUntil 
 // place. They differ in whether you can still act — see canAct.
 func (p *Player) canMove(tick uint64) bool {
 	return !p.paralyzed(tick) && !p.immobilized(tick)
+}
+
+// revealHidden clears invisibility regardless of which source set it. Used
+// wherever an action breaks stealth — see hide, and the reveal-on-attack /
+// reveal-on-cast calls in combat.go and spells.go.
+func (p *Player) revealHidden() {
+	p.InvisibleUntil = 0
+	p.HiddenBySkill = false
+}
+
+// hide is Ocultarse: DoOcultarse in the source rolls a success chance against
+// the Ocultarse skill, which this project does not model as its own stat —
+// every character already spawns at the skill cap everything else uses (see
+// balance.go's maxLevel), so a roll against a skill that is always maxed has
+// only one outcome, and it is simpler to just always succeed once the
+// cooldown and "not already hidden" gate (the source's own gate, so a fresh
+// Ocultarse can't refresh a spell-granted invisibility into a skill-based one)
+// clear.
+//
+// Any class may attempt this — the source's class check lives in the move
+// handler (only Ladron/Bandido keep walking while hidden), not here.
+//
+// Blocked by paralysis: this one is a design call rather than a sourced fact
+// — DoOcultarse's own gate list wasn't pinned down against Paralizado — but
+// it keeps the rule consistent with everything else physical (move, melee):
+// paralysis stops your body, not your mind, so it blocks this the same way
+// it blocks a step or a swing. Immobilize does not: crouching in place needs
+// no footwork.
+func (w *World) hide(p *Player) {
+	if p.Dead || p.paralyzed(w.tick) || p.invisible(w.tick) {
+		return
+	}
+	if w.tick-p.lastHideTick < hideCooldownTicks {
+		return
+	}
+	p.lastHideTick = w.tick
+	p.InvisibleUntil = w.tick + invisibilityDurationTicks
+	p.HiddenBySkill = true
 }
 
 // canAct governs melee: Argentum's HandleWalk rejects movement outright while

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 )
@@ -52,6 +53,14 @@ type Item struct {
 	MinModificador int `json:"minMod,omitempty"`
 	MaxModificador int `json:"maxMod,omitempty"`
 	DuracionEfecto int `json:"potionDuration,omitempty"`
+
+	// ForbiddenClasses is obj.dat's CP1..CP12 fields: "Clase Prohibida", a
+	// DENY list, not an allow list — most weapons/armour/shields/helmets/rings
+	// name the classes barred from them (Espada Larga: MAGO, DRUIDA, PIRATA,
+	// BARDO) rather than the ones permitted. Consumables never carry one.
+	// Stored as the raw uppercase class tokens from the source, so the server
+	// (which owns the canonical Class enum) resolves them, not this converter.
+	ForbiddenClasses []string `json:"forbiddenClasses,omitempty"`
 }
 
 // Spell is one entry of Hechizos.dat.
@@ -178,6 +187,13 @@ func loadItems(path string) (map[int]Item, error) {
 			item.Restores = v
 		} else if v := sectionInt(section, "MinAgu"); v > 0 {
 			item.Restores = v
+		}
+		// CP1..CP12: up to twelve separate keys, each one class name, not one
+		// field holding a list.
+		for i := 1; i <= 12; i++ {
+			if name := strings.ToUpper(strings.TrimSpace(section[fmt.Sprintf("CP%d", i)])); name != "" {
+				item.ForbiddenClasses = append(item.ForbiddenClasses, name)
+			}
 		}
 		if item.Name == "" || item.Grh == 0 {
 			continue

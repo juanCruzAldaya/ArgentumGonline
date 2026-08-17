@@ -33,17 +33,19 @@ func _ready() -> void:
 	add_child(bg)
 
 	# One vertical stack — title, then the two lists side by side, then the
-	# play button — centred as a whole. Letting VBoxContainer/HBoxContainer
-	# size and centre everything is what a hand-picked pixel offset for each
-	# child got wrong the first time: two lists positioned by independent
-	# CENTER_TOP offsets ended up overlapping because the offsets were
-	# measured from the same centre point instead of laid out relative to
-	# each other.
+	# play button — each centred via alignment rather than by a hand-picked
+	# pixel offset. The first two attempts at this both drifted content off
+	# the left edge of the window: a Container in Godot resizes itself to fit
+	# its children regardless of the offset_left/offset_right asked for, so
+	# anchoring "root" to a fixed width centred on the viewport let its real,
+	# content-driven width silently grow past that and push everything
+	# rightward off-window. Spanning the FULL viewport width removes the
+	# possibility of that miscalculation entirely — there is no offset left to
+	# get wrong — and ALIGNMENT_CENTER on each row centres its children within
+	# that guaranteed-correct width.
 	var root := VBoxContainer.new()
-	root.set_anchors_preset(Control.PRESET_CENTER_TOP)
+	root.set_anchors_preset(Control.PRESET_TOP_WIDE)
 	root.offset_top = 60
-	root.offset_left = -420
-	root.offset_right = 420
 	root.alignment = BoxContainer.ALIGNMENT_CENTER
 	root.add_theme_constant_override("separation", 24)
 	add_child(root)

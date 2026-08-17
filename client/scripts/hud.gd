@@ -14,6 +14,9 @@ const COLOR_TEXT := Color("ddd0b4")
 const COLOR_TEXT_DIM := Color("8a7c63")
 const COLOR_ACCENT := Color("d9b45b")
 const COLOR_OVERLAY := Color(0.07, 0.06, 0.04, 0.72)
+# Argentum marks a selected inventory item with a red tile under the icon;
+# this is that same "you have this selected" language applied to a border.
+const COLOR_SELECTED := Color(0.90, 0.35, 0.30)
 
 ## Argentum's own bar colours, in its own order.
 const COLOR_EXP := Color("8c2f2f")
@@ -61,6 +64,9 @@ var _sprites := AOSprites.new()
 var _data := AOData.new()
 var _spell_ids: Array[int] = []
 var _cast_button: Button
+## The server slot number currently selected in the inventory, or -1 for none.
+## Single click sets this; double click acts on it. See _on_slot_gui_input.
+var _selected_slot := -1
 
 
 func _ready() -> void:
@@ -123,16 +129,18 @@ func _next_free_slot(parent: Node) -> Panel:
 	return null
 
 
-func _clear_slot(slot: Node) -> void:
+func _clear_slot(slot: Control) -> void:
 	for child in slot.get_children():
 		child.queue_free()
 	# -1 means "nothing here": a click on an empty slot has no server slot
 	# number to report, and _on_slot_gui_input relies on this to ignore it.
 	slot.set_meta(&"server_slot", -1)
+	_restyle_slot(slot)
 
 
 func _fill_slot(slot: Panel, item: Dictionary, amount: int, server_slot: int) -> void:
 	slot.set_meta(&"server_slot", server_slot)
+	_restyle_slot(slot)
 	var rect: Rect2 = _sprites.grh_rect(int(item.get("grh", 0)), 0.0)
 	if rect.size.x > 0.0:
 		var atlas := AtlasTexture.new()
@@ -273,19 +281,52 @@ func _make_slot(side: int, edge: Color) -> Panel:
 	slot.mouse_filter = Control.MOUSE_FILTER_STOP
 	slot.focus_mode = Control.FOCUS_NONE
 	slot.set_meta(&"server_slot", -1)
+	# The slot's own colour when it's NOT the current selection — differs
+	# between the bag and the equip row, so it has to be remembered per slot
+	# rather than assumed, whenever _restyle_slot needs to put it back.
+	slot.set_meta(&"base_edge", edge)
 	slot.add_theme_stylebox_override("panel", _flat(COLOR_SLOT, edge))
 	slot.gui_input.connect(_on_slot_gui_input.bind(slot))
 	return slot
 
 
-## A left click uses whatever the server last told us is in this slot — empty
-## slots report -1 via the meta set in _clear_slot and are simply ignored.
+## Mirrors the real client exactly: a single click only SELECTS an item (drawn
+## with a highlighted border, same idea as Argentum's red-tile-under-the-icon),
+## and a second, real double-click is what actually equips or consumes it.
+## Clicking an empty slot — or any slot, while nothing is selected — clears the
+## selection, same as clicking empty space in the original.
 func _on_slot_gui_input(event: InputEvent, slot: Panel) -> void:
 	if not (event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT):
 		return
 	var server_slot: int = slot.get_meta(&"server_slot", -1)
-	if server_slot >= 0:
+
+	if event.double_click and server_slot >= 0:
 		item_used.emit(server_slot)
+		_select_slot(-1)
+		return
+
+	_select_slot(server_slot)
+
+
+func _select_slot(server_slot: int) -> void:
+	if _selected_slot == server_slot:
+		return
+	_selected_slot = server_slot
+	for slot in _inv_grid.get_children() + $SidePanel/EquipRow.get_children():
+		_restyle_slot(slot)
+
+
+## Applies the highlighted style if this slot holds the current selection,
+## otherwise its own resting colour — called both when the selection changes
+## and every time a slot is (re)filled, since set_loadout rebuilds the whole
+## grid after every equip/use and the highlight has to survive that rebuild
+## for whichever slot the player is still looking at.
+func _restyle_slot(slot: Control) -> void:
+	var server_slot: int = slot.get_meta(&"server_slot", -1)
+	if server_slot >= 0 and server_slot == _selected_slot:
+		slot.add_theme_stylebox_override("panel", _flat(COLOR_SLOT, COLOR_SELECTED))
+	else:
+		slot.add_theme_stylebox_override("panel", _flat(COLOR_SLOT, slot.get_meta(&"base_edge", COLOR_SLOT_EDGE)))
 
 
 ## Spells follow Argentum's interaction: pick one from the list, press LANZAR,

@@ -143,6 +143,13 @@ func (w *World) cast(caster *Player, spellID int, targetID EntityID) {
 	caster.Vitals.Mana -= spell.Mana
 	caster.Vitals.Stamina -= spell.Stamina
 
+	// Casting reveals whoever was hidden, spell or skill alike — including a
+	// caster who is about to re-hide themselves with Invisibilidad below,
+	// which nets out as a no-op rather than a bug.
+	if caster.invisible(w.tick) {
+		caster.revealHidden()
+	}
+
 	event := protocol.SpellEvent{
 		CasterID:   uint32(caster.ID),
 		CasterName: caster.Name,
@@ -176,6 +183,11 @@ func (w *World) cast(caster *Player, spellID int, targetID EntityID) {
 	}
 	if spell.Invisibility {
 		victim.InvisibleUntil = w.tick + invisibilityDurationTicks
+		// Explicitly not HiddenBySkill: the spell form does not break on
+		// movement the way Ocultarse does. Without clearing this, a target
+		// still carrying an old Ocultarse flag from earlier in the match
+		// would incorrectly keep the movement-breaks-it rule.
+		victim.HiddenBySkill = false
 		event.MadeInvisible = true
 	}
 	if spell.AffectsAgility != 0 {

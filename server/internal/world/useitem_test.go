@@ -229,7 +229,7 @@ func TestBestLoadoutPicksTheStrongestOfEachSlotAndOneOfEachPotion(t *testing.T) 
 		11: {ID: 11, Type: ItemPotion, PotionType: PotionMana},
 		15: {ID: 15, Type: ItemPotion, PotionType: PotionBlack}, // must be excluded
 		20: {ID: 20, Type: ItemFood, Restores: 15},
-	})
+	}, Guerrero)
 
 	byItem := map[int]bool{}
 	for _, slot := range loadout.slots {
@@ -246,5 +246,27 @@ func TestBestLoadoutPicksTheStrongestOfEachSlotAndOneOfEachPotion(t *testing.T) 
 	}
 	if !byItem[3] || !byItem[10] || !byItem[11] || !byItem[20] {
 		t.Errorf("missing an expected slot: %+v", loadout.slots)
+	}
+}
+
+// The point of computing a loadout per class: a Mago should never spawn
+// holding a weapon Mago is barred from — even if it is objectively the
+// strongest one on offer. classForbidsUse is exactly EquiparInvItem's own
+// check, so this is really asserting the loadout picker respects it.
+func TestBestLoadoutSkipsItemsForbiddenToTheClass(t *testing.T) {
+	loadout := computeBestLoadout(map[int]Item{
+		1: {ID: 1, Name: "Espada Larga", Type: ItemWeapon, MaxHit: 10, ForbiddenClasses: []string{"MAGO"}},
+		2: {ID: 2, Name: "Daga Vieja", Type: ItemWeapon, MaxHit: 3},
+	}, Mago)
+
+	byItem := map[int]bool{}
+	for _, slot := range loadout.slots {
+		byItem[slot.ItemID] = true
+	}
+	if byItem[1] {
+		t.Error("gave a Mago a weapon explicitly forbidden to Mago")
+	}
+	if !byItem[2] {
+		t.Error("skipped the only weapon a Mago may actually use")
 	}
 }
