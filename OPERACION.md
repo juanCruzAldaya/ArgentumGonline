@@ -644,12 +644,12 @@ están en §7.
 **42 ms de ida y vuelta**, que con la espera de tick dan 67 ms de latencia
 sentida — ver §7.
 
-**La cuenta en trial apaga la máquina a los 5 minutos.** Sale en los logs
-(`Trial machine stopping. To run for longer than 5m0s, add a credit card`) y se
-confirma porque el uptime da 301 segundos clavados. Como el estado del mundo
-vive en memoria, cada apagón reinicia la partida entera: loot nuevo, todos
-afuera, bajas en cero. Hasta que haya tarjeta, Fly no sirve para jugar más de
-cinco minutos seguidos.
+**Una cuenta en trial apaga la máquina a los 5 minutos.** Ya no es el caso —hay
+tarjeta cargada— pero queda anotado porque el síntoma no se parece a la causa:
+la partida se reinicia sola cada cinco minutos, con loot nuevo, todos afuera y
+las bajas en cero, y parece un crash del servidor. Lo que lo delata es el log
+(`Trial machine stopping. To run for longer than 5m0s, add a credit card`) y el
+uptime dando 301 segundos clavados.
 
 ---
 
@@ -700,6 +700,38 @@ De referencia: un servidor de Argentum bien hosteado anda en **32 ms**. La
 directo (~30 ms totales); Fly en `gru` es lo mejor alcanzable sin depender del
 proveedor de internet.
 
+#### Con la partida llena
+
+Los números de arriba son con el servidor vacío. Repetido contra la máquina real
+de Fly con **41 jugadores** adentro (40 bots más un humano), que es la carga que
+tendría una partida de verdad:
+
+```
+                       ping/pong                llegada de snapshots      bytes/
+                                                                       snapshot
+1 jugador          mediana 45.5 ms  σ  5.4    mediana 50.1  σ 11.9        1443
+41 jugadores       mediana 42.5 ms  σ 25.5    mediana 49.9  σ 17.0        1666
+```
+
+**La mediana no se mueve y la cadencia de 20 Hz aguanta**: el servidor sigue
+mandando un snapshot cada 49.9 ms clavado, sin OOM, sin clientes descartados y
+con el health check pasando todo el tiempo. Una sola goroutine dueña de enteros
+no se despeina con 41 conexiones.
+
+Lo que se degrada es **el desvío**, que es justo lo que decide la sensación: σ
+del ping de 5.4 a 25.5 ms, con picos de 271 ms. El snapshot engorda un 15%
+(1443 → 1666 bytes) porque el viewport se llena de gente, exactamente como
+predice la tabla de la red.
+
+**Ese desvío es una cota superior, no el jitter real de Fly.** Los 40 bots
+salían de una sola máquina por una conexión hogareña —1.3 MB/s bajando por un
+enlace doméstico, más el probe midiendo encima— así que parte del jitter es del
+router de casa. Para separar las dos cosas hay que correr los bots desde otro
+lado (otra máquina de Fly, o un VPS) y volver a medir.
+
+La prueba entera, 13.6 minutos con 41 jugadores, salió **$0.042**: 1.04 GB de
+salida a $0.04/GB. La tabla de la red de más abajo predijo ese número clavado.
+
 ### Qué consume el servidor
 
 Medido con 40 bots conectados, o sea el mundo real corriendo a 20 Hz:
@@ -714,8 +746,16 @@ RAM y CPU **no son el cuello**. Una sola goroutine dueña de enteros, con
 interest management por viewport, es barata: la máquina más chica de Fly
 (`shared-cpu-1x`, 256 MB) sobra. Ojo con un detalle de esa medición: se tomó en
 un desktop, donde un core es bastante más rápido que el `shared-cpu-1x` de Fly,
-que tiene cuota base y burstea por encima. Antes de invitar a 50 personas
-conviene repetirla contra la máquina real.
+que tiene cuota base y burstea por encima.
+
+**Contra la máquina real esto sigue sin medirse, y no por falta de ganas.** La
+latencia y el ancho de banda con 41 jugadores ya están arriba, pero RAM y CPU
+del servidor en Fly no se pueden sacar desde afuera: la imagen es `distroless`,
+no tiene shell, así que `fly ssh console` no entra, y el token de métricas del
+CLI viene fallando (`Metrics token unavailable` en cada comando). El camino que
+no depende de ninguna de las dos cosas es que lo reporte el propio servidor —
+un endpoint `/debug/stats` con `runtime.MemStats` y `NumGoroutine`, que `probe`
+levantaría junto al resto y dejaría el número acá al lado de los otros.
 
 ### Qué consume la red
 
@@ -1037,4 +1077,4 @@ tools/aoconv/      lee los índices de AO y arma el atlas y los .json
 | **Codec binario** | Cuando el JSON moleste, medido. |
 | **Recortar el atlas** | Hoy empaqueta las 309 armaduras del juego entero; un BR podría spawnear solo un subconjunto. |
 | **Descarga Eléctrica con arte nuevo** | Quedó a mitad de camino: va en `overrides/anim221.png`, 15 frames de 128×128 (fx 11 → grh 221), contiguos en el atlas igual que el Apocalipsis. Falta la hoja de origen **sobre negro sólido** — la que se probó traía el damero de transparencia horneado y es irrecuperable, ver DIFICULTADES §15. |
-| **Link al fuente en el cliente** | Se sacó del login. Requisito del AGPL §13 antes de que el deploy web sea público — ver §5. |
+| **Link al fuente en el cliente** | Se sacó del login. **Ya no es hipotético: `juegito.fly.dev` está deployado y cualquiera con el link juega**, y el AGPL §13 pide que la oferta de código le llegue a quien interactúa por red. El código está pusheado, que es la otra mitad del requisito; falta devolver el link a algún lado del cliente — ver §5. |
