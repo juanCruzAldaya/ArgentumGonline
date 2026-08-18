@@ -259,8 +259,11 @@ func (w *World) kill(victim, killer *Player) {
 	}
 
 	// The ghost stays on the map but stops blocking, so a corpse cannot wall
-	// off a doorway for the rest of the match.
+	// off a doorway for the rest of the match. It moves from the collision
+	// index to the corpse one, which is what keeps it findable by tile for the
+	// snapshot — see viewportOf.
 	delete(w.occupied, tileKey{victim.X, victim.Y})
+	w.addCorpse(victim)
 	victim.Body, victim.Head = ghostBody, ghostHead
 	victim.Heading = protocol.South
 

@@ -404,3 +404,105 @@ func TestHeadingDeltas(t *testing.T) {
 		}
 	}
 }
+
+// The dead have to stay visible.
+//
+// They leave the collision index the moment they fall -- a corpse must not wall
+// off a doorway -- so a viewport built by walking tiles would lose them unless
+// something else keeps them findable. That something is the corpse index, and
+// this is the test that says so: before it existed, switching viewportOf from
+// scanning players to scanning tiles made every body on the map vanish.
+func TestGhostsStayInTheViewport(t *testing.T) {
+	w := newTestWorld(t, 40, 40)
+	watcher, _ := place(t, w, "vivo", 10, 10)
+	victim, _ := place(t, w, "muerto", 11, 10)
+
+	w.kill(victim, watcher)
+
+	if _, blocks := w.occupied[tileKey{11, 10}]; blocks {
+		t.Error("el cadáver sigue bloqueando su tile")
+	}
+
+	var seen *protocol.EntityState
+	for i, e := range w.viewportOf(watcher) {
+		if e.ID == uint32(victim.ID) {
+			seen = &w.viewportOf(watcher)[i]
+			break
+		}
+	}
+	if seen == nil {
+		t.Fatal("el muerto desapareció del viewport")
+	}
+	if !seen.Dead {
+		t.Error("el muerto viaja como vivo")
+	}
+}
+
+// Coming back has to take the body out of the corpse index, or the player is
+// drawn twice: once alive where they are, once dead where they fell.
+func TestReviveClearsTheCorpseIndex(t *testing.T) {
+	w := newTestWorld(t, 40, 40)
+	watcher, _ := place(t, w, "vivo", 10, 10)
+	victim, _ := place(t, w, "muerto", 11, 10)
+
+	w.kill(victim, watcher)
+	w.revive(victim, 12, 10)
+
+	if len(w.corpses) != 0 {
+		t.Errorf("quedaron %d tiles con cadáver después de revivir", len(w.corpses))
+	}
+
+	seen := 0
+	for _, e := range w.viewportOf(watcher) {
+		if e.ID == uint32(victim.ID) {
+			seen++
+		}
+	}
+	if seen != 1 {
+		t.Errorf("el revivido aparece %d veces en el viewport, se esperaba 1", seen)
+	}
+}
+
+// And leaving while dead must not leave the id behind: the corpse index would
+// keep naming a player the world no longer has.
+func TestLeavingWhileDeadClearsTheCorpseIndex(t *testing.T) {
+	w := newTestWorld(t, 40, 40)
+	watcher, _ := place(t, w, "vivo", 10, 10)
+	victim, _ := place(t, w, "muerto", 11, 10)
+
+	w.kill(victim, watcher)
+	w.removePlayer(victim.ID)
+
+	if len(w.corpses) != 0 {
+		t.Errorf("quedaron %d tiles con cadáver después de que el jugador se fuera", len(w.corpses))
+	}
+	for _, e := range w.viewportOf(watcher) {
+		if e.ID == uint32(victim.ID) {
+			t.Error("el que se fue sigue en el viewport")
+		}
+	}
+}
+
+// Several bodies can share a tile, because they do not block. The living index
+// holds one id per tile and would silently keep only the last.
+func TestSeveralCorpsesShareATile(t *testing.T) {
+	w := newTestWorld(t, 40, 40)
+	watcher, _ := place(t, w, "vivo", 10, 10)
+
+	var dead []*Player
+	for i := 0; i < 3; i++ {
+		p, _ := place(t, w, "muerto", 12, 10)
+		w.kill(p, watcher)
+		dead = append(dead, p)
+	}
+
+	seen := map[uint32]bool{}
+	for _, e := range w.viewportOf(watcher) {
+		seen[e.ID] = true
+	}
+	for _, p := range dead {
+		if !seen[uint32(p.ID)] {
+			t.Errorf("%d se perdió: los cadáveres se pisan entre sí en el tile", p.ID)
+		}
+	}
+}

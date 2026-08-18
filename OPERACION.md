@@ -936,6 +936,47 @@ entonces — **ese desvío era del router de casa, no de Fly**. Lo que cambió e
 que el snapshot es cinco veces más chico, así que el enlace doméstico ya no va
 al límite.
 
+#### Dónde flaquea: 1000 jugadores, y el escaneo cuadrático
+
+Con 1002 conectados nada se cae — cero descartes, cero desconexiones, y los
+20 Hz se sostienen en la mediana. Lo que se degrada es la regularidad, que es lo
+que decide la sensación:
+
+| jugadores | desvío | p95 | min | CPU |
+|---|---|---|---|---|
+| 101 | σ 0,8 ms | 51,4 | — | 28,1% de un core |
+| 502 | σ 4,8 ms | 58,2 | 36,5 | 81,7% |
+| 1002 | σ 11,9 ms | 70,0 | **16,5** | **181,2%** |
+
+Ese `min 16,5` es la firma del problema: los snapshots empiezan a llegar
+**apelotonados**, un tick tarde y el siguiente pisándolo, o sea el tick loop
+pasándose de los 50 ms y recuperando después.
+
+La causa era que la CPU escalaba **peor que lineal** — 2x los jugadores costaban
+2,2x — y eso delata un término cuadrático. Estaba en `viewportOf`, que recorría
+**todos** los jugadores por cada jugador: con mil conectados, un millón de
+comparaciones por tick, 20 millones por segundo, para encontrar los pocos que
+están en pantalla. Es el mismo problema que ya tenía `groundItemsInView` con el
+loot, y la misma solución: recorrer los 221 tiles del viewport y buscarlos en el
+índice, en vez de recorrer a todo el mundo y descartar.
+
+Con eso, los mismos 1000 bots:
+
+| | antes | después |
+|---|---|---|
+| desvío | σ 11,9 ms | **σ 7,7 ms** |
+| p95 | 70,0 ms | 63,1 ms |
+| min | 16,5 ms | **32,7 ms** |
+| CPU | 181,2% de un core | **140,0%** |
+
+Y pasa a escalar **por debajo** de lineal: 2x los jugadores, 1,7x la CPU. Lo que
+queda es serializar JSON, que es lineal y es el codec binario del roadmap.
+
+La trampa del cambio: **los muertos no están en `occupied`**, porque el cadáver
+deja de bloquear al morir. Escanear tiles los hacía desaparecer a todos del mapa,
+así que hay un índice aparte de cadáveres — lista por tile, ya que no bloquean y
+se apilan — que se toca en dos lugares nada más, porque un fantasma no camina.
+
 #### El tamaño del snapshot depende del momento de la partida, no de la cantidad de gente
 
 Es el matiz que faltaba, y explica por qué una medición anterior daba 3.588 B

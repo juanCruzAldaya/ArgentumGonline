@@ -222,6 +222,16 @@ type World struct {
 	// occupied indexes players by tile so a move only has to look at one entry
 	// instead of scanning everyone.
 	occupied map[tileKey]EntityID
+	// corpses indexes the dead the same way, and exists because occupied
+	// cannot hold them: a ghost stops blocking the moment it dies, so kill()
+	// takes it out of occupied and a doorway does not stay walled off by a
+	// body. Ghosts are still drawn, though, so the snapshot has to be able to
+	// find them by tile like everyone else.
+	//
+	// A list per tile rather than one id, precisely because they do not block
+	// and can pile up. It is only ever written in two places — a ghost cannot
+	// walk, so it stays on the tile it fell on until it is revived.
+	corpses map[tileKey][]EntityID
 	// ground indexes item stacks lying on the map by tile — the loot a match
 	// scatters at start (see loot.go) plus whatever drops on death or by hand.
 	// Argentum's own map format holds one object per tile, so this does too.
@@ -247,6 +257,7 @@ func New(grid *Grid, codec protocol.Codec, tickRate int, log *slog.Logger) *Worl
 		tickRate: tickRate,
 		players:  make(map[EntityID]*Player),
 		occupied: make(map[tileKey]EntityID),
+		corpses:  make(map[tileKey][]EntityID),
 		ground:   make(map[tileKey]groundStack),
 		joinCh:   make(chan joinReq),
 		leaveCh:  make(chan EntityID),
@@ -546,49 +557,80 @@ func (w *World) broadcast() {
 // so O(players²) per tick — about 2500 comparisons at 50 players, which is
 // nothing. A spatial index is the upgrade path once entities number in the
 // hundreds, not before.
+// viewportOf is everyone inside one player's window, as the snapshot carries
+// them.
+//
+// It walks the viewport's own tiles and looks each one up, rather than walking
+// every player and discarding those too far away. Both are correct; only one
+// has a cost that does not depend on how many people are in the match — which
+// is the identical argument groundItemsInView already makes about loot, and it
+// bites harder here because this runs per player: scanning everyone for
+// everyone is quadratic. With 1000 connected that was a million comparisons per
+// tick, 20 million a second, to find the handful actually on screen. The
+// viewport is 221 tiles no matter how full the server gets.
+//
+// Measured before and after with 1002 players: see OPERACION §7.
 func (w *World) viewportOf(p *Player) []protocol.EntityState {
 	const halfW, halfH = ViewportW / 2, ViewportH / 2
 
 	out := make([]protocol.EntityState, 0, 8)
-	for _, other := range w.players {
-		dx, dy := other.X-p.X, other.Y-p.Y
-		if dx < -halfW || dx > halfW || dy < -halfH || dy > halfH {
-			continue
+	for dy := -halfH; dy <= halfH; dy++ {
+		for dx := -halfW; dx <= halfW; dx++ {
+			key := tileKey{p.X + dx, p.Y + dy}
+			if id, ok := w.occupied[key]; ok {
+				if other, ok := w.players[id]; ok {
+					out = w.appendVisible(out, p, other)
+				}
+			}
+			// The dead live in their own index, since they stopped blocking
+			// and left occupied the moment they fell.
+			for _, id := range w.corpses[key] {
+				if other, ok := w.players[id]; ok {
+					out = w.appendVisible(out, p, other)
+				}
+			}
 		}
-		// An invisible player is absent from everyone's viewport but their
-		// own — not shown-but-marked, actually absent, so a modified client
-		// has nothing to read a position out of.
-		if other.ID != p.ID && other.invisible(w.tick) {
-			continue
-		}
-		// Derived fresh rather than stored, so what a character looks like can
-		// never drift from what they are actually wearing.
-		look := w.appearanceOf(other)
-		out = append(out, protocol.EntityState{
-			ID:          uint32(other.ID),
-			X:           other.X,
-			Y:           other.Y,
-			Heading:     other.Heading,
-			Body:        look.Body,
-			Head:        look.Head,
-			Weapon:      look.Weapon,
-			Shield:      look.Shield,
-			Helmet:      look.Helmet,
-			Name:        other.Name,
-			Dead:        other.Dead,
-			Paralyzed:   other.paralyzed(w.tick),
-			Immobilized: other.immobilized(w.tick),
-			Meditating:  other.Meditating,
-			// Clan stays empty until a guild system exists; the field is
-			// carried now so the console line has the shape Argentum gives it.
-			Desc:  other.Class.String(),
-			Kills: other.Kills,
-		})
 	}
-	// Map iteration order is random in Go; sorting keeps snapshots stable so
-	// they can be diffed by eye when debugging.
+	// By id, so a snapshot can be diffed by eye between ticks. Tile order
+	// would already be deterministic, unlike the map iteration this replaced,
+	// but it would also reshuffle the whole list every time somebody walks.
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
+}
+
+// appendVisible adds one entity to a viewport list, unless the viewer must not
+// see them.
+func (w *World) appendVisible(out []protocol.EntityState, p, other *Player) []protocol.EntityState {
+	// An invisible player is absent from everyone's viewport but their own —
+	// not shown-but-marked, actually absent, so a modified client has nothing
+	// to read a position out of.
+	if other.ID != p.ID && other.invisible(w.tick) {
+		return out
+	}
+
+	// Derived fresh rather than stored, so what a character looks like can
+	// never drift from what they are actually wearing.
+	look := w.appearanceOf(other)
+	return append(out, protocol.EntityState{
+		ID:          uint32(other.ID),
+		X:           other.X,
+		Y:           other.Y,
+		Heading:     other.Heading,
+		Body:        look.Body,
+		Head:        look.Head,
+		Weapon:      look.Weapon,
+		Shield:      look.Shield,
+		Helmet:      look.Helmet,
+		Name:        other.Name,
+		Dead:        other.Dead,
+		Paralyzed:   other.paralyzed(w.tick),
+		Immobilized: other.immobilized(w.tick),
+		Meditating:  other.Meditating,
+		// Clan stays empty until a guild system exists; the field is carried
+		// now so the console line has the shape Argentum gives it.
+		Desc:  other.Class.String(),
+		Kills: other.Kills,
+	})
 }
 
 func (w *World) addPlayer(req joinReq) EntityID {
@@ -702,6 +744,7 @@ func (w *World) removePlayer(id EntityID) {
 		return
 	}
 	delete(w.occupied, tileKey{p.X, p.Y})
+	w.removeCorpse(p)
 	delete(w.players, id)
 	w.log.Info("player left", "id", id, "name", p.Name, "players", len(w.players))
 }
@@ -733,6 +776,42 @@ func (w *World) freeSpawn() (int, int) {
 	// A map with no free tile is a map bug, not a runtime condition.
 	w.log.Error("no free spawn tile, placing at origin")
 	return 0, 0
+}
+
+// addCorpse and removeCorpse maintain the by-tile index of the dead.
+//
+// They are separate from occupied rather than folded into it because the two
+// answer different questions: occupied is "may I step here", which a ghost must
+// not block, and corpses is "who is standing on this tile", which a ghost is
+// very much part of.
+func (w *World) addCorpse(p *Player) {
+	key := tileKey{p.X, p.Y}
+	for _, id := range w.corpses[key] {
+		if id == p.ID {
+			return
+		}
+	}
+	w.corpses[key] = append(w.corpses[key], p.ID)
+}
+
+func (w *World) removeCorpse(p *Player) {
+	key := tileKey{p.X, p.Y}
+	list := w.corpses[key]
+	for i, id := range list {
+		if id != p.ID {
+			continue
+		}
+		list = append(list[:i], list[i+1:]...)
+		if len(list) == 0 {
+			// Deleted rather than left as an empty slice: a match leaves
+			// corpses all over the map, and a key per tile ever occupied is a
+			// leak that only shows up on the long-running server.
+			delete(w.corpses, key)
+		} else {
+			w.corpses[key] = list
+		}
+		return
+	}
 }
 
 // randomSpawnCandidate is one tile to try: uniform over the safe circle while

@@ -86,6 +86,10 @@ func (w *World) respawn(p *Player) {
 // what the player was standing on, since after a death that has already been
 // freed and after a restart it has not.
 func (w *World) revive(p *Player, x, y int) {
+	// Out of the corpse index first, while p still holds the tile it fell on —
+	// after the assignment below there is no way left to find the entry.
+	w.removeCorpse(p)
+
 	p.Dead = false
 	p.diedAt = 0
 	p.respawnAt = 0
