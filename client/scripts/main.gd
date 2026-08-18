@@ -481,9 +481,14 @@ func _unhandled_input(event: InputEvent) -> void:
 	if not (event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT):
 		return
 
+	# The click is spent either way. Argentum clears UsingSkill unconditionally
+	# after a left click (frmMain.frm), so missing costs you the cast and you
+	# have to arm the spell again — a miss is a mistake with a price, not a
+	# free retry with the crosshair still up.
 	var target: int = _view.entity_at(_view.to_local(event.position))
 	if target == 0:
-		_hud.log_line("No hay nadie ahí.", _hud.COLOR_TEXT_DIM)
+		_hud.log_line("No hay nadie ahí. Volvé a elegir el hechizo.", _hud.COLOR_TEXT_DIM)
+		_stop_targeting()
 		return
 
 	_net.send_cast(_targeting_spell, target)
