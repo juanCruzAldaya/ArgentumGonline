@@ -25,6 +25,11 @@ type Accounts interface {
 	Record(name string, outcome protocol.Outcome, mapName string)
 }
 
+// MinPasswordLen is what the server tells the client to enforce before spending
+// a round trip on a password it would reject anyway. It mirrors the store's own
+// floor, which is the one that actually decides.
+const MinPasswordLen = 6
+
 // SetAccounts installs the store. Like SetMap, it must be called before Run.
 func (w *World) SetAccounts(a Accounts) { w.accounts = a }
 

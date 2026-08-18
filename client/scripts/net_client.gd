@@ -19,9 +19,18 @@ signal speech_received(speech: Dictionary)
 ## How the match ended for us. Arrives once on elimination and again when the
 ## match is decided — see protocol.Outcome for why it is one message twice.
 signal outcome_received(outcome: Dictionary)
+## What the server wants before letting us in. Arrives on connect, unasked.
+signal hello_received(hello: Dictionary)
+## Our career, after a login that worked.
+signal account_received(account: Dictionary)
+## A login that did not, with the server's own wording.
+signal login_failed(reason: String)
 
 var _socket := WebSocketPeer.new()
 var _last_state := WebSocketPeer.STATE_CLOSED
+## Whether the join has been sent, which is what tells a handshake error from a
+## rejection mid-game.
+var _joined := false
 var _player_name := ""
 var _class_id := 0
 var _race_id := 0
@@ -127,6 +136,22 @@ func send_talk(text: String) -> void:
 	_send("talk", {"text": text})
 
 
+## Signs in, or signs up when new is true.
+func send_login(account: String, password: String, new: bool) -> void:
+	_send("login", {"name": account, "pass": password, "new": new})
+
+
+## Enters the world with a character. On a server with accounts the name is
+## ignored — it uses the one we authenticated as — but it is still sent so the
+## same call works against a server without them.
+func send_join(player_name: String, class_id: int, race_id: int) -> void:
+	_player_name = player_name
+	_class_id = class_id
+	_race_id = race_id
+	_joined = true
+	_send("join", {"name": player_name, "class": class_id, "race": race_id})
+
+
 func send_ping() -> void:
 	_send("ping", {"t": Time.get_ticks_msec()})
 
@@ -145,8 +170,9 @@ func _process(_delta: float) -> void:
 		_last_state = state
 		match state:
 			WebSocketPeer.STATE_OPEN:
-				# The server refuses anything before a join, so it goes first.
-				_send("join", {"name": _player_name, "class": _class_id, "race": _race_id})
+				# Nothing is sent here any more. The server speaks first with a
+				# hello saying whether it wants a login, and what happens next
+				# is a decision with a screen attached — see main.gd.
 				server_connected.emit()
 			WebSocketPeer.STATE_CLOSED:
 				server_disconnected.emit()
@@ -179,5 +205,16 @@ func _handle_frame(text: String) -> void:
 			spell_received.emit(data)
 		"useResult":
 			use_result_received.emit(data)
+		"hello":
+			hello_received.emit(data)
+		"account":
+			account_received.emit(data)
 		"error":
-			push_error("server rejected us: %s" % data.get("reason", "unknown"))
+			var reason := str(data.get("reason", "error desconocido"))
+			# During the handshake an error is not a failure of the connection,
+			# it is the answer: a taken name, a wrong password. It goes to the
+			# login screen instead of the debugger.
+			if not _joined:
+				login_failed.emit(reason)
+			else:
+				push_error("server rejected us: %s" % reason)

@@ -228,8 +228,10 @@ func TestAWrongPasswordCanBeRetried(t *testing.T) {
 	w.HandleConn(conn)
 
 	types := conn.types()
-	if len(types) == 0 || types[0] != protocol.TypeError {
-		t.Fatalf("la primera respuesta tenía que ser un error: %v", types)
+	// The hello comes first on every connection now, so what matters is that an
+	// error was answered at all, not that it was the very first frame.
+	if !contains(types, protocol.TypeError) {
+		t.Fatalf("la contraseña equivocada tenía que contestar un error: %v", types)
 	}
 	var welcome protocol.Welcome
 	if !conn.payloadOf(t, protocol.TypeWelcome, &welcome) {
@@ -253,7 +255,7 @@ func TestRegisteringATakenNameFails(t *testing.T) {
 	conn.push(t, protocol.TypeLogin, protocol.Login{Name: "wachin", Password: "otraclave", Register: true})
 	w.HandleConn(conn)
 
-	if types := conn.types(); len(types) == 0 || types[0] != protocol.TypeError {
+	if types := conn.types(); !contains(types, protocol.TypeError) {
 		t.Fatalf("se esperaba un error de nombre tomado: %v", types)
 	}
 	for _, typ := range conn.types() {
@@ -319,4 +321,13 @@ func TestEachPlayerIsRecordedOncePerMatch(t *testing.T) {
 	if seen["b"].Placement != 3 || seen["c"].Placement != 2 {
 		t.Errorf("puestos mal registrados: b=%d c=%d", seen["b"].Placement, seen["c"].Placement)
 	}
+}
+
+func contains(types []protocol.MsgType, want protocol.MsgType) bool {
+	for _, typ := range types {
+		if typ == want {
+			return true
+		}
+	}
+	return false
 }

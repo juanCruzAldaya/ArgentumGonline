@@ -27,8 +27,16 @@ COPY build/web /web
 # server/, and here it runs from /.
 COPY server/maps /maps
 EXPOSE 8080
+# -accounts points at the mounted volume, so a deploy does not take everybody's
+# account with it: the rootfs is replaced on every one of them.
+#
+# This comment sits above the instruction rather than inside it because a '#'
+# after a line continuation is not a comment to Docker — it becomes another
+# element of the JSON array, and the server starts with an argument that is an
+# English sentence.
 ENTRYPOINT ["/server", \
     "-web-dir", "/web", \
     "-map-file", "/maps/map1.json", \
     "-items-file", "/maps/items.json", \
-    "-spells-file", "/maps/spells.json"]
+    "-spells-file", "/maps/spells.json", \
+    "-accounts", "/data/cuentas.log"]

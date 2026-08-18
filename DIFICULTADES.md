@@ -482,6 +482,32 @@ pintado, comparar backends, volcar el árbol de `Control` — quedó escrita en
 OPERACION.md §3, "Tocar los gráficos de interfaz", porque sirve para cualquier
 bug de layout en un panel armado por código.
 
+### Y volvió a pasar
+
+Al escribir `account_screen.gd`, la pantalla de cuenta apareció **en la esquina
+superior izquierda**. Misma línea, mismo `set_anchors_preset` después del
+`add_child`, escrita de nuevo por la misma costumbre que este capítulo ya
+documenta. Estar escrito no alcanzó: el que copió el patrón no estaba leyendo
+DIFICULTADES, estaba escribiendo una pantalla nueva.
+
+Lo que cambió esta vez es dónde vive la advertencia. La explicación está ahora
+**en el comentario de la línea misma**, en las dos pantallas, así que el
+próximo que copie uno de estos archivos se lleva el arreglo con él en vez de
+tener que acordarse de un capítulo.
+
+Y apareció la otra mitad, que la primera vez quedó tapada porque el picker
+posiciona todo con anchors en vez de con coordenadas: **aun con el preset
+correcto, `_ready()` corre antes de la primera pasada de layout**, así que el
+`size` que se lee ahí sigue siendo 0. Un panel que calcula posiciones a partir
+del tamaño en `_ready` las calcula todas contra un rectángulo que todavía no
+existe. Crear los nodos y ubicarlos tienen que ser dos funciones, y la segunda
+va colgada de `resized`.
+
+Verificado midiendo, no mirando: un script de `SceneTree` que instancia la
+pantalla, espera dos frames y vuelca el árbol. Antes daba `size (0, 0)`; ahora
+da `size (1613, 962)` con los hijos centrados en x=574, que es exactamente
+`(1613 − 520) / 2 + 28`.
+
 ## 14. Cambiar el arte del panel: dos trampas de tamaño
 
 Reemplazar el panel lateral por un template nuevo (el gótico de hueso y hierro)

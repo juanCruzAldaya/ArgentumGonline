@@ -45,6 +45,7 @@ const (
 	TypeSpeech    MsgType = "speech"
 	TypeOutcome   MsgType = "outcome"
 	TypeAccount   MsgType = "account"
+	TypeHello     MsgType = "hello"
 	TypePong      MsgType = "pong"
 	TypeError     MsgType = "error"
 )
@@ -428,6 +429,21 @@ type Zone struct {
 	Seconds   float64 `json:"t,omitempty"`
 	Stage     int     `json:"st"`
 	Shrinking bool    `json:"s,omitempty"`
+}
+
+// Hello is the only message the server sends before being spoken to.
+//
+// It exists because the client cannot otherwise know which handshake it is in:
+// a server with accounts wants a Login first, one without wants a Join, and
+// guessing wrong means either an error frame the user sees or a login screen on
+// a server that has no idea what an account is. One field, sent on connect,
+// settles it.
+type Hello struct {
+	// Accounts is whether this server requires signing in.
+	Accounts bool `json:"accounts,omitempty"`
+	// MinPassword is the server's own floor, so the client can say no before
+	// spending a round trip on it.
+	MinPassword int `json:"minpass,omitempty"`
 }
 
 // Login is the first message on a server that has accounts, and it replaces

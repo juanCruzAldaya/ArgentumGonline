@@ -17,6 +17,10 @@ const maxNameLen = 16
 func (w *World) HandleConn(conn transport.Conn) {
 	defer conn.Close()
 
+	// The server speaks first, once, so the client knows which handshake it is
+	// in before it draws anything.
+	w.sendHello(conn)
+
 	name, ok := w.signIn(conn)
 	if !ok {
 		return
@@ -64,6 +68,19 @@ func (w *World) HandleConn(conn transport.Conn) {
 		default:
 			w.Submit(id, typ, payload)
 		}
+	}
+}
+
+// sendHello announces what this server wants. Best effort: a client that never
+// reads it and goes straight to a join still works on a server without
+// accounts, which is what every bot does.
+func (w *World) sendHello(conn transport.Conn) {
+	hello := protocol.Hello{Accounts: w.accounts != nil}
+	if hello.Accounts {
+		hello.MinPassword = MinPasswordLen
+	}
+	if frame, err := w.codec.Encode(protocol.TypeHello, hello); err == nil {
+		_ = conn.Send(frame)
 	}
 }
 

@@ -32,6 +32,17 @@ primary_region = "gru"
     interval = "30s"
     timeout = "5s"
 
+# The accounts file, and the only state on this server that outlives a deploy.
+#
+# It needs a volume because the machine's own filesystem does not survive one:
+# a deploy replaces the rootfs, and every account registered would go with it.
+# A volume also pins the machine to one host, which is already true here — see
+# the one-machine rule in OPERACION §6, for the same reason: the world lives in
+# memory and two machines are two different games.
+[[mounts]]
+  source = "juegito_data"
+  destination = "/data"
+
 [[vm]]
   size = "shared-cpu-1x"
   memory = "256mb"

@@ -70,6 +70,9 @@ var _zone_safe := true
 ## dropped. See _on_welcomed.
 var _welcomed := false
 
+## The account screen while it exists, and null once the player is past it.
+var _account_screen: Control = null
+
 
 func _ready() -> void:
 	randomize()
@@ -85,6 +88,9 @@ func _ready() -> void:
 	_net.spell_received.connect(_on_spell)
 	_net.speech_received.connect(_on_speech)
 	_net.outcome_received.connect(_on_outcome)
+	_net.hello_received.connect(_on_hello)
+	_net.account_received.connect(_on_account)
+	_net.login_failed.connect(_on_login_failed)
 	_net.use_result_received.connect(_on_use_result)
 	_hud.cast_requested.connect(_on_cast_requested)
 	# Two panel gestures, two explicit messages. Nothing on the client sends the
@@ -105,6 +111,45 @@ func _ready() -> void:
 	_view.visible = false
 	_hud.visible = false
 
+	# The socket comes first now. The server opens with a hello saying whether
+	# it wants an account, and that decides which screen gets drawn — asking
+	# before knowing would mean either a login form on a server that has no
+	# accounts, or a character picker on one that refuses to let it in.
+	_net.connect_to_server(_url, _player_name, 0, 0)
+
+
+## The server said what it wants. Everything the player sees starts here.
+func _on_hello(hello: Dictionary) -> void:
+	if not bool(hello.get("accounts", false)):
+		_show_picker()
+		return
+
+	_account_screen = preload("res://scripts/account_screen.gd").new()
+	_account_screen.configure(hello)
+	$UI.add_child(_account_screen)
+	_account_screen.login_submitted.connect(_net.send_login)
+	_account_screen.play_requested.connect(_on_play_requested)
+
+
+func _on_account(account: Dictionary) -> void:
+	if _account_screen != null:
+		_account_screen.show_account(account)
+
+
+func _on_login_failed(reason: String) -> void:
+	if _account_screen != null:
+		_account_screen.rejected(reason)
+
+
+## The career has been read and the player wants in.
+func _on_play_requested() -> void:
+	if _account_screen != null:
+		_account_screen.queue_free()
+		_account_screen = null
+	_show_picker()
+
+
+func _show_picker() -> void:
 	var picker := preload("res://scripts/character_picker.gd").new()
 	picker.default_nickname = _player_name
 	$UI.add_child(picker)
@@ -119,8 +164,8 @@ func _on_character_confirmed(player_name: String, class_id: int, race_id: int, p
 	_player_name = player_name
 	_hud.set_character(_player_name)
 	_hud.set_identity(class_id, race_id)
-	_hud.log_line("conectando a %s ..." % _url, _hud.COLOR_TEXT_DIM)
-	_net.connect_to_server(_url, _player_name, class_id, race_id)
+	_hud.log_line("entrando a la partida ...", _hud.COLOR_TEXT_DIM)
+	_net.send_join(_player_name, class_id, race_id)
 
 
 func _process(delta: float) -> void:
