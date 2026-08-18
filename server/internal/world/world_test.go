@@ -154,9 +154,8 @@ func TestMoveCooldownLimitsWalkSpeed(t *testing.T) {
 		t.Errorf("x = %d, want 6: cooldown let a second step through", p.X)
 	}
 
-	// The cooldown is 4.444 ticks, so the fifth tick is the first that can
-	// carry a step.
-	w.tick += moveCooldownMilliticks / 1000
+	// One tick short of the cooldown: still refused.
+	w.tick += moveCooldownMilliticks/1000 - 1
 	w.movePlayer(p, protocol.East)
 	if p.X != 6 {
 		t.Errorf("x = %d, want 6: a step went through before the cooldown elapsed", p.X)
@@ -168,40 +167,72 @@ func TestMoveCooldownLimitsWalkSpeed(t *testing.T) {
 	}
 }
 
-// The fractional cooldown only means anything if the remainder actually
-// survives from step to step: 4.444 ticks has to come out as a 4/5 tick
-// pattern averaging the real figure, not as a flat 5 that would be a 20% cut
-// rather than the 10% asked for.
-func TestWalkCadenceAveragesTheFractionalCooldown(t *testing.T) {
+// Every step has to take the same number of ticks as every other one.
+//
+// This asserted the *average* before, and the average was exactly what hid the
+// bug. The world clock only advances in whole ticks, so a fractional cooldown
+// does not buy fractional steps: at 4.444 the steps landed 5, 4, 5, 4 ticks
+// apart while the client interpolated all of them over the one average the
+// Welcome reports. That is a 28 ms hitch on every other step, forever, and the
+// old test was green through all of it — 4.444 was the mean of a sequence that
+// contained no 4.444.
+//
+// So the assertion is on the gaps themselves, not on what they average out to.
+func TestWalkCadenceIsIdenticalEveryStep(t *testing.T) {
 	w := newTestWorld(t, 200, 20)
 	w.tick = 100
 	p, _ := place(t, w, "wachin", 2, 5)
 
 	const steps = 45
-	start := w.tick
-	taken := 0
-	for taken < steps {
+	var at []uint64
+	for len(at) < steps {
 		before := p.X
 		w.movePlayer(p, protocol.East)
 		if p.X != before {
-			taken++
+			at = append(at, w.tick)
 			continue
 		}
 		w.tick++
 	}
 
-	// 45 steps at 4.444 ticks each is 200 ticks; the first step is free, so
-	// the elapsed span covers 44 cooldowns.
-	elapsed := float64(w.tick - start)
-	got := elapsed / float64(steps-1)
-	want := float64(moveCooldownMilliticks) / 1000
-	if got < want-0.05 || got > want+0.05 {
-		t.Errorf("cadence = %.3f ticks per step over %d steps, want %.3f", got, steps, want)
+	want := at[1] - at[0]
+	for i := 2; i < len(at); i++ {
+		if got := at[i] - at[i-1]; got != want {
+			t.Fatalf("el paso %d tardó %d ticks y el anterior %d: la cadencia no es pareja",
+				i, got, want)
+		}
 	}
 
-	tilesPerSecond := 20 / got
-	if tilesPerSecond < 4.4 || tilesPerSecond > 4.6 {
-		t.Errorf("walk speed = %.2f tiles/s, want ~4.5 (90%% of Argentum's 5)", tilesPerSecond)
+	if want != moveCooldownMilliticks/1000 {
+		t.Errorf("cadencia = %d ticks, se esperaban %d", want, moveCooldownMilliticks/1000)
+	}
+
+	// And it has to be Argentum's own 5 tiles a second, which is what makes it
+	// a whole number of ticks in the first place.
+	if tilesPerSecond := 20 / float64(want); tilesPerSecond != 5 {
+		t.Errorf("velocidad = %.2f tiles/s, se esperaban 5", tilesPerSecond)
+	}
+}
+
+// And the client has to be told exactly that cadence, or it interpolates over
+// a different span than the server steps on -- which is the same hitch arriving
+// from the other side.
+func TestWelcomeReportsTheExactWalkSpeed(t *testing.T) {
+	w := newTestWorld(t, 20, 20)
+	_, conn := place(t, w, "wachin", 5, 5)
+
+	var welcome protocol.Welcome
+	if err := w.codec.DecodePayload(conn.lastOfType(t, protocol.TypeWelcome), &welcome); err != nil {
+		t.Fatalf("decode welcome: %v", err)
+	}
+
+	// The client derives its step animation as 1000/walkSpeed milliseconds. It
+	// has to come out a whole number of ticks, or every step is animated over
+	// a span the server never takes.
+	stepMs := 1000.0 / welcome.WalkSpeed
+	if stepMs != float64(moveCooldownMilliticks/1000)*(1000.0/float64(w.tickRate)) {
+		t.Errorf("el cliente interpolaría %.1f ms por paso y el servidor tarda %d ticks",
+			stepMs, moveCooldownMilliticks/1000)
 	}
 }
 

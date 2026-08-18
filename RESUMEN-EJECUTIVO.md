@@ -78,10 +78,13 @@ al lobby, con modo espectador opcional siguiendo al que te mató. El lobby es
 
 Los dos están medidos, no supuestos.
 
-2.1. **`walkSpeedPercent = 100`.** El cooldown de paso son 4,444 ticks, que no es
-entero, así que los pasos alternan 250 y 200 ms mientras el cliente interpola a
-222 ms fijos: **28 ms de tirón un paso sí y otro no**. Con 100% son 4 ticks
-exactos y el resto desaparece. Es un número. *(chico)*
+2.1. **`walkSpeedPercent = 100`.** Hecho. Era un número, y el tirón que se
+sentía jugando era este: el reloj del mundo avanza en ticks enteros, así que
+4,444 no compra pasos de 4,444 — compra pasos de 5, 4, 5, 4 ticks mientras el
+cliente interpola todos sobre el promedio de 222 ms. Ahora son 4 ticks exactos,
+200 ms, y el cliente interpola los mismos 200. De paso es la cadencia real de
+Argentum, 5 tiles por segundo: el recorte estaba comprando un 10% de lentitud
+que nadie pidió al precio de un tirón permanente.
 2.2. **Codec binario.** El snapshot pesa 3,6 KB con la partida llena — 74 KB/s
 por jugador, ~7 MB/s agregados con 100. Debería bajar a ~400 B. El `probe` ya da
 el antes y el después. *(mediano)*

@@ -37,8 +37,23 @@ const (
 	// a 20% cut — there is nothing in between. At 90% the honest figure is
 	// 4.444 ticks, and rounding it to either neighbour would quietly deliver
 	// 0% or -20% instead of what was asked for.
+	//
+	// It is back at 100, and the reason is the one thing a player actually
+	// feels. The world clock only advances in whole ticks, so a 4.444-tick
+	// cooldown does not produce 4.444-tick steps: it produces steps that land
+	// on ticks 0, 5, 9, 14, 18, 23 — alternating 5 and 4 ticks, 250 ms and
+	// 200 ms. Meanwhile the client interpolates every step over the same
+	// 222 ms, because that is the average the Welcome reports. So one step
+	// finishes its animation and stands still for 28 ms, and the next is
+	// interrupted 22 ms early and snaps. Every other step, forever, for as
+	// long as anybody walks.
+	//
+	// At 100% the cooldown is exactly 4 ticks, the step is 200 ms, and the
+	// client's 1000/5 is the same 200 ms. Nothing to reconcile. It is also
+	// Argentum's own cadence — 5 tiles per second — so the trim was buying a
+	// 10% slowdown nobody asked for at the price of a permanent stutter.
 	baseMoveCooldownMilliticks = 4000
-	walkSpeedPercent           = 90
+	walkSpeedPercent           = 100
 	moveCooldownMilliticks     = baseMoveCooldownMilliticks * 100 / walkSpeedPercent
 
 	// turnCooldownMilliticks is INT_CHANGE_HEADING from the client's
