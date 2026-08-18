@@ -118,6 +118,7 @@ func runBot(ctx context.Context, url, name string, interval time.Duration, log *
 	}()
 
 	dir := protocol.Heading(rng.Intn(4))
+	var seq uint32
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -133,7 +134,8 @@ func runBot(ctx context.Context, url, name string, interval time.Duration, log *
 			if rng.Intn(4) == 0 {
 				dir = protocol.Heading(rng.Intn(4))
 			}
-			move, err := codec.Encode(protocol.TypeMove, protocol.Move{Dir: dir})
+			seq++
+			move, err := codec.Encode(protocol.TypeMove, protocol.Move{Dir: dir, Seq: seq})
 			if err != nil {
 				return err
 			}

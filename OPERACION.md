@@ -17,29 +17,51 @@ primeros en background.
 
 ```powershell
 cd server
-go run ./cmd/server -map-file maps/map1.json -items-file maps/items.json -spells-file maps/spells.json
+go run ./cmd/server
 ```
 
-**Los tres flags no son opcionales.** Sin ellos el servidor arranca igual, en
-una arena vacía generada, sin objetos y sin hechizos — y responde 200 al health
-check mientras lo hace. Es el síntoma de "no conozco los hechizos y el mapa no
-renderiza", y ya nos mordió dos veces, la segunda en producción. Si el arranque
-está bien, el log dice las seis líneas:
+**Los tres archivos de datos ya no se pasan a mano.** `-map-file`,
+`-items-file` y `-spells-file` apuntan por default a `maps/map1.json`,
+`maps/items.json` y `maps/spells.json`, así que corriendo desde `server/`
+arranca el juego de verdad y no una arena vacía. Y si alguno de esos archivos
+no está, el servidor **no arranca**: dice cuál falta y cómo resolverlo, en vez
+de bajar en silencio a una arena generada sin objetos ni hechizos mientras
+responde 200 al health check. Ese default silencioso es el síntoma de "no
+conozco los hechizos y el mapa no renderiza", y mordió dos veces, la segunda en
+producción — postmortem en DIFICULTADES §8.
+
+La arena de prueba sigue estando, pero ahora hay que pedirla:
+`-map-file="" -items-file="" -spells-file=""`. En ese caso el arranque avisa
+con un `WARN` y `/healthz` contesta `degradado: ...` en vez de `ok`.
+
+Si el arranque está bien, el log dice las seis líneas:
 
 ```
 mapa cargado         name="Ciudad de Ullathorpe" size="[100 100]"
 loot esparcido       pedido=165  colocado=165
 pociones esparcidas  pedido=1199 colocado=1199 unidades=29975
-items cargados       count=491
+items cargados       count=496
 hechizos cargados    count=50
 world running        tickRate=20
 listening            addr=[::]:8080
 ```
 
-Si falta alguna de esas líneas, no estás corriendo el juego.
+Si falta alguna de esas líneas, no estás corriendo el juego. El atajo para
+preguntárselo al servidor, sin leer el log, es el health check — contesta qué
+cargó, no solo que está vivo:
+
+```powershell
+curl.exe -s http://localhost:8080/healthz
+# ok map="Ciudad de Ullathorpe" items=496 spells=50
+```
 
 Otros flags: `-addr` (default `:8080`), `-tick`, `-map-width`, `-map-height`,
-`-seed`, `-debug`, `-web-dir`.
+`-seed`, `-debug`, `-web-dir`, `-respawn`.
+
+**`-respawn` es una muleta de testeo, no una regla del juego.** Por default
+vale 5: el muerto queda de fantasma 5 segundos y vuelve a entrar en el medio
+del mapa con equipo nuevo, para no tener que reiniciar el cliente después de
+cada pelea. `-respawn 0` devuelve la regla del género, que es eliminación.
 
 ### Cliente
 
@@ -86,7 +108,7 @@ taskkill /PID <pid> /F
 cd server
 go build ./...
 go vet ./...
-go test ./...              # 97 tests en internal/world
+go test ./...              # 101 tests en internal/world, 1 en cmd/server
 go test ./... -count=5     # el mundo usa rng; esto caza los flaky
 ```
 
@@ -126,9 +148,45 @@ go run -C tools/aoconv . `
 Escribe cinco cosas: `atlas.png` y `bundle.json` para el cliente, `items.json` y
 `spells.json` para los dos lados, y `map1.json` para los dos lados.
 
+`items.json` lleva seis campos que no salen de `obj.dat` tal cual: `projectile`
+y `needsAmmo` (Proyectil y Municiones, que no son lo mismo — las Cuchillas se
+tiran y listo, el arco necesita carcaj), `newbie`, los cortes de armadura
+(`dwarfArmor` = RazaEnana, que cubre Enano y Gnomo, más `drowArmor` y
+`femaleArmor`) y **`sold`**, que no es un campo de `obj.dat` sino la respuesta a
+"¿esto lo vende alguien?", sacada de los `ObjN=` de `NPCs.dat`. Ese último es el
+que le permite al kit inicial distinguir el equipo básico de una clase del
+trofeo que un GM repartía — ver RESUMEN-FUNCIONAL §9. Las flechas (`ObjType` 32)
+se convierten desde que existe el kit del Cazador.
+
 La lista de cuerpos ya no se pasa a mano: se deriva de las armaduras de
 `obj.dat`, porque equipar una armadura *es* cambiar de cuerpo. Hoy salen 309
-cuerpos, 79 armas, 9 escudos y 18 cascos.
+cuerpos, 79 armas, 9 escudos y 18 cascos, más las 50 animaciones de `Fxs.ini`
+(efectos de hechizo y de meditar) — ver "Gráficos de hechizos" más abajo.
+
+**El ancho del atlas está a propósito en 2048, no en 1024.** Subir un ancho
+angosto hace que el empaquetador (shelf-packer, apila por altura) tire una
+imagen más alta de lo que cualquier GPU soporta como textura 2D — pasó al
+sumar los FX, ver DIFICULTADES.md §12. Si se agrega contenido nuevo al bundle
+y el juego se rompe visualmente entero (no solo lo nuevo), es lo primero a
+revisar: `xxd -s 16 -l 8 client/assets/ao/atlas.png` da el ancho/alto del PNG
+en los bytes 17-24 (big-endian); la altura tiene que quedar bien por debajo de
+16384.
+
+**Para leer la lógica del original, no solo sus datos:** el código fuente VB6
+(no los assets) está en `ao-cliente-master.zip` y `ao-server-master.zip`, en
+Downloads también (bajados de [ao-libre](https://github.com/ao-libre)).
+Extraer solo el código, sin los binarios pesados que ya están en `ao-assets`:
+
+```powershell
+Expand-Archive ao-cliente-master.zip -DestinationPath src-cliente
+Expand-Archive ao-server-master.zip -DestinationPath src-server
+```
+
+`src-cliente\...\CODIGO\` y `src-server\...\Codigo\` tienen los `.bas`/`.frm`/
+`.cls`. Es donde se confirmó, por ejemplo, que un hechizo dibuja su efecto
+anclado al *objetivo* (no un proyectil) y que Meditar es un toggle de F6 — ver
+`SendSpellEffects` en `modHechizos.bas` y `HandleMeditate` en `Protocol.bas`
+del server original.
 
 Después de regenerar, Godot necesita reimportar:
 
@@ -142,6 +200,263 @@ para que registre la clase global:
 ```powershell
 godot --headless --path client --editor --quit-after 2
 ```
+
+
+### Tocar los gráficos de interfaz (login y panel lateral)
+
+Dos pantallas están armadas con el mismo criterio, y no es el criterio habitual
+de un motor de juegos: **el arte es una sola imagen horneada, y los controles
+vivos se posicionan encima cayendo en los agujeros que el arte ya dibuja.**
+
+| pantalla | arte | tamaño nativo | código |
+|---|---|---|---|
+| login / creación | `client/assets/ao/ui/login_bg.png` | 855x756 | `scripts/character_picker.gd` |
+| panel lateral | `client/assets/ao/ui/panel_bg.png` | horneado a 525x962, que es como se muestra | `scenes/main.tscn` + `scripts/hud.gd` |
+| footer de equipo | `client/assets/ao/ui/footer_bg.png` | horneado a 1088x37 | `scenes/main.tscn` + `scripts/hud.gd` |
+
+Dos piezas más salieron del panel a su propio PNG porque tienen que moverse o
+aparecer y desaparecer: `scroll_grabber.png` (el hueso del scroll) y
+`scroll_rail.png` (el riel con sus dos placas de flecha). El criterio está más
+abajo, en "Cuando un control tiene que usar el arte, no taparlo".
+
+Se llegó a esto después de fallar cuatro veces reconstruyendo el marco a mano
+con `StyleBoxFlat` (DIFICULTADES.md §2): un `StyleBoxFlat` no tiene bisel, ni
+textura, ni hueso tallado. La consecuencia es que **cada offset es una medición
+sobre el PNG, no un número a ojo**, y que si cambia la imagen o el tamaño al
+que se muestra, hay que volver a medir.
+
+**El panel lateral se mide sobre el PNG ya horneado, no sobre el fuente.** El
+arte se recorta y se baja a 525x962 con Lanczos *antes* de medir nada, así que
+los offsets de `main.tscn` viven en el mismo espacio en el que Godot los va a
+dibujar y no queda ningún factor de escala que equivocar. El panel viejo se
+medía sobre un fuente de 1426x2612 y se multiplicaba por 0.3682: andaba, pero
+convertía cualquier cambio de arte en una ronda de aritmética.
+
+#### Cambiar el tamaño del login
+
+Es un solo número. `character_picker.gd` tiene los rects en el espacio nativo
+del PNG (855x756) y calcula un `_scale` para llenar la pantalla:
+
+```gdscript
+const PANEL_BASE := Vector2(855, 756)
+const PANEL_MARGIN := 32.0   # aire libre arriba y abajo; más chico = panel más grande
+```
+
+Todo lo demás — posiciones, tamaños, cuerpos de letra, radios y padding — se
+multiplica por `_scale` al construirse. Arte y controles no se pueden
+desalinear porque hay un solo número que decide. Con el viewport en 1613x962 y
+margen 32 el panel sale a 1.19x, o sea 1015x898.
+
+**Ojo con el filtro de textura.** El proyecto tiene
+`default_texture_filter=0` (nearest), que es lo correcto para los sprites del
+mundo y lo incorrecto acá: `login_bg.png` es arte pintado, no pixel art, y
+`_scale` no es entero — en nearest los biseles del marco se convierten en una
+escalera. El `TextureRect` del arte pisa el default con
+`TEXTURE_FILTER_LINEAR`.
+
+#### Cambiar el arte del panel
+
+```powershell
+# 1. recortar el arte (si viene con el ajedrez de "transparencia", sacarlo) y
+#    hornearlo al tamaño en el que se muestra
+python -c "from PIL import Image; im=Image.open(r'<fuente>.jpg').crop((6,11,1495,2775)); im.resize((525,962), Image.LANCZOS).save(r'client/assets/ao/ui/panel_bg.png')"
+# 2. reimportar
+godot --headless --path client --import
+```
+
+Después hay que volver a medir los agujeros y actualizar `main.tscn` y las
+constantes de `hud.gd` (`BAR_*`, `ACTION_*`). El tamaño del agujero grande no
+es una constante: la grilla y el libro se dimensionan leyendo los offsets que
+sus propios nodos tienen en `main.tscn` (`_hole_of`), así que la medición vive
+en un solo lugar y el layout la sigue.
+
+#### Medir un agujero nuevo en el arte
+
+Un umbral de "píxeles oscuros" **no sirve** en el arte del login: la madera del
+fondo y el interior de las canaletas están a pocos niveles de luminancia de
+distancia, así que cualquier threshold encuentra el panel entero, no el hueco.
+Lo que sí funciona es perfilar la luminancia cruzando el bisel — el borde
+biselado es una banda clara de 6 a 10 px, y el interior arranca justo después:
+
+```powershell
+Add-Type -AssemblyName System.Drawing
+$b=[System.Drawing.Bitmap]::FromFile('D:\juegito\client\assets\ao\ui\login_bg.png')
+# fila horizontal a la altura de la canaleta: se ve oscuro / banda clara / oscuro
+$s=""; foreach($x in 95..125){ $p=$b.GetPixel($x,245); $s += "{0,4}" -f [int](($p.R+$p.G+$p.B)/3) }
+$s
+```
+
+En ese ejemplo la salida daba `12 9 8 9 10 | 34 50 47 51 50 51 49 55 64 43 | 23 11 7 ...`:
+madera hasta x=99, bisel de x=100 a x=109, interior desde x=110. Lo mismo por
+columnas para el alto. Los rects que quedan en el código son **interiores**: un
+control del tamaño del hueco cae adentro del bisel en vez de desbordarlo, que
+es lo que la primera pasada hizo mal.
+
+Para las placas de botón conviene detectar el rojo en vez de la luminancia
+(`$p.R - $p.B -gt 22`), porque el granate del plaquete se despega de la madera
+mucho más limpio que el brillo.
+
+**En un panel oscuro lo que más rinde es el etiquetado de componentes conexas
+sobre una máscara de "casi negro".** Los agujeros del panel lateral — el área
+de inventario, las cinco canaletas de barras, las cajitas de conteo de
+pociones, la placa al lado del cofre — son todos interiores negros rodeados de
+marco, así que un flood fill sobre `luminancia < 28` devuelve **todos sus
+bounding boxes exactos en una sola pasada**, y de ahí salieron los rects de
+`main.tscn` sin tocar un número a mano. El perfilado de luminancia queda para
+lo que no es un agujero negro: las placas de botón, las pestañas sobre la
+franja de ladrillos y el plaquete del nombre.
+
+#### Cuando el arte no tiene la proporción que necesitás
+
+El footer llegó como una barra de 2666x280 — proporción 9.5:1 — y tiene que
+entrar en 1088x37, o sea 29:1. Ahí no alcanza con escalar: a escala uniforme
+esa barra mide 114 px de alto, y estirar la imagen entera deforma los
+recuadros y los iconos, que son justamente lo que tiene que quedar cuadrado.
+
+La salida es **hornear el arte por partes, cada una con su propia escala**, que
+es lo que hace el script de `footer_bg.png`:
+
+1. **El marco se tilea, no se estira.** Se toma un tramo liso de la barra (sin
+   recuadros), se lo escala **uniforme** al alto final y se lo repite hasta
+   llenar el ancho. Uniforme es la palabra importante: apretar la barra entera
+   a 37px de alto aplasta los remaches y quedan guiones en vez de puntos;
+   escalar parejo y repetir los deja redondos.
+2. **Las puntas se pegan aparte**, con la misma escala, así la barra cierra
+   como cierra el arte en vez de terminar cortada a la mitad de un tramo.
+3. **Los recuadros van a su propia escala**, más grande que el marco: son el
+   contenido y tienen que quedar legibles, así que se llevan 29 de los 37 px.
+   Los de valor además se ensanchan a 64 px, porque adentro va un `5-10` y no
+   un icono.
+
+El resultado es un arte compuesto: el marco es textura y los recuadros son
+contenido, y no tienen por qué compartir escala. Si algún día hace falta que
+sí la compartan, ahí sí conviene pedir el arte de nuevo con la proporción
+final.
+
+#### Cuando un control tiene que usar el arte, no taparlo
+
+El arte pinta cosas que *parecen* controles: una barra de scroll de hueso, las
+placas de LANZAR e INFO. Si el control vivo se dibuja aparte, terminás con dos
+— fue literal en el caso del scroll, con la barra gris de Godot al lado del
+hueso pintado que no hacía nada. La regla que quedó:
+
+**Lo que no se mueve se deja pintado en el fondo. Lo que se mueve se recorta
+del fondo y se le da al control.** Con una corrección que costó un rediseño:
+**tampoco alcanza con que no se mueva, tiene que pertenecer siempre a lo que
+hay en pantalla.**
+
+- **Barra de scroll de hechizos.** El hueso con el anillo de hierro se recortó
+  a `scroll_grabber.png` porque se mueve. El riel y las dos placas de flecha
+  no se mueven, así que estuvieron pintados en `panel_bg.png` — hasta que se
+  vio que son muebles **del libro de hechizos**, no del panel: en la pestaña
+  de inventario no scrolleaban nada y igual le comían 26px de ancho a la
+  grilla, que es un cuarto de columna de slots. Ahora son `scroll_rail.png`,
+  un `TextureRect` (`ScrollRail`) clavado en el mismo x 429..456, y 277..582
+  donde el arte los tenía, que se muestra y se esconde con la pestaña. El
+  agujero que dejaron en el PNG se rellenó copiando una franja del propio
+  agujero negro, no con un negro plano: el fondo tiene grano y un rectángulo
+  liso se nota.
+- **El `VScrollBar` vivo** (`SpellScroll`) va encima del riel, usa el hueso
+  como `grabber` con 9-slice, y sus botones de flecha llevan un icono
+  **transparente de 20x20** — invisibles, pero es lo que los mantiene arriba
+  de las flechas dibujadas y clickeables. La barra propia del
+  `ScrollContainer` queda en `vertical_scroll_mode = 3` (nunca se muestra) y
+  las dos se sincronizan en los dos sentidos, así la rueda mueve el hueso y el
+  hueso mueve la lista. Además, mientras arrastrás un hechizo, acercarlo a
+  cualquiera de las dos puntas de la lista la hace scrollear sola
+  (`HUD._process`): un drag te tiene el botón apretado, así que sin eso el
+  libro solo se puede reordenar entre las diez filas que estén a la vista.
+- **Placas de LANZAR / INFO.** La placa se recortó a `button_plate.png` y el
+  botón la dibuja en sus cuatro estados sobre el rect exacto de la placa
+  pintada, así que en reposo coinciden píxel a píxel. Al apretar, la placa
+  dibujada baja 2 px (`expand_margin_top` negativo y `expand_margin_bottom`
+  positivo mueven la caja sin cambiarle el tamaño) y se oscurece: la franja de
+  placa pintada que queda descubierta arriba es la sombra, y es el bisel del
+  propio arte en vez de un degradado inventado.
+
+**Ojo con el `content_margin` de un `StyleBoxTexture`.** Alimenta el tamaño
+mínimo del control, así que márgenes generosos (los mismos que el 9-slice)
+hicieron que el botón midiera 42 px contra una placa de 39 y estirara la
+textura fuera de la pintada. Los márgenes de contenido son para el texto; los
+de 9-slice son para la imagen, y no tienen por qué ser iguales.
+
+#### Verificar sin abrir el juego
+
+El loop rápido es dibujar los rects sobre el propio PNG y mirarlo, en vez de
+lanzar el cliente y comparar de memoria:
+
+```powershell
+Add-Type -AssemblyName System.Drawing
+$src=[System.Drawing.Bitmap]::FromFile('D:\juegito\client\assets\ao\ui\login_bg.png')
+$g=[System.Drawing.Graphics]::FromImage($src)
+$pen=New-Object System.Drawing.Pen([System.Drawing.Color]::Lime,1)
+# x,y,w,h de cada rect que querés comprobar
+foreach($r in @(@(112,220,608,44),@(660,689,141,36))){ $g.DrawRectangle($pen,$r[0],$r[1],$r[2],$r[3]) }
+$src.Save("$env:TEMP\overlay.png"); $g.Dispose(); $src.Dispose()
+```
+
+Ahí se ve de una si un control se pasa del hueco. Así se encontró que el rect de
+SALIR se pasaba 10 px por izquierda y 24 px por derecha, que era el tinte de
+hover sobresaliendo del plaquete.
+
+#### Depurar un panel que se dibuja mal
+
+Los paneles de este proyecto se arman **por código** (`Control.new()` +
+`add_child`), no en el editor, así que los bugs de layout no se ven abriendo la
+escena. La escalera que cierra el diagnóstico rápido, de afuera hacia adentro:
+
+1. **Capturar la ventana y medir el bloque pintado.** `GetClientRect` +
+   `CopyFromScreen`, y después contar el bounding box de los píxeles que no son
+   el color de fondo. Un bloque de 428x378 dijo enseguida de qué se trataba: es
+   exactamente la mitad de 855x756, o sea un panel centrado en (0,0).
+2. **Leer el color del vacío.** Gris del sistema, negro de letterbox y clear
+   color del engine (RGB 77,77,77 = `Color(0.3,0.3,0.3)`) son tres problemas
+   distintos. Ver DIFICULTADES.md §13.
+3. **Comparar backends.** Si `gl_compatibility`, `--rendering-method
+   forward_plus` y `--rendering-driver opengl3_angle` dan el mismo resultado, no
+   es el driver.
+4. **Capturar el viewport desde adentro del engine.** Si
+   `get_viewport().get_texture().get_image()` ya sale roto, la ventana no
+   participa y el problema es la escena.
+5. **Volcar el árbol de `Control` con tamaños reales**, que es donde
+   normalmente aparece el culpable:
+
+```gdscript
+# guardar como client/probe_tree.gd y correr:
+#   godot --path client --script res://probe_tree.gd
+extends SceneTree
+var f := 0
+func _initialize() -> void:
+	change_scene_to_file("res://scenes/main.tscn")
+func _walk(n: Node, d: int) -> void:
+	if n is Control:
+		var c := n as Control
+		print("  ".repeat(d), n.name, " size=", c.size, " anchors=", c.anchor_right,
+			",", c.anchor_bottom, " offsets=", c.offset_right, ",", c.offset_bottom)
+	for ch in n.get_children():
+		_walk(ch, d + 1)
+func _process(_d: float) -> bool:
+	f += 1
+	if f == 90:
+		print("visible_rect = ", root.get_visible_rect())
+		_walk(root.get_node("Main/UI"), 0)
+		return true
+	return false
+```
+
+**Lo mismo sirve para probar lógica de HUD sin abrir una ventana:** el mismo
+script con `--headless` instancia la escena, le podés mandar un `set_loadout`
+de mentira y leer lo que quedó en los `Label`. Es como se verificaron el footer
+de equipo y la barra de scroll de hueso sin lanzar el cliente.
+
+**La trampa que ya costó una sesión entera:** `set_anchors_preset(preset)` tiene
+`keep_offsets` en `true` por default, así que llamarlo sobre un nodo **que ya
+está en el árbol** y mide 0x0 lo deja clavado en 0x0 para siempre — pone los
+anchors a pantalla completa y compensa los offsets para no cambiar el rect.
+Antes de `add_child` es inocuo (el área del padre todavía es 0, los offsets
+quedan en 0); después de `add_child` es destructivo. Si el control tiene que
+llenar a su padre, va `set_anchors_and_offsets_preset()`. Historia completa en
+DIFICULTADES.md §13.
 
 ---
 
@@ -191,9 +506,16 @@ Remote: `https://github.com/juanCruzAldaya/ArgentumGonline.git`
 el momento en que alguien que no sos vos juega en tu servidor, tiene derecho al
 código fuente completo de lo que está corriendo. El orden correcto es siempre
 pushear primero y deployar después, para que el código publicado sea el que
-corre. La pantalla de selección de personaje muestra el link al repo
-(`SOURCE_URL` en `client/scripts/character_picker.gd`); si cambiás de repo, ese
-constante hay que actualizarlo.
+corre.
+
+**Hoy el cliente no muestra el link al repo.** La pantalla de login lo mostraba
+al pie; se sacó para dejarla limpia, y la atribución vive únicamente en
+[README.md](README.md) y [CREDITS.md](CREDITS.md). Eso alcanza mientras el juego
+se distribuya como repo, pero **no** para la build web hosteada: ahí el jugador
+nunca ve el README, y la sección 13 del AGPL pide que la oferta de código le
+llegue a quien interactúa con el programa por red. Antes de dejar el deploy
+público hay que devolver el link a algún lado del cliente — una línea chica en
+el HUD o en la pantalla de muerte alcanza.
 
 ---
 
@@ -251,10 +573,15 @@ No alcanza con que el deploy diga "success" — el servidor levanta igual sin su
 datos.
 
 ```powershell
-curl.exe -s -o NUL -w "%{http_code}`n" https://juegito.fly.dev/healthz
+curl.exe -s https://juegito.fly.dev/healthz    # ok map="Ciudad de Ullathorpe" items=496 spells=50
 curl.exe -sI -H "Accept-Encoding: gzip" https://juegito.fly.dev/index.wasm   # debe decir content-encoding: gzip
 & $fly logs -a juegito --no-tail | Select-String "mapa cargado|items cargados|hechizos cargados"
 ```
+
+El cuerpo de `/healthz` es la respuesta corta: `ok` con el mapa y los conteos
+significa que el mundo cargó, y `degradado: ...` significa que está corriendo
+sin sus datos. Un `200` pelado no distinguía esos dos casos, que es justo lo
+que dejó pasar el primer deploy roto.
 
 Y la prueba de verdad, que ejercita el protocolo desde afuera:
 
@@ -338,25 +665,51 @@ respaldado por un *detector* de speedhack.
 
 Nosotros no podemos confiar en el cliente, así que:
 
-1. **El cliente predice** (`WorldView.predict_step`): chequea el bitset de
+1. **El cliente predice** (`WorldView.try_step`): chequea el bitset de
    colisiones que recibió en el Welcome, chequea que no haya otra entidad en el
-   tile, y si pasa, se mueve ya. Espeja la cadencia del servidor para no
-   adelantarse.
+   tile, y si pasa, se mueve ya.
 2. **El servidor decide** igual, con su propio reloj de pasos.
-3. **Se reconcilia** en `set_entities`: la posición del jugador local que manda
-   el servidor está normalmente un paso atrás de la predicción, así que **no** se
-   escribe encima — eso es de lo que está hecho un rubber band. Solo si
-   discrepan **4 snapshots seguidos** (200 ms) gana el servidor.
+3. **Se reconcilia** en `set_entities` por número de secuencia, no por voto de
+   posiciones. Cada `Move` lleva un `Seq` propio (incremental, nunca se
+   resetea en la conexión), y el servidor devuelve en cada `Snapshot` el
+   `AckSeq`: el más alto que ya respondió, se haya movido o no. El cliente
+   guarda un buffer de los inputs que mandó y todavía no fueron confirmados
+   (`_pending`); en cada snapshot pisa su posición con la del servidor,
+   descarta del buffer todo lo `<= AckSeq`, y vuelve a aplicar (replay) lo que
+   queda — los inputs que el servidor todavía no tuvo tiempo de contestar.
+   Es el patrón estándar de client-side prediction con reconciliación por
+   secuencia. La versión anterior comparaba posiciones absolutas y forzaba la
+   del servidor tras 4 snapshots seguidos en desacuerdo, lo cual se rompía bajo
+   input rápido o sostenido: la posición predicha está *siempre* uno o dos
+   pasos por delante de la última confirmada mientras se camina, así que el
+   voto se disparaba solo y producía el rubber band que se supone que evitaba.
+   Postmortem completo (§11, "tres bugs apilados") en [DIFICULTADES](DIFICULTADES.md).
 
 La cadencia de paso corre en **milésimas de tick**, no en ticks enteros, porque
 los enteros no pueden expresar el ajuste: 4 ticks son 5 tiles/s y 5 ticks son 4
 tiles/s, o sea que el salto mínimo desde 100% es −20%. A 90% la cifra honesta es
-4.444 ticks. El resto sobrevive de paso a paso, y estar quieto no acumula
-crédito para un sprint.
+4.444 ticks. El resto sobrevive de paso a paso (`moveReadyAt +=`, nunca se
+resetea desde el momento real), y estar quieto no acumula crédito para un
+sprint.
+
+Como 4.444 ticks no es un número entero, el servidor en la práctica alterna
+pasos de 250 ms y 200 ms para promediar los 222.2 ms reales de la cadencia —
+nunca da un paso a los 222.2 ms exactos, porque solo puede actuar en un borde
+de tick. El cliente predictivo tiene que espejar *eso*, no un cronómetro
+continuo: `WorldView._quantized_now()` cuantiza su propio reloj a bordes de
+tick con la misma aritmética entera que `moveReadyAt`, y calibra la fase
+contra el `Tick` que ya viaja en cada `Snapshot` (`sync_server_tick`) en vez de
+asumir que el reloj del cliente arrancó sincronizado con el del servidor —
+ninguno de los dos arranca al mismo tiempo, así que sin esa calibración
+tendrían el mismo tamaño de paso pero no caerían en los mismos instantes.
 
 **Girar tiene su propio intervalo** (`INT_CHANGE_HEADING`, 300 ms), separado del
 caminar. Un paso legal se lleva su giro puesto; el intervalo solo entra cuando
-el movimiento se rechaza — pared, parálisis, o media cadencia.
+el movimiento se rechaza — pared, parálisis, o media cadencia. El cliente
+predictivo replica esto con su propio cooldown de giro, y cada input que manda
+sabe si es "solo giro" o "intento de paso" (`can_step`) — el replay de la
+reconciliación respeta esa marca, porque tratarlos igual hacía que un giro se
+reprodujera como si hubiera avanzado un tile.
 
 Y la interpolación del render avanza **un eje por frame**: nunca en diagonal,
 porque el juego nunca mueve en diagonal.
@@ -408,6 +761,59 @@ un tiempo, asumiendo un rango de dados que no existe — 40 es `MAXATRIBUTOS`, e
 techo al que te sube una **poción**, no lo que se puede rolear. El error se
 amplificaba 44 veces en el maná.
 
+### Gráficos de hechizos (FX)
+
+Lo primero que hay que soltar del original AO: un hechizo **no** dispara un
+proyectil que viaja de quien lanza a quien recibe. `SendSpellEffects`
+(`modHechizos.bas`) manda un paquete `CreateFX` con el `CharIndex` del
+**objetivo**, y el cliente (`Char_SetFx` en `mPooChar.bas`) lo reproduce
+anclado a esa posición, igual que dibuja cuerpo o cabeza — con el offset propio
+de `Fxs.ini` (`OffsetX`/`OffsetY`) encima.
+
+`Hechizos.dat` guarda ese vínculo en un campo mal nombrado: `FXgrh` no es un
+grh, es el índice 1-50 dentro de `Fxs.ini`, que recién ahí resuelve el grh real
+(`Animacion`) más el offset. `tools/aoconv` ya traía ese índice parseado desde
+antes (`Spell.FXGrh`, `json:"fx"`) pero no hacía nada con él; ahora también
+lee `Fxs.ini` completo (`loadFxs` en `aodata.go`) y empaqueta las 50
+animaciones en el atlas (`bundle.go`), bajo la clave `fxs` de `bundle.json`.
+
+El cliente no necesita que el servidor le diga qué grh mostrar: ya tiene su
+propia copia de `spells.json` (con `fx` y `loops`) igual que la usa para
+nombres e íconos, así que resuelve todo localmente a partir del
+`SpellID` que ya viaja en cada `SpellEvent`. `WorldView.play_spell_fx` guarda
+el efecto en una lista de "FX activos" con vencimiento (`grh`, `offset`,
+inicio, duración = ciclo × `loops`) y `_draw_entity` lo dibuja mientras dure —
+un efecto de hechizo es de una sola vez, así que expira solo.
+
+### Meditar
+
+F6, toggle. A diferencia del hechizo de arriba, el aura de meditar **no** es
+un evento de una vez — dura mientras el jugador la sostiene — así que no usa
+la misma lista de FX con vencimiento. Viaja como parte del estado parado de
+cada snapshot (`EntityState.Meditating`, visible para *todo el que vea* a ese
+jugador, igual que `Paralyzed`/`Immobilized`), y `WorldView._draw_fx` la
+redibuja cuadro a cuadro mientras el flag siga en `true`.
+
+El servidor tampoco manda qué aura mostrar: el original elige entre cinco
+tamaños de FX según el nivel del lanzador (`FXMEDITARCHICO` .. `XXGRANDE`,
+`Protocol.bas`), pero acá todos nacen al nivel tope (`maxLevel`, ver
+`balance.go`) — por encima del umbral más alto del original — así que el
+`switch` de tamaños siempre cae en la misma rama. El cliente hardcodea esa
+única aura (`WorldView.MEDITATE_FX = 34`) en vez de portar un `switch` que
+nunca elige otra cosa.
+
+La regeneración de maná (`meditateTick` en `server/internal/world/meditate.go`)
+es el único lugar donde el port se separa de la fórmula del original a
+propósito: `DoMeditar` (`Trabajo.bas`) tira un roll de suerte contra la skill
+Meditar para decidir cada cuánto cae un 6% de maná (`PorcentajeRecuperoMana`
+de `Balance.dat`); acá no existe esa skill — nadie sube de nivel — así que el
+6% cae en una cadencia fija (una vez por segundo) en vez de un roll, mismo
+criterio que ya usaba `hide()` para Ocultarse. El resto sí es del original:
+2 s de "concentración" antes de arrancar (`TIEMPO_INICIOMEDITAR`), se corta
+solo al llenar el maná, se cancela caminando o al recibir un golpe cuerpo a
+cuerpo, bloquea atacar y usar objetos mientras dura, y reduce en 25% la
+evasión de quien medita (`SistemaCombate.bas`).
+
 ### Dónde vive cada cosa
 
 ```
@@ -423,6 +829,7 @@ server/
       appearance.go  qué cuerpo/arma/escudo/casco se dibuja
       loot.go      esparcido en el piso, agarrar, tirar, desparramar al morir
       spells.go    50 hechizos, libro de 30 slots reordenable
+      meditate.go  F6: regen de maná, ramp, corte por golpe/caminar
       useitem.go   equipar vs consumir, pociones
 client/
   scripts/         net_client, world_view, hud, minimap, main,
@@ -444,3 +851,4 @@ tools/aoconv/      lee los índices de AO y arma el atlas y los .json
 | **Combate a distancia** | Arcos y flechas. Solo hay melee y hechizos. |
 | **Codec binario** | Cuando el JSON moleste, medido. |
 | **Recortar el atlas** | Hoy empaqueta las 309 armaduras del juego entero; un BR podría spawnear solo un subconjunto. |
+| **Link al fuente en el cliente** | Se sacó del login. Requisito del AGPL §13 antes de que el deploy web sea público — ver §5. |

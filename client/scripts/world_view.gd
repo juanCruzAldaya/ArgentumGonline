@@ -65,6 +65,11 @@ var _entities: Dictionary = {}
 var _ground: Dictionary = {}
 var _camera := Vector2.ZERO
 
+## One-shot spell effects in flight: { entity, grh, offset, start, until }.
+## Argentum plays these anchored to the target's own position, not as a
+## projectile — see play_spell_fx.
+var _active_fx: Array = []
+
 ## Argentum tile layers, loaded from the map the server named in its welcome.
 ## Layer 1 covers every tile so it is dense; the rest are sparse index -> grh.
 var _has_map := false
@@ -79,19 +84,66 @@ var _roofed: Dictionary = {}
 ## Tile offset per heading, in the server's own order: 0 N, 1 E, 2 S, 3 W.
 const HEADING_DELTA := [Vector2(0, -1), Vector2(1, 0), Vector2(0, 1), Vector2(-1, 0)]
 
+## Server ticks per second, from the Welcome. The server can only ever act on
+## a tick boundary, so every clock below is quantised to ticks of this length
+## rather than measured in continuous real time — see _quantized_now for why
+## that distinction is the whole fix for a very specific stutter.
+var tick_rate := 20
+var _tick_ms := 1000.0 / 20.0
+
 ## Local step clock for prediction, mirroring the server's walk cadence.
+## Unlike a plain "next allowed second" this is compared and advanced entirely
+## in _quantized_now's ticked time, for the same reason moveReadyAt is —
+## see _quantized_now.
 var _local_step_ready_at := 0.0
+## moveCooldownMilliticks server-side, converted to real milliseconds
+## (still tick-quantised in effect once compared against _quantized_now).
+## Server.ini's walkSpeedPercent lives only on the server; this is derived
+## from the Welcome's walkSpeed instead of a second copy of that constant.
+var _move_cooldown_ms := 222.2
 
-## How many consecutive snapshots have disagreed with the predicted position.
-## A single disagreement is normal — the snapshot in flight was composed before
-## the server saw our last step — so only a run of them is a real desync.
-var _desync_frames := 0
+## Local turn clock for a step refused mid-cadence, mirroring the server's own
+## INT_CHANGE_HEADING (see World.turn server-side). Kept separate from the step
+## clock for the same reason the server keeps them separate: a step carries its
+## own turn for free, but a refused step must not let the character spin at
+## framerate either.
+var _local_turn_ready_at := 0.0
+## Matches turnCooldownMilliticks server-side (6 ticks) exactly rather than a
+## round 300ms, so it stays a whole number of ticks even if tick_rate is ever
+## retuned away from 20.
+var _turn_cooldown_ms := 300.0
 
-## How many snapshots must disagree in a row before the server's position is
-## forced onto the local player. At 20Hz this is 200ms — long enough that the
-## normal one-snapshot lag never triggers it, short enough that a genuinely
-## refused step is corrected before the player has walked far on a lie.
-const DESYNC_SNAPSHOTS := 4
+## A rejected step (wall, occupied tile) is not retried every single frame a
+## key stays held — that would flood the connection for no gain, since the
+## server only ever re-evaluates a blocked step once per tick anyway. One tick
+## is the natural retry window: sooner is pure waste, since the server cannot
+## have changed its mind before then.
+var _blocked_retry_ms := 50.0
+
+## Estimated (server clock) - (local Time.get_ticks_msec()) in milliseconds,
+## refreshed from Snapshot.Tick on every snapshot via sync_server_tick.
+##
+## The server can only grant a step on one of its own tick boundaries, and
+## because 222.2ms (the walk cooldown) is not a whole multiple of 50ms (the
+## tick), the server itself alternates 250ms/200ms/250ms/200ms steps to
+## average it out (see moveCooldownMilliticks). A client predicting on a
+## plain continuous 222.2ms timer is not approximating that badly — it is
+## solving a different problem, and lands ahead of the server on every cycle
+## where the server's turn happens to need the full 250ms. That is not drift
+## and it does not accumulate; it is structural, present from the very first
+## step, and it produced a rejection on a large fraction of steps under
+## sustained movement — the "frena-sigue" this fixes. Quantising the client's
+## own clock to tick boundaries reproduces the server's alternation instead of
+## racing ahead of it; this offset additionally keeps those boundaries
+## actually aligned with the server's, not just the same size.
+var _server_phase_offset_ms := 0.0
+
+## Inputs sent to the server but not yet acknowledged, oldest first. Each is
+## {seq, dir}. Replayed on top of every server correction in set_entities —
+## that replay is what reconciliation actually is now; see try_step and
+## set_entities for the full picture.
+var _pending: Array = []
+var _next_seq := 1
 ## Drives animated tiles such as water, which run whether or not anyone moves.
 var _world_time := 0.0
 
@@ -119,12 +171,58 @@ func configure(welcome: Dictionary) -> void:
 	view_h = int(welcome.get("vh", view_h))
 	local_id = int(welcome.get("id", 0))
 	walk_speed = float(welcome.get("walkSpeed", walk_speed))
+	tick_rate = int(welcome.get("tickRate", tick_rate))
+	_tick_ms = 1000.0 / float(tick_rate)
+	# Derived from the Welcome's own numbers rather than a second copy of the
+	# server's constants, so a retune of walk speed or tick rate cannot leave
+	# the two sides disagreeing about the cadence.
+	_move_cooldown_ms = 1000.0 / walk_speed
+	_turn_cooldown_ms = 6.0 * _tick_ms  # turnCooldownMilliticks is 6 ticks, flat
+	_blocked_retry_ms = _tick_ms
 	_blocked = Marshalls.base64_to_raw(str(welcome.get("blocked", "")))
 	_camera = Vector2(int(welcome.get("sx", 0)), int(welcome.get("sy", 0)))
 	_entities.clear()
 	_ground.clear()
+	_pending.clear()
+	_next_seq = 1
+	_local_step_ready_at = 0.0
+	_local_turn_ready_at = 0.0
+	_server_phase_offset_ms = 0.0
 	_load_map(int(welcome.get("map", 0)))
 	queue_redraw()
+
+
+## Keeps this client's tick-quantised clock aligned with the server's. Called
+## from every snapshot with its Tick field (see _quantized_now for why
+## alignment, not just matching tick length, is what actually fixes the
+## structural rejection this whole clock exists to avoid).
+##
+## Taking the latest estimate outright rather than smoothing it is deliberate:
+## the two are the same clock running at the same rate, so the true offset is
+## constant and any apparent movement in it is transport jitter, not drift to
+## track. Averaging that jitter in would just make the estimate wrong for
+## longer.
+func sync_server_tick(server_tick: int) -> void:
+	_server_phase_offset_ms = float(server_tick) * _tick_ms - Time.get_ticks_msec()
+
+
+## Real time, adjusted for the server's clock phase and quantised down to the
+## server's own tick boundaries.
+##
+## This is the actual fix for the stutter under a held key. The server can only
+## ever grant a step on a tick boundary, and 222.2ms (the walk cooldown at the
+## default tuning) is not a whole multiple of 50ms (the tick) — so the server
+## itself alternates 250/200/250/200ms steps to average out to 222.2, per
+## moveCooldownMilliticks server-side. A client predicting on a plain
+## continuous 222.2ms timer is not approximating that cadence, it is running a
+## different one, and it lands ahead of the server on every cycle where the
+## server's turn needed the full 250ms — not drift, not accumulating, present
+## from the first step. Quantising here means try_step's own clock can only
+## ever line up with a tick boundary too, so it reproduces the server's
+## alternation instead of racing past it.
+func _quantized_now() -> float:
+	var real := Time.get_ticks_msec() + _server_phase_offset_ms
+	return floor(real / _tick_ms) * _tick_ms
 
 
 ## Map tiles ship with the client rather than over the wire: they are static
@@ -159,13 +257,20 @@ func _load_map(number: int) -> void:
 		)
 
 
-func set_entities(entities: Array) -> void:
+## ack_seq is the snapshot's protocol.Snapshot.AckSeq: the highest input the
+## server has answered for the local player specifically. server_tick is the
+## snapshot's own Tick, used to keep _quantized_now's clock in phase — see
+## sync_server_tick. See try_step and the reconciliation block below for what
+## ack_seq buys.
+func set_entities(entities: Array, ack_seq: int = 0, server_tick: int = 0) -> void:
+	sync_server_tick(server_tick)
 	var seen: Dictionary = {}
 
 	for e in entities:
 		var id := int(e.get("id", 0))
 		seen[id] = true
 		var tile := Vector2(float(e.get("x", 0)), float(e.get("y", 0)))
+		var heading := int(e.get("h", 0))
 
 		var entity: Dictionary = _entities.get(id, {})
 		if entity.is_empty():
@@ -173,29 +278,39 @@ func set_entities(entities: Array) -> void:
 			# last entity's position.
 			entity = {"render": tile, "anim": 0.0, "moving": false}
 
-		if id == local_id and not entity.is_empty() and entity.has("tile"):
-			# Reconciliation. The local player's position is predicted (see
-			# predict_step), so the server's copy is normally one step behind
-			# ours and must NOT be written straight over it — doing that is what
-			# a rubber band is made of.
+		if id == local_id:
+			# Reconciliation. The server's tile/heading here are ground truth
+			# as of exactly ack_seq — never a guess to blend with our own
+			# prediction. Drop whatever it has already answered, then replay
+			# only what's left: inputs sent after ack_seq that it hasn't had a
+			# chance to answer yet.
 			#
-			# A single disagreement is expected: the snapshot now arriving was
-			# composed before the server had seen our latest step. A *run* of
-			# them means the server genuinely refused something we predicted —
-			# somebody took the tile first, or a cooldown we mirrored wrong —
-			# and then the server wins, because it always does.
-			if entity["tile"] == tile:
-				_desync_frames = 0
-			else:
-				_desync_frames += 1
-				if _desync_frames >= DESYNC_SNAPSHOTS:
-					entity["tile"] = tile
-					_desync_frames = 0
-			# Heading is predicted too, so the server's is stale for the same
-			# reason. It rides along with the position correction above.
+			# This used to compare raw positions and only trust the server
+			# after several snapshots disagreed in a row, because there was no
+			# way to tell "the server hasn't seen my last step yet" (normal,
+			# and constant while a key is held) from "the server genuinely
+			# rejected a step" (rare). Under fast or sustained input the
+			# predicted tile is *always* a step or two ahead of the last
+			# confirmed one, so that vote fired constantly and yanked the
+			# player backward mid-stride — the rubber-banding this replaced.
+			while not _pending.is_empty() and int(_pending[0]["seq"]) <= ack_seq:
+				_pending.pop_front()
+
+			entity["tile"] = tile
+			entity["heading"] = heading
+			for input in _pending:
+				entity["heading"] = int(input["dir"])
+				# A turn-only entry (mid-cadence, can_step=false) only ever
+				# updates heading, exactly like the server's own World.turn —
+				# replaying it as a step attempt would predict a tile the
+				# server was never asked to grant.
+				if bool(input["can_step"]):
+					var result := _resolve_move(entity["tile"], int(input["dir"]))
+					if result["stepped"]:
+						entity["tile"] = result["tile"]
 		else:
 			entity["tile"] = tile
-			entity["heading"] = int(e.get("h", 0))
+			entity["heading"] = heading
 		entity["body"] = int(e.get("b", 0))
 		entity["head"] = int(e.get("hd", 0))
 		entity["name"] = str(e.get("n", ""))
@@ -215,6 +330,7 @@ func set_entities(entities: Array) -> void:
 		entity["helmet"] = int(e.get("hm", 0))
 		entity["paralyzed"] = bool(e.get("pz", false))
 		entity["immobilized"] = bool(e.get("im", false))
+		entity["meditating"] = bool(e.get("md", false))
 		_entities[id] = entity
 
 	for id: int in _entities.keys():
@@ -235,6 +351,38 @@ func set_ground(items: Array) -> void:
 			"item_id": int(it.get("i", 0)),
 			"amount": int(it.get("n", 0)),
 		}
+
+
+## Plays a spell's effect on whoever it landed on. Mirrors the original:
+## Argentum never sends a projectile across the map, it plays the animation
+## anchored to the target's own position (SendSpellEffects/Char_SetFx), offset
+## by Fxs.ini's OffsetX/OffsetY, for the spell's own Loops repeats.
+##
+## Looked up locally by spell id rather than carried on the wire — the client
+## already ships the same spells.json the server converted its table from, so
+## SpellEvent naming the spell is enough.
+func play_spell_fx(target_id: int, spell_id: int) -> void:
+	if not _sprites.is_loaded():
+		return
+	var spell := _data.spell(spell_id)
+	var fx_id := int(spell.get("fx", 0))
+	if fx_id <= 0:
+		return
+	var grh := _sprites.fx_grh(fx_id)
+	if grh == 0:
+		return
+
+	var cycle := _sprites.anim_cycle_seconds(grh)
+	var loops := maxi(int(spell.get("loops", 0)), 1)
+	var duration := cycle * loops if cycle > 0.0 else 0.3
+
+	_active_fx.append({
+		"entity": target_id,
+		"grh": grh,
+		"offset": _sprites.fx_offset(fx_id),
+		"start": _world_time,
+		"until": _world_time + duration,
+	})
 
 
 ## Moves render one frame's worth toward target, along ONE axis at a time.
@@ -269,6 +417,10 @@ func _step_toward(render: Vector2, target: Vector2, step: float) -> Vector2:
 func _process(delta: float) -> void:
 	_world_time += delta
 	_hovered = entity_at(get_local_mouse_position()) if targeting else 0
+
+	if not _active_fx.is_empty():
+		_active_fx = _active_fx.filter(func(fx): return float(fx["until"]) > _world_time)
+
 	if _entities.is_empty():
 		return
 
@@ -428,7 +580,8 @@ func _draw() -> void:
 			_draw_layer(_layer4, first, shift, false)
 
 
-## Steps the local player right now, without waiting for the server to agree.
+## Steps (or turns) the local player right now, without waiting for the server
+## to agree, and reports what to tell it.
 ##
 ## This is what Argentum's own client does. Map_MoveTo (mPooMap.bas:132) checks
 ## the destination against the client's copy of the map and, if it is legal,
@@ -439,44 +592,103 @@ func _draw() -> void:
 ## We keep the server authoritative anyway, which the original does not — its
 ## HandleWalk has no rate limit at all and simply trusts the client, backed by a
 ## speedhack *detector*. Trusting the client is not an option in a battle
-## royale, so instead the prediction runs the same rules the server does and
-## set_entities reconciles when they disagree.
+## royale, so instead the prediction runs the same rules the server does, each
+## attempt is tagged with a sequence number, and set_entities replays whatever
+## the server has not answered yet on top of every correction.
 ##
-## Returns whether the step was taken, so the caller can skip telling the server
-## about a move that is locally impossible.
-func predict_step(dir: int) -> bool:
+## Returns the seq to hand the server, or -1 when this input needs no message
+## at all — held against a wall with the turn cooldown still running, or
+## already facing the direction being asked for mid-step. The server would
+## no-op both of those too, so nothing is bought by spending a packet on them.
+func try_step(dir: int) -> int:
 	var me: Variant = _entities.get(local_id)
 	if me == null:
-		return false
+		return -1
 
-	var now := Time.get_ticks_msec() / 1000.0
+	var now := _quantized_now()
+
 	if now < _local_step_ready_at:
-		return false
+		# Mid-step: only a turn is possible, on its own separate cooldown that
+		# mirrors the server's World.turn. Without this the client had no
+		# equivalent at all — it simply sat on the old heading until the step
+		# cooldown cleared, which is what made changing direction fast look
+		# like the character freezing mid-turn while the server had already
+		# spun to face the new way.
+		if int(me["heading"]) == dir:
+			return -1
+		if now < _local_turn_ready_at:
+			return -1
+		me["heading"] = dir
+		_local_turn_ready_at = now + _turn_cooldown_ms
+		# can_step=false: this input is a turn only, exactly like the server's
+		# own World.turn — it must never be replayed as a step later. See the
+		# can_step comment on _enqueue for why that distinction has to survive
+		# into the pending buffer instead of being re-derived at replay time.
+		return _enqueue(dir, false)
 
-	var tile: Vector2 = me["tile"]
-	var delta: Vector2 = HEADING_DELTA[dir]
-	var target: Vector2 = tile + delta
+	# Standing still must not bank credit toward a burst of fast steps, so the
+	# carry is capped at a single cooldown — mirrors the server's own cap in
+	# movePlayer. Without it the accumulation below would let a key pressed
+	# after a long pause replay every cooldown missed while idle as one burst.
+	if now - _local_step_ready_at > _move_cooldown_ms:
+		_local_step_ready_at = now
 
 	# Turning is free and immediate, exactly as the original has it: a legal
 	# step carries its own turn, and the facing is applied even when the step
 	# below is refused.
 	me["heading"] = dir
+	var result := _resolve_move(me["tile"], dir)
+	if result["stepped"]:
+		me["tile"] = result["tile"]
+		# Advances from the ready mark, not from now, so the leftover fraction
+		# of a cooldown survives from one step to the next — mirrors the
+		# server's moveReadyAt += exactly. Advancing from now instead drops
+		# that fraction on every single step, which compounds into drift; see
+		# _quantized_now for the other half of this fix, the one that mattered
+		# more — quantising now to tick boundaries in the first place.
+		_local_step_ready_at += _move_cooldown_ms
+	else:
+		_local_step_ready_at = now + _blocked_retry_ms
+	# can_step=true even on the blocked branch: the block might have been
+	# someone else standing there a moment ago, and the replay re-checks
+	# against the freshest state anyway, so there is no reason to freeze this
+	# attempt as "never a step" the way the mid-cadence turn above must be.
+	return _enqueue(dir, true)
 
+
+## Records one input so set_entities can replay it until the server acks it,
+## and hands back the seq to send alongside it.
+##
+## can_step marks whether this input is even allowed to move the predicted
+## tile when replayed — false for a mid-cadence turn, which the server's own
+## World.turn never lets move either. Without carrying this along, the replay
+## in set_entities had no way to tell a turn-only input from a step attempt
+## and re-evaluated every pending entry as "try to move here", so a direction
+## change mid-step got replayed as a phantom step forward. That phantom step
+## held until the next ack caught up and yanked it back — the stutter right
+## after changing direction that this fixes.
+func _enqueue(dir: int, can_step: bool) -> int:
+	var seq := _next_seq
+	_next_seq += 1
+	_pending.append({"seq": seq, "dir": dir, "can_step": can_step})
+	return seq
+
+
+## The one rule both try_step and the set_entities replay move by: a step
+## lands unless the destination is blocked or another character already
+## stands on it. Factored out so the two call sites cannot quietly drift apart
+## the way a second inlined copy eventually would.
+func _resolve_move(tile: Vector2, dir: int) -> Dictionary:
+	var target: Vector2 = tile + HEADING_DELTA[dir]
 	if is_blocked(int(target.x), int(target.y)):
-		return false
+		return {"tile": tile, "stepped": false}
 	# The server also refuses to walk onto another character. Checking it here
 	# keeps the prediction from confidently walking through a crowd and then
 	# being yanked back a tile at a time.
 	for id: int in _entities:
 		if id != local_id and _entities[id]["tile"] == target:
-			return false
-
-	me["tile"] = target
-	# Mirror the server's cadence rather than inventing one, so a correct
-	# prediction stays correct instead of drifting ahead of the simulation.
-	_local_step_ready_at = now + 1.0 / walk_speed
-	_desync_frames = 0
-	return true
+			return {"tile": tile, "stepped": false}
+	return {"tile": target, "stepped": true}
 
 
 ## Whether the local player is standing on a tile the map marks as being under
@@ -618,6 +830,39 @@ func _draw_character(entity: Dictionary, foot: Vector2, tint: Color) -> bool:
 	return true
 
 
+## Draws whatever spell effects are currently playing on this entity, plus the
+## meditation aura while entity["meditating"] holds — that one is continuous
+## state (F6 toggles it) rather than a one-shot cast, so it is not something
+## play_spell_fx's loops-then-expires _active_fx list can represent; it simply
+## draws for as long as the flag does.
+func _draw_fx(id: int, entity: Dictionary, foot: Vector2) -> void:
+	for fx in _active_fx:
+		if int(fx["entity"]) != id:
+			continue
+		_draw_fx_at(int(fx["grh"]), fx["offset"], foot, _world_time - float(fx["start"]))
+
+	if bool(entity.get("meditating", false)):
+		_draw_fx_at(_sprites.fx_grh(MEDITATE_FX), _sprites.fx_offset(MEDITATE_FX), foot, _world_time)
+
+
+## MEDITATE_FX is FXIDs.FXMEDITARXXGRANDE (Declares.bas) — Fxs.ini index 34, the
+## aura the source shows a level-42-and-up caster. Every character here spawns
+## at maxLevel (see server/internal/world/balance.go), past every smaller tier
+## the source's ELV switch defines, so there is only one aura this game can
+## ever show and no server-sent id is needed to pick it.
+const MEDITATE_FX := 34
+
+
+func _draw_fx_at(grh: int, offset: Vector2, foot: Vector2, anim_time: float) -> void:
+	if grh == 0:
+		return
+	var rect: Rect2 = _sprites.grh_rect(grh, anim_time)
+	if rect.size.x <= 0.0:
+		return
+	var at: Vector2 = foot + offset
+	draw_texture_rect_region(_sprites.atlas, Rect2(_anchor(at, rect.size), rect.size), rect)
+
+
 ## Places one sprite the way Draw_Grh's Center=1 does: horizontally centred on
 ## the tile and bottom-anchored to it, using **that sprite's own** size.
 ##
@@ -673,6 +918,9 @@ func _draw_entity(id: int, entity: Dictionary, origin: Vector2, font: Font) -> v
 			Rect2(foot - Vector2(side * 0.5, side), Vector2(side, side)),
 			COLOR_LOCAL if is_local else COLOR_OTHER
 		)
+
+	if _sprites.is_loaded():
+		_draw_fx(id, entity, foot)
 
 	var label := str(entity["name"])
 	if label != "":

@@ -262,49 +262,49 @@ func TestDeadPlayersCannotUseItems(t *testing.T) {
 	}
 }
 
-// The starting kit is deliberately minimal — a battle royale spawn, not the
-// "best gear for the class" loadout an earlier design used. Only newbie-tagged
-// items are eligible at all, so an objectively stronger non-newbie weapon must
-// never show up here; that is what makes finding one on the ground later feel
-// like something.
-func TestStartingKitOnlyUsesNewbieGearAndOneOfEachPotion(t *testing.T) {
+// The kit is that class's basic gear, and "basic" has a definition in the
+// data: a shop sells it. The Espada Legendaria below is the tier you cross the
+// map for, so it must not be what you wake up holding — that is what keeps
+// finding one on the ground worth something.
+func TestStartingKitTakesShopGearNotTrophies(t *testing.T) {
 	kit := computeStartingKit(map[int]Item{
-		1:  {ID: 1, Name: "Espada Legendaria", Type: ItemWeapon, MaxHit: 50}, // not newbie: must be excluded
-		2:  {ID: 2, Name: "Daga (Newbie)", Type: ItemWeapon, MaxHit: 3},
-		3:  {ID: 3, Name: "Tunica (H/E/EO) (Newbie)", Type: ItemArmor, MaxDef: 0},
-		10: {ID: 10, Name: "Poción Roja (Newbie)", Type: ItemPotion, PotionType: PotionHealth},
-		11: {ID: 11, Name: "Poción Azul (Newbie)", Type: ItemPotion, PotionType: PotionMana},
-		15: {ID: 15, Name: "Poción Negra (Newbie)", Type: ItemPotion, PotionType: PotionBlack}, // must be excluded
-		20: {ID: 20, Name: "Manzana (Newbie)", Type: ItemFood, Restores: 15},
-		21: {ID: 21, Name: "Botella (Newbie)", Type: ItemDrink, Restores: 20},
+		1: {ID: 1, Name: "Espada Legendaria", Type: ItemWeapon, MaxHit: 50},
+		2: {ID: 2, Name: "Espada Corta", Type: ItemWeapon, MaxHit: 3, Sold: true},
+		3: {ID: 3, Name: "Tunica", Type: ItemArmor, MaxDef: 2, Sold: true},
+		4: {ID: 4, Name: "Armadura de Dragon", Type: ItemArmor, MaxDef: 65},
+		10: {ID: 10, Name: "Pocion Roja", Type: ItemPotion, PotionType: PotionHealth,
+			MinModificador: 30, MaxModificador: 30, Sold: true},
+		15: {ID: 15, Name: "Pocion Negra", Type: ItemPotion, PotionType: PotionBlack, Sold: true},
+		20: {ID: 20, Name: "Manzana", Type: ItemFood, Restores: 15, Sold: true},
+		21: {ID: 21, Name: "Botella", Type: ItemDrink, Restores: 20, Sold: true},
 	}, Guerrero, Humano)
 
 	byItem := map[int]bool{}
 	for _, slot := range kit.slots {
 		byItem[slot.ItemID] = true
-		if slot.ItemID == 15 {
-			t.Error("the black potion ended up in the spawn loadout")
-		}
 	}
-	if byItem[1] {
-		t.Error("gave a non-newbie weapon at spawn; battle royale gear should start minimal")
+	if byItem[15] {
+		t.Error("the black potion ended up in the spawn loadout")
 	}
-	if !byItem[2] || !byItem[3] || !byItem[10] || !byItem[11] || !byItem[20] || !byItem[21] {
-		t.Errorf("missing an expected newbie slot: %+v", kit.slots)
+	if byItem[1] || byItem[4] {
+		t.Error("spawned wearing gear no shop sells; that tier belongs on the floor")
+	}
+	if !byItem[2] || !byItem[3] || !byItem[10] || !byItem[20] || !byItem[21] {
+		t.Errorf("missing an expected kit slot: %+v", kit.slots)
 	}
 }
 
-// The point of computing a kit per class: a Mago should never spawn holding a
-// weapon Mago is barred from, even among newbie-tier items. classForbidsUse is
-// exactly EquiparInvItem's own check, so this is really asserting the kit
-// picker respects it — and that among the newbie weapons Mago may use, it
-// picks the class-flavored staff over the universal dagger (see loadout.go's
-// comment on why forbidden-class-count is the tell, not StaffPower).
-func TestStartingKitSkipsForbiddenWeaponsAndPrefersTheClassFlavoredOne(t *testing.T) {
+// The point of computing a kit per class: a Mago never spawns holding a weapon
+// Mago is barred from, and among what is left it takes the one built for the
+// fewest classes rather than the one with the biggest number. That ordering is
+// the whole reason a Cazador ends up with a bow instead of an axe — see
+// TestHunterGetsBowAndArrows, which pins the same rule against the real data.
+func TestStartingKitPrefersTheClassSpecificWeapon(t *testing.T) {
 	kit := computeStartingKit(map[int]Item{
-		1: {ID: 1, Name: "Espada (Newbie)", Type: ItemWeapon, MaxHit: 10, ForbiddenClasses: []string{"MAGO"}},
-		2: {ID: 2, Name: "Daga (Newbie)", Type: ItemWeapon, MaxHit: 3},
-		3: {ID: 3, Name: "Baston de Mago (Newbie)", Type: ItemWeapon, MaxHit: 1,
+		1: {ID: 1, Name: "Espada", Type: ItemWeapon, MaxHit: 10, Sold: true,
+			ForbiddenClasses: []string{"MAGO"}},
+		2: {ID: 2, Name: "Daga", Type: ItemWeapon, MaxHit: 3, Sold: true},
+		3: {ID: 3, Name: "Baston de Mago", Type: ItemWeapon, MaxHit: 1, Sold: true,
 			ForbiddenClasses: []string{"GUERRERO", "CAZADOR", "PALADIN"}},
 	}, Mago, Humano)
 
@@ -316,9 +316,9 @@ func TestStartingKitSkipsForbiddenWeaponsAndPrefersTheClassFlavoredOne(t *testin
 		t.Error("gave a Mago a weapon explicitly forbidden to Mago")
 	}
 	if byItem[2] {
-		t.Error("fell back to the universal dagger despite a class-flavored staff being allowed")
+		t.Error("fell back to the universal dagger despite a class-specific staff being allowed")
 	}
 	if !byItem[3] {
-		t.Error("did not pick the staff, the only class-flavored weapon Mago may use")
+		t.Error("did not pick the staff, the weapon built for the fewest classes Mago is in")
 	}
 }

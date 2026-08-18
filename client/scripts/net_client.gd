@@ -33,20 +33,34 @@ func connect_to_server(url: String, player_name: String, class_id: int, race_id:
 		push_error("connect_to_url(%s) failed: %d" % [url, err])
 
 
-func send_move(dir: int) -> void:
-	_send("move", {"dir": dir})
+## Leaves the match on purpose, as opposed to crashing out of it. The close
+## frame is written during the poll, so one is pumped here: quitting the
+## process right after this call would otherwise drop it and leave the server
+## to notice the dead socket on its own read. It notices either way — this is
+## the difference between saying goodbye and hanging up.
+func disconnect_from_server() -> void:
+	if _socket.get_ready_state() == WebSocketPeer.STATE_OPEN:
+		_socket.close(1000, "salir")
+		_socket.poll()
 
 
-## Argentum overloads one "use" action for both equip-toggling and consuming —
-## the item's own type decides which happens server-side, never the client.
-func send_use(slot: int) -> void:
-	_send("use", {"slot": slot})
+## seq is the sender's own monotonic counter (see WorldView._enqueue) — the
+## server echoes the highest one it has answered in every snapshot's AckSeq, so
+## prediction can reconcile against exactly what is still unconfirmed instead
+## of guessing from position alone. See WorldView.set_entities.
+func send_move(dir: int, seq: int) -> void:
+	_send("move", {"dir": dir, "seq": seq})
 
 
 ## Ocultarse: no payload, no target — it's a self-only skill action gated
 ## entirely server-side (cooldown, not-already-hidden).
 func send_hide() -> void:
 	_send("hide", {})
+
+
+## Meditar: no payload — toggles server-side, F6 in the original.
+func send_meditate() -> void:
+	_send("meditate", {})
 
 
 ## Agarrar: no payload — always takes from the tile the player stands on.
@@ -60,10 +74,12 @@ func send_drop(slot: int) -> void:
 
 
 ## Reorders two bag positions — the inventory window's own drag-and-drop.
-## Acting on a bag slot. action is "" for the original's overloaded click (what
-## a double-click sends, where the item's own type picks the branch), "equip"
-## for E, or "use" for U — the server refuses an action that does not match the
-## slot rather than silently doing the other one.
+## Acting on a bag slot. action is "equip" (E, or the right-click menu) or
+## "use" (U, or a double-click) — the server refuses an action that does not
+## match the slot rather than silently doing the other one, which is the whole
+## reason the client says which one it meant. Argentum's own overloaded click
+## is still `""` in the protocol and the server still honours it; nothing here
+## sends it.
 func send_use_action(slot: int, action: String) -> void:
 	_send("use", {"slot": slot, "a": action})
 

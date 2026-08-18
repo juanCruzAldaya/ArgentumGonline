@@ -35,6 +35,11 @@ type Player struct {
 	// only sense the original allows: as a ghost. See kill().
 	Dead bool
 
+	// respawnAt is the tick a dead player comes back on, or 0 for never —
+	// which is the default, since elimination is the genre's rule. Only a
+	// server started with -respawn sets it. See respawn.go.
+	respawnAt uint64
+
 	// Kills is how many players this one has eliminated. Argentum has no such
 	// counter — it has experience, which this game deleted along with levelling
 	// — so this is the battle royale's own replacement for "how am I doing",
@@ -62,6 +67,12 @@ type Player struct {
 	StrengthDelta int
 	StrengthUntil uint64
 
+	// Meditating is Argentum's F6: stand still to trickle mana back. See
+	// meditate.go. meditateStartTick anchors the 2s "concentrating" ramp before
+	// the regen actually begins.
+	Meditating        bool
+	meditateStartTick uint64
+
 	lastAttackTick uint64
 	lastCastTick   uint64
 	lastUseTick    uint64
@@ -82,6 +93,14 @@ type Player struct {
 	// turnReadyAt paces turning in place, which the source meters separately
 	// from walking. See World.turn.
 	turnReadyAt uint64
+
+	// lastMoveSeq is the highest protocol.Move.Seq received from this player,
+	// echoed back as Snapshot.AckSeq so their own client knows exactly which
+	// predicted inputs are now confirmed. It advances on every well-formed Move
+	// regardless of whether the step itself was accepted — a rejected step was
+	// still answered, and the client needs to know that too so it stops
+	// replaying it.
+	lastMoveSeq uint32
 
 	// consecutiveDrops counts snapshots the client failed to accept in a row.
 	// A client that is merely stuttering recovers; one that never drains gets

@@ -2,11 +2,13 @@
 ; top with the minimap beside it, the game viewport sits below, and the
 ; character panel fills the right edge.
 ;
-; The side panel is now a single baked background image (panel_bg.png) with the
+; The side panel is a single baked background image (panel_bg.png) with the
 ; live controls positioned on top of it, landing in the holes the artwork
-; already draws. Every offset below was measured off the source PNG
-; (1426x2612) and scaled by 525/1426 = 0.3682 — they are not eyeballed, and
-; they only stay correct as long as the image and the 525x962 size agree.
+; already draws. Every offset below was measured by connected-component
+; labelling **on the baked 525x962 PNG itself**, not on a larger source that
+; then needed scaling — so there is no conversion factor left to get wrong,
+; and they stay correct exactly as long as that image and this size agree.
+; Re-measuring after an art change is the recipe in OPERACION.md §3.
 ;
 ;   0                                838      1088            1613
 ;   +----------------------------------+--------+---------------+  0
@@ -20,7 +22,7 @@
 ;
 ; Cosmetics still live in hud.gd; this file holds structure and position only.
 
-[gd_scene load_steps=7 format=3]
+[gd_scene load_steps=9 format=3]
 
 [ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
 [ext_resource type="Script" path="res://scripts/net_client.gd" id="2_net"]
@@ -28,6 +30,8 @@
 [ext_resource type="Script" path="res://scripts/hud.gd" id="4_hud"]
 [ext_resource type="Script" path="res://scripts/minimap.gd" id="5_minimap"]
 [ext_resource type="Texture2D" path="res://assets/ao/ui/panel_bg.png" id="6_panelbg"]
+[ext_resource type="Texture2D" path="res://assets/ao/ui/footer_bg.png" id="7_footerbg"]
+[ext_resource type="Texture2D" path="res://assets/ao/ui/scroll_rail.png" id="8_scrollrail"]
 
 [node name="Main" type="Node2D"]
 script = ExtResource("1_main")
@@ -109,109 +113,131 @@ offset_bottom = 962.0
 texture = ExtResource("6_panelbg")
 mouse_filter = 2
 
+[node name="SourceLink" type="Label" parent="UI/Screen/SidePanel"]
+offset_left = 38.0
+offset_top = 41.0
+offset_right = 258.0
+offset_bottom = 71.0
+vertical_alignment = 1
+mouse_filter = 2
+
+[node name="QuitButton" type="Button" parent="UI/Screen/SidePanel"]
+offset_left = 263.0
+offset_top = 41.0
+offset_right = 388.0
+offset_bottom = 71.0
+
+[node name="CloseButton" type="Button" parent="UI/Screen/SidePanel"]
+offset_left = 399.0
+offset_top = 41.0
+offset_right = 502.0
+offset_bottom = 71.0
+
 [node name="CharName" type="Label" parent="UI/Screen/SidePanel"]
-offset_left = 106.0
-offset_top = 96.0
-offset_right = 418.0
-offset_bottom = 124.0
+offset_left = 46.0
+offset_top = 104.0
+offset_right = 492.0
+offset_bottom = 140.0
 horizontal_alignment = 1
 vertical_alignment = 1
 mouse_filter = 2
 
 [node name="CharClass" type="Label" parent="UI/Screen/SidePanel"]
-offset_left = 106.0
-offset_top = 122.0
-offset_right = 418.0
-offset_bottom = 142.0
+offset_left = 46.0
+offset_top = 140.0
+offset_right = 492.0
+offset_bottom = 164.0
 horizontal_alignment = 1
 vertical_alignment = 1
 mouse_filter = 2
 
 [node name="TabInv" type="Button" parent="UI/Screen/SidePanel"]
 offset_left = 30.0
-offset_top = 189.0
-offset_right = 182.0
-offset_bottom = 213.0
+offset_top = 185.0
+offset_right = 258.0
+offset_bottom = 218.0
 
 [node name="TabSpells" type="Button" parent="UI/Screen/SidePanel"]
-offset_left = 186.0
-offset_top = 189.0
-offset_right = 338.0
-offset_bottom = 213.0
-
-[node name="TabStats" type="Button" parent="UI/Screen/SidePanel"]
-offset_left = 342.0
-offset_top = 189.0
+offset_left = 266.0
+offset_top = 185.0
 offset_right = 494.0
-offset_bottom = 213.0
+offset_bottom = 218.0
 
 [node name="InvGrid" type="GridContainer" parent="UI/Screen/SidePanel"]
-offset_left = 85.0
+offset_left = 84.0
 offset_top = 278.0
-offset_right = 439.0
-offset_bottom = 540.0
+offset_right = 454.0
+offset_bottom = 580.0
 columns = 6
 mouse_filter = 2
 
 [node name="SpellList" type="ScrollContainer" parent="UI/Screen/SidePanel"]
-offset_left = 85.0
+vertical_scroll_mode = 3
+offset_left = 84.0
 offset_top = 278.0
-offset_right = 439.0
-offset_bottom = 540.0
+offset_right = 426.0
+offset_bottom = 556.0
 horizontal_scroll_mode = 0
 
 [node name="SpellGrid" type="GridContainer" parent="UI/Screen/SidePanel/SpellList"]
 columns = 1
 
-[node name="SpellInfo" type="Label" parent="UI/Screen/SidePanel"]
-offset_left = 85.0
-offset_top = 544.0
-offset_right = 439.0
-offset_bottom = 568.0
+[node name="ScrollRail" type="TextureRect" parent="UI/Screen/SidePanel"]
+offset_left = 429.0
+offset_top = 277.0
+offset_right = 457.0
+offset_bottom = 583.0
+texture = ExtResource("8_scrollrail")
 mouse_filter = 2
 
-[node name="StatsPanel" type="VBoxContainer" parent="UI/Screen/SidePanel"]
-offset_left = 85.0
-offset_top = 278.0
-offset_right = 439.0
-offset_bottom = 568.0
+[node name="SpellScroll" type="VScrollBar" parent="UI/Screen/SidePanel"]
+offset_left = 429.0
+offset_top = 280.0
+offset_right = 457.0
+offset_bottom = 580.0
+
+[node name="SpellInfo" type="Label" parent="UI/Screen/SidePanel"]
+offset_left = 84.0
+offset_top = 560.0
+offset_right = 426.0
+offset_bottom = 580.0
 mouse_filter = 2
 
 [node name="CastButton" type="Button" parent="UI/Screen/SidePanel"]
-offset_left = 93.0
-offset_top = 594.0
-offset_right = 245.0
-offset_bottom = 621.0
+offset_left = 87.0
+offset_top = 596.0
+offset_right = 256.0
+offset_bottom = 635.0
 
 [node name="InfoButton" type="Button" parent="UI/Screen/SidePanel"]
-offset_left = 283.0
-offset_top = 594.0
-offset_right = 433.0
-offset_bottom = 621.0
+offset_left = 280.0
+offset_top = 596.0
+offset_right = 451.0
+offset_bottom = 635.0
 
-[node name="PotionRed" type="Label" parent="UI/Screen/SidePanel"]
-offset_left = 87.0
-offset_top = 673.0
-offset_right = 131.0
-offset_bottom = 700.0
+[node name="AgilityBox" type="Label" parent="UI/Screen/SidePanel"]
+offset_left = 90.0
+offset_top = 682.0
+offset_right = 135.0
+offset_bottom = 708.0
 horizontal_alignment = 1
 vertical_alignment = 1
 mouse_filter = 2
 
-[node name="PotionBlue" type="Label" parent="UI/Screen/SidePanel"]
-offset_left = 193.0
-offset_top = 675.0
-offset_right = 237.0
-offset_bottom = 700.0
+[node name="StrengthBox" type="Label" parent="UI/Screen/SidePanel"]
+offset_left = 199.0
+offset_top = 682.0
+offset_right = 244.0
+offset_bottom = 708.0
 horizontal_alignment = 1
 vertical_alignment = 1
 mouse_filter = 2
 
-[node name="AliveBox" type="Label" parent="UI/Screen/SidePanel"]
-offset_left = 376.0
-offset_top = 675.0
-offset_right = 489.0
-offset_bottom = 700.0
+[node name="KillsBox" type="Label" parent="UI/Screen/SidePanel"]
+offset_left = 385.0
+offset_top = 681.0
+offset_right = 501.0
+offset_bottom = 708.0
 horizontal_alignment = 1
 vertical_alignment = 1
 mouse_filter = 2
@@ -227,10 +253,57 @@ offset_bottom = 962.0
 mouse_filter = 2
 
 [node name="Coords" type="Label" parent="UI/Screen/SidePanel"]
-offset_left = 236.0
-offset_top = 919.0
-offset_right = 478.0
+offset_left = 246.0
+offset_top = 931.0
+offset_right = 475.0
 offset_bottom = 962.0
+horizontal_alignment = 1
+vertical_alignment = 1
+mouse_filter = 2
+
+[node name="Footer" type="Control" parent="UI/Screen"]
+offset_top = 925.0
+offset_right = 1088.0
+offset_bottom = 962.0
+
+[node name="Bg" type="TextureRect" parent="UI/Screen/Footer"]
+offset_right = 1088.0
+offset_bottom = 37.0
+texture = ExtResource("7_footerbg")
+mouse_filter = 2
+
+[node name="Helmet" type="Label" parent="UI/Screen/Footer"]
+offset_left = 123.0
+offset_top = 4.0
+offset_right = 187.0
+offset_bottom = 33.0
+horizontal_alignment = 1
+vertical_alignment = 1
+mouse_filter = 2
+
+[node name="Armor" type="Label" parent="UI/Screen/Footer"]
+offset_left = 393.0
+offset_top = 4.0
+offset_right = 457.0
+offset_bottom = 33.0
+horizontal_alignment = 1
+vertical_alignment = 1
+mouse_filter = 2
+
+[node name="Shield" type="Label" parent="UI/Screen/Footer"]
+offset_left = 663.0
+offset_top = 4.0
+offset_right = 727.0
+offset_bottom = 33.0
+horizontal_alignment = 1
+vertical_alignment = 1
+mouse_filter = 2
+
+[node name="Weapon" type="Label" parent="UI/Screen/Footer"]
+offset_left = 933.0
+offset_top = 4.0
+offset_right = 997.0
+offset_bottom = 33.0
 horizontal_alignment = 1
 vertical_alignment = 1
 mouse_filter = 2

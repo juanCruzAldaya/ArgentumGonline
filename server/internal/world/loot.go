@@ -34,7 +34,7 @@ func computeLootTable(items map[int]Item) []lootEntry {
 
 	var table []lootEntry
 	for _, item := range items {
-		if item.PotionType == PotionBlack || isNewbie(item) {
+		if item.PotionType == PotionBlack || item.Newbie {
 			continue
 		}
 		var power int
@@ -52,31 +52,22 @@ func computeLootTable(items map[int]Item) []lootEntry {
 	return table
 }
 
-func isNewbie(item Item) bool {
-	return len(item.Name) >= len(newbieTag) &&
-		(func() bool {
-			for i := 0; i+len(newbieTag) <= len(item.Name); i++ {
-				if item.Name[i:i+len(newbieTag)] == newbieTag {
-					return true
-				}
-			}
-			return false
-		})()
-}
-
 // potionLootTable is every potion worth finding on the ground, flat-weighted.
 //
-// It is a separate table from computeLootTable on purpose. That one weights by
-// power so a warhammer stays a lucky find, and it excludes newbie-tier items
-// because everyone already spawns holding them. Neither rule applies to
-// potions: they are the thing you should always be able to top up on, so a
-// weak newbie potion and a full-strength one are equally welcome and both
-// belong on the map. Only the black potion is out, for the reason
-// computeLootTable already gives.
+// It is a separate table from computeLootTable on purpose: that one weights by
+// power so a warhammer stays a lucky find, while potions are the thing you
+// should always be able to top up on, so every kind is equally likely.
+//
+// What both tables share is that the newbie tier does not exist in this game.
+// It is not a starting point when everyone spawns at the cap — it is just a
+// worse copy of an item already in the world, and the worse copy is invisible:
+// two red potions with the same icon and the same name that heal 30 and 10.
+// Only the black potion is out beyond that, for the reason computeLootTable
+// already gives.
 func potionLootTable(items map[int]Item) []lootEntry {
 	var table []lootEntry
 	for _, item := range items {
-		if item.Type != ItemPotion || item.PotionType == PotionBlack {
+		if item.Type != ItemPotion || item.PotionType == PotionBlack || item.Newbie {
 			continue
 		}
 		table = append(table, lootEntry{Item: item, Weight: 1})

@@ -28,6 +28,15 @@ personajes caminarían mirando para el lado equivocado.
 puro es transparente. Hay que convertirlo explícitamente al empaquetar el atlas,
 o cada personaje queda con un recuadro negro alrededor.
 
+**`FXgrh` en `Hechizos.dat` no es un grh.** Es el índice 1-50 de `Fxs.ini`, que
+recién ahí apunta al grh real (`Animacion`). Se confirmó mirando los valores:
+`FXgrh=2`, `FXgrh=15`, `FXgrh=33` — números demasiado chicos para ser grhs de
+`Graficos.ini`, que arrancan en los miles. Y el efecto en sí no es un
+proyectil: `SendSpellEffects` (`modHechizos.bas`) manda el `CreateFX` con el
+`CharIndex` del **objetivo**, nunca del lanzador — el cliente original nunca
+anima nada viajando por la pantalla, solo un efecto que aparece anclado a
+donde el hechizo pegó.
+
 **Lección:** cuando el formato no está documentado, el contenido manda sobre las
 etiquetas. Los agrupamientos y los tamaños de registro son evidencia; los
 comentarios de un archivo de 2002 son una hipótesis.
@@ -176,14 +185,35 @@ mapa de Ullathorpe"*. No era un bug — había arrancado el servidor sin
 un arena vacía y no tiene tabla de objetos ni de hechizos.
 
 Es un fallo de diseño de CLI más que un bug: los defaults llevan a un estado que
-*parece* roto. El comando correcto es siempre:
+*parece* roto. Volvió a morder una segunda vez, en producción, con el mismo
+mecanismo — el servidor levantó sin datos y contestó 200 al health check
+mientras lo hacía, así que nada en el deploy dijo que estaba vacío.
 
-```powershell
-go run ./cmd/server -map-file maps/map1.json -items-file maps/items.json -spells-file maps/spells.json
-```
+**Arreglado.** Tres cambios chicos en `cmd/server/main.go`, cada uno tapando un
+agujero distinto del mismo camino:
 
-Vale considerar que esos flags apunten por default a los archivos que ya están en
-`server/maps/`, o que el servidor avise fuerte al arrancar sin ellos.
+- **Los defaults apuntan a los archivos que ya existen.** `-map-file`,
+  `-items-file` y `-spells-file` valen `maps/map1.json`, `maps/items.json` y
+  `maps/spells.json`, así que el comando correcto pasó a ser `go run
+  ./cmd/server` a secas desde `server/`. El camino corto, que es el que
+  cualquiera va a tipear, es ahora el camino bueno.
+- **Faltar un archivo es un error duro, no una degradación silenciosa.** Antes
+  el flag vacío significaba "arrancá sin eso"; ahora la arena generada hay que
+  pedirla explícitamente (`-map-file=""`), y un archivo que no está corta el
+  arranque diciendo cuál falta y cómo resolverlo. Como la ruta default es
+  relativa, también se prueba `maps/` al lado del ejecutable antes de fallar:
+  un binario buildeado que vive junto a su propia carpeta de datos es tan
+  legítimo como correr desde `server/`.
+- **`/healthz` dejó de contestar `ok` a secas.** Ahora el cuerpo es `ok
+  map="Ciudad de Ullathorpe" items=496 spells=50`, o `degradado: sin items,
+  sin hechizos` cuando el mundo está vacío. El código sigue siendo 200 — un
+  503 haría que Fly reiniciara en loop a alguien que pidió la arena a
+  propósito — pero un `curl` ahora distingue los dos casos que el deploy roto
+  no supo distinguir.
+
+**Lección:** el default de un CLI es una decisión de diseño, no un detalle de
+implementación. Y un health check que solo responde "el proceso está vivo"
+mide lo que es fácil de medir, no lo que hace falta saber.
 
 ## 9. Fricción operativa
 
@@ -222,6 +252,254 @@ copiar el balance incluye copiar sus rarezas. En cambio "paralizado no puede
 ocultarse" **sí** es una decisión propia y está marcada como tal — la diferencia
 entre lo sourceado y lo inventado está documentada caso por caso.
 
+## 11. El movimiento con input rápido: tres bugs apilados, no uno
+
+El reporte fue "cuando aprieto rápido las teclas se confunde y mezcla cosas, o
+lo tira para atrás de manera extraña", con la sospecha puesta en concurrencia
+del lado del servidor — background de sistemas/redes, semáforos, esas cosas. No
+era eso: el servidor ya es una sola goroutine sin mutex (`### Una sola
+goroutine, cero mutexes` en OPERACION.md), y `TestSpammingTurnsDoesNotOutrunTheCadence`
+prueba justamente que 60 comandos en un solo tick compran un único paso. El
+problema entero estaba en la predicción del cliente, y resultó ser cuatro bugs
+distintos, cada uno tapando al siguiente hasta que el anterior se arreglaba.
+
+**Bug 1 — reconciliación por voto de posiciones absolutas.** La versión
+original comparaba la posición predicha contra cada snapshot entrante y forzaba
+la del servidor tras 4 desacuerdos seguidos (`DESYNC_SNAPSHOTS`). Bajo input
+sostenido la posición predicha está *siempre* uno o dos pasos por delante de la
+última confirmada — no es una discrepancia, es cómo funciona la predicción —
+así que el contador se disparaba con el jugador caminando normal y forzaba un
+salto hacia atrás cada ~200 ms. Arreglo: el protocolo ganó un número de
+secuencia por `Move` (`protocol.Move.Seq`) que el servidor devuelve como
+`Snapshot.AckSeq`; el cliente guarda un buffer de inputs no confirmados y, en
+cada snapshot, descarta lo ya confirmado y vuelve a aplicar (replay) lo que
+sigue en tránsito sobre la posición fresca del servidor. Es el patrón estándar
+de client-side prediction con reconciliación por secuencia, no por voto.
+
+**Bug 2 — el cooldown del cliente reseteaba en vez de acumular.**
+`_local_step_ready_at = now + intervalo` (reset) en vez de `+= intervalo`
+(acumular, que es lo que el servidor sí hace con `moveReadyAt`). Cada frame
+tiene jitter de detección — nunca cae exactamente en el instante ideal — y
+resetear desde ese instante tardío en cada paso hace que el retraso se sume
+paso a paso. Sostener una tecla unos segundos alcanzaba para que el cliente
+quedara desfasado del servidor, y algunos pasos le llegaban todavía en
+cooldown y eran rechazados (solo giro, no movimiento) — el "frena-sigue" bajo
+tecla sostenida.
+
+**Bug 3 — el replay no distinguía un giro de un paso.** Cuando un cambio de
+dirección llega a mitad de cadencia, el cliente lo encola como "solo giro"
+(igual que `World.turn` del lado servidor, que nunca mueve). Pero el replay
+del Bug 1 trataba *toda* entrada del buffer igual, llamando a la misma función
+de resolución de movimiento — así que ese giro se reproducía como si hubiera
+avanzado un tile. Cuando el ack real llegaba (confirmando que el servidor solo
+giró), el cliente corregía de golpe: el frenón ocurría específicamente en los
+instantes posteriores a cambiar de dirección, que fue exactamente la pista que
+dio el usuario para encontrarlo ("sucede los primeros microsegundos cuando
+cambiás de dirección"). Arreglo: cada entrada del buffer lleva un flag
+`can_step`; el replay solo mueve el tile cuando es `true`.
+
+**Bug 4 — reloj continuo contra reloj discreto.** Con los tres bugs de arriba
+arreglados, el "frena-sigue" seguía pasando. Instrumentar ambos lados con
+logging temporal (`[try_step]`/`[reconcile]` en el cliente, un log de cada
+`move` con seq/tick/dir/moved en el servidor) y cruzar los mismos `seq` entre
+cliente y servidor de una sesión real del usuario — no de teclado simulado —
+mostró rechazos sistemáticos, no ocasionales. La causa: el cooldown real
+(222.2 ms) no es múltiplo del tick del servidor (50 ms a 20 Hz), así que el
+servidor alterna pasos de 250 ms y 200 ms para promediar 222.2 — está
+documentado en el propio comentario de `moveCooldownMilliticks`. El cliente
+predecía con un intervalo *continuo* fijo de 222.2 ms, que cae sistemáticamente
+antes de que termine el ciclo largo del servidor — no es drift, es
+estructural, pasa desde el primer paso. Arreglo: el cliente cuantiza su reloj
+a fronteras de tick (la misma aritmética entera que `moveReadyAt`) y calibra la
+fase contra el campo `Tick` que ya viaja en cada `Snapshot` — sin eso, tener el
+mismo *tamaño* de paso no alcanza si no caen en los mismos *instantes*.
+
+**Lección:** un síntoma de "input rápido rompe todo" en un juego con
+predicción de cliente casi nunca es concurrencia — es la reconciliación. Y
+cuando arreglar una causa no hace desaparecer el síntoma, no es
+necesariamente la señal de que el fix estaba mal: puede haber más de una causa
+apilada, cada una tapada por la anterior hasta que se resuelve. La que más
+costó encontrar (Bug 4) no salió de leer código con más cuidado, sino de
+instrumentar ambos lados y cruzar el mismo número de secuencia — y la pista
+que apuntó ahí vino de jugar la sesión real, no de simular teclado.
+
+## 12. El atlas se pasó del límite de textura de la GPU
+
+Al empaquetar las 50 animaciones de `Fxs.ini` en el atlas (para los gráficos de
+hechizos y de meditar), el juego entero se rompió visualmente — no solo los
+FX nuevos. El reporte del usuario fue literal: *"se rompió todo"*, con una
+captura mostrando filas de armaduras repetidas donde debería haber piso y
+paredes.
+
+**Causa.** El empaquetador de `tools/aoconv/bundle.go` es un shelf-packer: junta
+todos los frames necesarios, los ordena por altura y apila filas de `atlasWidth`
+píxeles de ancho. Sumar 50 animaciones de efectos (explosiones, auras) —
+sensiblemente más grandes en total que items o cuerpos individuales — empujó la
+altura de 12850px a **19168px** con el ancho fijo de 1024 que ya tenía el
+proyecto. `GL_MAX_TEXTURE_SIZE` en la gran mayoría de GPUs es 16384. Godot **no
+tira error** al importar una textura más grande que eso: la muestrea mal en
+silencio, así que cada sprite del juego —no solo los FX recién agregados—
+sale con las coordenadas UV corridas.
+
+**Cómo se encontró.** Comparando el header PNG (bytes 16-23, ancho/alto
+big-endian) del `atlas.png` viejo (en git) contra el nuevo:
+
+```powershell
+git show HEAD:client/assets/ao/atlas.png > old.png
+xxd -s 16 -l 8 old.png              # ancho/alto viejo: 1024 x 12850
+xxd -s 16 -l 8 client/assets/ao/atlas.png   # ancho/alto nuevo: 1024 x 19168
+```
+
+19168 > 16384 confirmó la hipótesis sin necesidad de instrumentar Godot ni
+adivinar por prueba y error.
+
+**Arreglo.** Subir `atlasWidth` de 1024 a 2048 en `bundle.go`: al doble de
+ancho, la misma cantidad de píxeles arma una imagen de 9516px de alto, bien
+lejos del límite. Regenerar (`go run -C tools/aoconv .` con los mismos flags de
+siempre) y reimportar (`godot --headless --path client --import`).
+
+**Lección:** un fallo que "rompe todo, no solo lo que tocaste" en un pipeline
+de assets empaquetados es casi siempre un límite de tamaño silencioso —
+textura, buffer, atlas — no un bug de lógica en lo nuevo. Godot no avisa
+cuando lo cruza; hay que medir el archivo a mano.
+
+## 13. La pantalla se dibujaba en un rectángulo chico en la esquina
+
+Al reconstruir la pantalla de login/creación de personaje (`character_picker.gd`,
+arte real en `login_bg.png` en vez de `StyleBoxFlat`, mismo criterio que §2)
+apareció un bug de renderizado: la ventana del cliente dibujaba su contenido en
+un rectángulo chico pegado a la esquina superior izquierda, bastante menor al
+tamaño real de la ventana, y el resto quedaba de un gris liso que no era ni
+`COLOR_BG` (un marrón casi negro) ni un letterbox negro.
+
+La primera sesión lo persiguió como un bug de la ventana nativa de Windows y no
+llegó a nada. La segunda lo cerró midiendo en vez de conjeturando, y el
+resultado fue que **no tenía nada que ver con la ventana**: era una línea del
+propio picker.
+
+### Lo que se descartó, cada cosa con una medición
+
+- **El gris no era de Windows.** Es RGB(77, 77, 77), o sea `Color(0.3, 0.3,
+  0.3)`: el *default clear color* de Godot. Ese solo dato reencuadra todo el
+  problema — si el relleno es el color con el que el engine limpia el
+  framebuffer, entonces Godot **sí** está pintando la ventana entera, y lo que
+  no cubre nada es la escena. Un cuentagotas sobre la captura hubiera ahorrado
+  la primera sesión completa.
+- **No era DPI.** El chequeo original con `System.Drawing.Graphics` no valía:
+  en un proceso que no es DPI-aware siempre devuelve 96, esté Windows al 100% o
+  al 150%. Rehecho con `SetProcessDPIAware()` + `GetDeviceCaps(LOGPIXELSX)`:
+  96 DPI reales, 1920x1080, `Win8DpiScaling=0`. La conclusión era correcta, el
+  método no.
+- **No era la ventana.** `DisplayServer` reportaba todo bien: `window_get_size`
+  1613x962, seguía el maximizar hasta 1920x1009, `screen_get_scale` 1.0, y el
+  `final_transform` del stretch se recalculaba correcto (1.048 con offset 115
+  maximizado).
+- **No era el driver ni OpenGL.** El mismo cliente con `gl_compatibility`, con
+  `--rendering-method forward_plus` (Vulkan) y con `--rendering-driver
+  opengl3_angle`: cobertura pintada idéntica, 10.4% en los tres.
+- **No era el present ni el swapchain.** Capturar la textura del viewport
+  *desde adentro del engine* (`get_viewport().get_texture().get_image()`) da la
+  misma imagen rota. Si el render interno ya sale mal, la ventana no participa.
+
+### La causa
+
+`character_picker.gd`, dentro de `_ready()`:
+
+```gdscript
+set_anchors_preset(Control.PRESET_FULL_RECT)
+```
+
+El segundo parámetro de `set_anchors_preset` es `keep_offsets`, y **su default
+es `true`**. Cuando `_ready()` corre, el nodo ya está en el árbol y mide 0x0.
+Godot entonces preserva ese rect: pone los anchors en pantalla completa y
+compensa los offsets para que el tamaño no cambie. Volcado en runtime:
+
+```
+@Control@127 [Control] size=(0,0) anchors=0,0,1,1 offsets=0,0,-1613,-962
+```
+
+El picker quedaba de 0x0 para siempre. Lo correcto es
+`set_anchors_and_offsets_preset()`, que resetea los offsets junto con los
+anchors — o pasar `keep_offsets` en `false` explícitamente.
+
+**Los números cierran exactos.** El panel usa `PRESET_CENTER` con offsets de
+±855/2 y ±756/2 dentro de un padre de 0x0, así que quedaba centrado en el
+origen (0,0) y solo entraba en pantalla el cuadrante positivo: 427.5 x 378. El
+bloque pintado medido sobre la captura era de **428 x 378**. Y el `ColorRect` de
+fondo también era 0x0, que es por qué no aparecía `COLOR_BG` por ningún lado.
+
+**Por qué los demás controles del mismo archivo sí andaban:** `bg`, `panel` y
+`art` llaman a `set_anchors_preset` **antes** del `add_child`, cuando el área
+del padre todavía es 0, así que los offsets quedan en 0 y después heredan bien.
+La misma llamada es inocua antes de `add_child` y destructiva después. Los usos
+en `hud.gd` son todos pre-`add_child`, por eso el HUD nunca mostró el problema.
+
+### Por qué el `git stash` mintió
+
+El paso que más confianza dio en la primera sesión fue stashear los cambios del
+día y probar la pantalla vieja tal cual estaba en HEAD: **mismo bug, idéntico**.
+De ahí salió la conclusión de que el problema era del entorno.
+
+Era exactamente al revés. HEAD tenía la misma línea, en su línea 33:
+`set_anchors_preset(Control.PRESET_FULL_RECT)`. Las dos versiones del picker
+compartían el bug porque compartían el idiom. El stash reprodujo la causa, no la
+descartó.
+
+**Lección:** volver a HEAD solo exonera al código nuevo si lo que cambió es *el
+patrón*, no el archivo. Cuando las dos versiones las escribió la misma persona
+con la misma costumbre, "también pasa en HEAD" no significa "no es el código",
+significa "es más viejo que hoy" — que es justamente lo que Wachín ya sabía
+("nunca vi esta ventana renderizar bien") y se leyó como evidencia a favor del
+entorno.
+
+**Y la lección barata:** antes de teorizar sobre drivers, medí el color del
+vacío. Un `GetPixel` sobre la zona que "no se pinta" distingue en un solo paso
+entre una ventana sin pintar (gris del sistema), un letterbox (negro) y una
+escena que no cubre nada (el clear color del engine). Eran tres investigaciones
+completamente distintas y el píxel decía cuál.
+
+La receta de diagnóstico completa — capturar la ventana, medir el bloque
+pintado, comparar backends, volcar el árbol de `Control` — quedó escrita en
+OPERACION.md §3, "Tocar los gráficos de interfaz", porque sirve para cualquier
+bug de layout en un panel armado por código.
+
+## 14. Cambiar el arte del panel: dos trampas de tamaño
+
+Reemplazar el panel lateral por un template nuevo (el gótico de hueso y hierro)
+es, en teoría, cambiar un PNG y volver a medir. Salieron dos cosas que no eran
+obvias.
+
+**Medir sobre el fuente cuesta una conversión que no hace falta.** El panel
+viejo se medía sobre un PNG de 1426x2612 y cada offset se multiplicaba por
+525/1426 = 0.3682. Anda, pero cada cambio de arte arrastra esa aritmética y
+cada rect nace con un redondeo. Ahora el arte se recorta y se hornea a 525x962
+—el tamaño real al que se dibuja— *antes* de medir, así que los números de
+`main.tscn` ya están en el espacio del renderer. De paso, medirlos dejó de ser
+a ojo: los agujeros de este arte son interiores negros rodeados de marco, así
+que **un flood fill sobre `luminancia < 28` devuelve los 13 rects con su
+bounding box exacto en una sola pasada** — el área de inventario, las cinco
+canaletas, las cajitas de pociones, la placa del cofre. El perfilado de
+luminancia cruzando el bisel (§3) quedó solo para lo que no es un agujero
+negro: placas de botón, pestañas y el plaquete del nombre.
+
+**`Control.size` es un pedido, no una orden.** Las barras de vitals eran
+`ProgressBar` con `size = (174, 14)`, y salían de 27px: se comían la canaleta
+pintada y tapaban su propio contorno de color. La causa es que `size` se
+clampea contra `get_combined_minimum_size()`, y el mínimo de un `ProgressBar`
+de stock contempla el "100%" que puede dibujar — poner `show_percentage =
+false` **no** baja ese mínimo. Peor: el orden importaba, porque el `size` se
+asignaba antes de reemplazar los styleboxes del tema.
+
+El arreglo no fue pelearse con el mínimo sino no tener uno: un `Control` con
+`clip_contents = true` del tamaño exacto del hueco, un `ColorRect` adentro
+cuyo ancho es el porcentaje, y la lectura (`SALUD 382/382`) como `Label`
+centrado en esos mismos 14px. Un relleno que no puede salirse del marco es una
+propiedad del árbol, no un número que hay que acertar.
+
+**Lección:** cuando un control aparece más grande de lo que le pediste, no es
+el layout: es su mínimo. Y cuando el mínimo pertenece al widget y no a vos, el
+camino corto es dejar de usar ese widget.
+
 ---
 
 ## Lo que quedó aprendido, en una línea cada uno
@@ -241,3 +519,24 @@ entre lo sourceado y lo inventado está documentada caso por caso.
    diseño.
 9. Una sola goroutine dueña del estado eliminó toda una categoría de bugs antes
    de que existiera. Fue la decisión de arquitectura más rentable del proyecto.
+10. Comparar posiciones absolutas no alcanza para reconciliar predicción de
+    cliente — hace falta secuencia de inputs y replay. Y un reloj de
+    predicción continuo contra uno autoritativo por tick se desalinea aunque
+    tengan la misma tasa promedio: hay que cuantizar al mismo grano y calibrar
+    la fase.
+11. Un campo mal nombrado en un formato de veinte años (`FXgrh` no es un grh)
+    solo se descubre mirando los valores reales, nunca el nombre.
+12. Un fallo que rompe todo el juego de golpe, no solo lo último que se tocó,
+    huele a límite de tamaño silencioso (textura, buffer) antes que a bug de
+    lógica — y Godot no avisa cuando una textura se pasa del límite de la GPU.
+13. Antes de teorizar sobre drivers y ventanas, medí el color del vacío: el gris
+    del sistema, el negro de un letterbox y el clear color del engine son tres
+    investigaciones distintas, y un `GetPixel` dice cuál.
+14. Volver a HEAD solo exonera al código nuevo si lo que cambió es el *patrón*.
+    Si las dos versiones comparten el idiom, "también pasa en HEAD" no significa
+    "no es el código", significa "es más viejo que hoy".
+15. Medí el arte en el tamaño en el que se dibuja, no en el que vino: la
+    conversión de escala es una fuente de error que no hace falta tener.
+16. `Control.size` se clampea contra el mínimo del widget. Si un control sale
+    más grande de lo que pediste, el problema es su mínimo — y si ese mínimo es
+    del widget, cambiá de widget.

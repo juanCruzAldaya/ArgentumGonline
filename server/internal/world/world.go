@@ -193,6 +193,10 @@ type World struct {
 	// items loaded) falls back to startingInventory below.
 	startingKits map[startingKitKey]startingKit
 
+	// respawnDelayTicks is how long a corpse waits before rejoining, 0 for
+	// permadeath. See SetRespawnDelay in respawn.go.
+	respawnDelayTicks uint64
+
 	tickRate int
 	tick     uint64
 
@@ -315,6 +319,8 @@ func (w *World) step() {
 	}
 	w.pending = w.pending[:0]
 
+	w.meditateTick()
+	w.respawnDue()
 	w.broadcast()
 }
 
@@ -329,6 +335,13 @@ func (w *World) apply(cmd command) {
 		var m protocol.Move
 		if err := w.codec.DecodePayload(cmd.payload, &m); err != nil {
 			return
+		}
+		// Advances even when the step below is refused: AckSeq promises "I have
+		// answered every input up to here", not "every input up to here moved
+		// you". The > guards against a stale duplicate walking the ack backward,
+		// though ordered delivery means that should never actually happen.
+		if m.Seq > p.lastMoveSeq {
+			p.lastMoveSeq = m.Seq
 		}
 		w.movePlayer(p, m.Dir)
 	case protocol.TypeAttack:
@@ -347,6 +360,8 @@ func (w *World) apply(cmd command) {
 		w.useItem(p, u.Slot, u.Action)
 	case protocol.TypeHide:
 		w.hide(p)
+	case protocol.TypeMeditate:
+		w.toggleMeditate(p)
 	case protocol.TypePickup:
 		w.pickup(p)
 	case protocol.TypeDrop:
@@ -404,6 +419,11 @@ func (w *World) movePlayer(p *Player, dir protocol.Heading) {
 		// step to carry the turn along with.
 		w.turn(p, dir)
 		return
+	}
+	// Any attempted step breaks meditation — HandleWalk's own rule — even one
+	// that only lands as a turn below because the cadence isn't ready yet.
+	if p.Meditating {
+		p.stopMeditating()
 	}
 
 	// The step clock runs in milliticks so a fractional cadence is expressible;
@@ -474,6 +494,7 @@ func (w *World) broadcast() {
 		vitals.Paralyzed = p.paralyzed(w.tick)
 		vitals.Immobilized = p.immobilized(w.tick)
 		vitals.Invisible = p.invisible(w.tick)
+		vitals.Meditating = p.Meditating
 		attrs := w.effectiveAttributes(p)
 		vitals.Fuerza = attrs.Fuerza
 		vitals.Agilidad = attrs.Agilidad
@@ -483,6 +504,7 @@ func (w *World) broadcast() {
 		w.sendTo(p, protocol.TypeSnapshot, protocol.Snapshot{
 			Tick:     w.tick,
 			Alive:    alive,
+			AckSeq:   p.lastMoveSeq,
 			Self:     &vitals,
 			Entities: w.viewportOf(p),
 			Ground:   w.groundItemsInView(p),
@@ -526,6 +548,7 @@ func (w *World) viewportOf(p *Player) []protocol.EntityState {
 			Dead:        other.Dead,
 			Paralyzed:   other.paralyzed(w.tick),
 			Immobilized: other.immobilized(w.tick),
+			Meditating:  other.Meditating,
 			// Clan stays empty until a guild system exists; the field is
 			// carried now so the console line has the shape Argentum gives it.
 			Desc:  other.Class.String(),
@@ -555,12 +578,7 @@ func (w *World) addPlayer(req joinReq) EntityID {
 		race = allRaces[w.rng.Intn(len(allRaces))]
 	}
 
-	inventory := w.startingKits[startingKitKey{class, race}].inventory()
-	if len(inventory) == 0 {
-		// No item table loaded (e.g. running without -items-file): fall back
-		// to the fixed newbie kit rather than spawning with an empty bag.
-		inventory = append([]protocol.InventorySlot(nil), startingInventory...)
-	}
+	inventory := w.startingInventoryFor(class, race)
 
 	p := &Player{
 		ID:         id,
@@ -608,6 +626,18 @@ func (w *World) addPlayer(req joinReq) EntityID {
 		"id", id, "name", req.name, "pos", [2]int{x, y},
 		"players", len(w.players), "addr", req.conn.RemoteAddr())
 	return id
+}
+
+// startingInventoryFor is the newbie kit for one class and race. Shared by the
+// join path and by respawn.go, which hands out the same fresh bag.
+func (w *World) startingInventoryFor(class Class, race Race) []protocol.InventorySlot {
+	inventory := w.startingKits[startingKitKey{class, race}].inventory()
+	if len(inventory) == 0 {
+		// No item table loaded (e.g. running without -items-file): fall back
+		// to the fixed newbie kit rather than spawning with an empty bag.
+		inventory = append([]protocol.InventorySlot(nil), startingInventory...)
+	}
+	return inventory
 }
 
 func (w *World) removePlayer(id EntityID) {

@@ -16,6 +16,10 @@ const (
 	ItemShield = 16
 	ItemHelmet = 17
 	ItemRing   = 18
+	// ItemArrow is otFlechas. Nothing fires them — ranged combat does not
+	// exist yet — but a bow without them is a stick, so the classes whose kit
+	// is a bow carry a quiver anyway. See computeStartingKit.
+	ItemArrow = 32
 )
 
 // Argentum potion types (ePocionType), which decide what an otPociones item
@@ -79,6 +83,29 @@ type Item struct {
 	MinModificador int `json:"minMod,omitempty"`
 	MaxModificador int `json:"maxMod,omitempty"`
 	DuracionEfecto int `json:"potionDuration,omitempty"`
+
+	// Projectile is obj.dat's Proyectil and NeedsAmmo its Municiones. Not the
+	// same flag: Cuchillas are thrown and gone (Proyectil, no Municiones)
+	// while a bow declares both, which is what decides who gets arrows.
+	Projectile bool `json:"projectile,omitempty"`
+	NeedsAmmo  bool `json:"needsAmmo,omitempty"`
+
+	// Newbie is obj.dat's own starter-tier flag, and it agrees exactly with
+	// the "(Newbie)" name suffix — 29 items, both ways, no disagreements.
+	Newbie bool `json:"newbie,omitempty"`
+
+	// The cut armour comes in. Equipping armour *is* changing your body here
+	// (see appearance.go), so the wrong one does not look wrong, it looks like
+	// somebody else. DwarfArmor is RazaEnana, which covers Enano and Gnomo
+	// both, the same way DwarfAnim does for weapons.
+	DwarfArmor  bool `json:"dwarfArmor,omitempty"`
+	DrowArmor   bool `json:"drowArmor,omitempty"`
+	FemaleArmor bool `json:"femaleArmor,omitempty"`
+
+	// Sold says a merchant NPC in the original stocks this item. It is the
+	// line between the gear a character starts with and the gear worth
+	// crossing the map for — see loadout.go.
+	Sold bool `json:"sold,omitempty"`
 
 	// ForbiddenClasses is obj.dat's CP1..CP12: a deny list, not an allow list.
 	// See classForbidsUse.

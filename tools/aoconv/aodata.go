@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -18,6 +19,11 @@ const (
 	ObjShield = 16
 	ObjHelmet = 17
 	ObjRing   = 18
+	// ObjArrow is otFlechas: ammunition for a bow, which is the only reason it
+	// is carried at all — a Cazador with a bow and no arrows is holding a
+	// stick. Nothing fires them yet (ranged combat is not implemented), so
+	// they sit in the bag until it is.
+	ObjArrow = 32
 )
 
 // nakedBodies is DarCuerpoDesnudo (General.bas:45-114): the body a character
@@ -39,6 +45,7 @@ const ghostBody = 8
 var carriableTypes = map[int]bool{
 	ObjFood: true, ObjWeapon: true, ObjArmor: true, ObjPotion: true,
 	ObjDrink: true, ObjShield: true, ObjHelmet: true, ObjRing: true,
+	ObjArrow: true,
 }
 
 // Item is one entry of obj.dat, trimmed to what the client and the combat code
@@ -98,6 +105,44 @@ type Item struct {
 	MaxModificador int `json:"maxMod,omitempty"`
 	DuracionEfecto int `json:"potionDuration,omitempty"`
 
+	// Projectile is obj.dat's Proyectil — a bow or a throwing weapon — and
+	// NeedsAmmo its Municiones, which says the thing is useless without a
+	// stack of arrows behind it. The two are not the same flag: Cuchillas are
+	// Proyectil with no Municiones (thrown and gone), while a bow declares
+	// both. That distinction is what decides who gets handed arrows.
+	Projectile bool `json:"projectile,omitempty"`
+	NeedsAmmo  bool `json:"needsAmmo,omitempty"`
+
+	// Newbie is obj.dat's own Newbie flag, which marks the starter-tier gear
+	// the source hands a brand new character. It agrees exactly with the
+	// "(Newbie)" suffix in the names — 29 items carry the flag, the same 29
+	// carry the suffix, zero disagreements — so it replaces matching on the
+	// name, which was only ever a stand-in for this field.
+	Newbie bool `json:"newbie,omitempty"`
+
+	// The three race/sex cuts armour comes in, straight from obj.dat.
+	// Argentum ships most armours twice — once for the tall races and once
+	// for the short ones — and again for women. Since equipping armour *is*
+	// changing your body here (see Body), the wrong cut does not look wrong,
+	// it looks like somebody else.
+	//
+	// DwarfArmor is RazaEnana, which covers Enano *and* Gnomo, the same way
+	// DwarfAnim does for weapons. It is the reliable one of the three: 77
+	// armours carry it, and all 67 whose name says "(E/G)" are inside that
+	// set, so the flag is a superset of the naming convention and never
+	// contradicts it.
+	DwarfArmor  bool `json:"dwarfArmor,omitempty"`
+	DrowArmor   bool `json:"drowArmor,omitempty"`
+	FemaleArmor bool `json:"femaleArmor,omitempty"`
+
+	// Sold is not an obj.dat field: it says a merchant NPC stocks this item,
+	// computed from NPCs.dat — see loadSold. obj.dat is the catalogue of every
+	// object the engine knows, GM tools and donor trophies included, and those
+	// are exactly the entries with the broken numbers. Knowing what a shop
+	// sells is what separates "the gear a character starts a life with" from
+	// "the gear somebody was given".
+	Sold bool `json:"sold,omitempty"`
+
 	// ForbiddenClasses is obj.dat's CP1..CP12 fields: "Clase Prohibida", a
 	// DENY list, not an allow list — most weapons/armour/shields/helmets/rings
 	// name the classes barred from them (Espada Larga: MAGO, DRUIDA, PIRATA,
@@ -123,7 +168,13 @@ type Spell struct {
 	MinSkill int `json:"minSkill"`
 	Mana     int `json:"mana"`
 	Stamina  int `json:"sta"`
-	FXGrh    int `json:"fx,omitempty"`
+
+	// FXGrh is not a grh despite the name — it is the 1-based index of the
+	// entry in Fxs.ini that names the actual grh, same misnomer the original
+	// field carries. Loops is how many times that animation plays before the
+	// effect clears, straight out of Hechizos.dat's own Loops key.
+	FXGrh int `json:"fx,omitempty"`
+	Loops int `json:"loops,omitempty"`
 
 	AffectsHP int `json:"affectsHp,omitempty"` // 1 heals, 2 damages
 	MinHP     int `json:"minHp,omitempty"`
@@ -221,6 +272,14 @@ func loadItems(path string) (map[int]Item, error) {
 			MaxModificador: sectionInt(section, "MaxModificador"),
 			DuracionEfecto: sectionInt(section, "DuracionEfecto"),
 		}
+		item.Projectile = sectionBool(section, "Proyectil")
+		item.NeedsAmmo = sectionBool(section, "Municiones")
+		item.Newbie = sectionBool(section, "Newbie")
+		if objType == ObjArmor {
+			item.DwarfArmor = sectionBool(section, "RazaEnana")
+			item.DrowArmor = sectionBool(section, "RazaDrow")
+			item.FemaleArmor = sectionBool(section, "Mujer")
+		}
 		// Appearance. NumRopaje is a body only for armour — see the note on
 		// Item.Body for why reading it unconditionally would be a bug — and
 		// Anim only means something for the three worn types.
@@ -260,6 +319,94 @@ func loadItems(path string) (map[int]Item, error) {
 	return out, nil
 }
 
+// loadSold answers a question obj.dat cannot: which of its 1067 entries a
+// player could have walked into a shop and bought. It reads NPCs.dat, where a
+// merchant's stock is a run of `ObjN=<id>-<amount>` keys under that NPC's own
+// section — the same shape the drop table uses, one key per line rather than
+// one field holding a list.
+//
+// This is the line between "basic kit" and "what you go and find". A shop in
+// Argentum sells the ordinary gear of the world; the good stuff is crafted by
+// a smith, dropped by something that had to be killed, or handed out by a GM,
+// and none of those three belong in what a character wakes up wearing.
+func loadSold(datDir string) (map[int]bool, error) {
+	npcs, err := iniSections(filepath.Join(datDir, "NPCs.dat"))
+	if err != nil {
+		return nil, err
+	}
+	out := map[int]bool{}
+	for _, section := range npcs {
+		for key, value := range section {
+			// ObjN and only ObjN: DropN is the same shape and deliberately
+			// not counted, since dying and dropping something is the opposite
+			// of a shop stocking it.
+			if !strings.HasPrefix(key, "OBJ") {
+				continue
+			}
+			if _, err := strconv.Atoi(strings.TrimPrefix(key, "OBJ")); err != nil {
+				continue
+			}
+			id, _ := strconv.Atoi(strings.TrimSpace(strings.SplitN(value, "-", 2)[0]))
+			if id > 0 {
+				out[id] = true
+			}
+		}
+	}
+	return out, nil
+}
+
+// Fx is one entry of Fxs.ini: the grh a spell effect animates (Animacion) and
+// where it sits relative to whoever it plays on. Argentum plays every spell
+// effect anchored to the target's own position, offset by this — not a
+// projectile travelling from caster to target.
+type Fx struct {
+	Grh     int `json:"grh"`
+	OffsetX int `json:"offsetX,omitempty"`
+	OffsetY int `json:"offsetY,omitempty"`
+}
+
+// loadFxs reads Fxs.ini, keyed by the same 1-based index Hechizos.dat's
+// FXgrh field points into.
+func loadFxs(path string) (map[int]Fx, error) {
+	lines, err := iniLines(path)
+	if err != nil {
+		return nil, err
+	}
+
+	out := map[int]Fx{}
+	current := 0
+	for _, line := range lines {
+		if strings.HasPrefix(line, "[") {
+			name := strings.ToUpper(strings.Trim(line, "[]"))
+			current = 0
+			if strings.HasPrefix(name, "FX") {
+				current = atoi(strings.TrimPrefix(name, "FX"))
+			}
+			continue
+		}
+		if current == 0 {
+			continue
+		}
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		fx := out[current]
+		switch strings.ToUpper(strings.TrimSpace(key)) {
+		case "ANIMACION":
+			fx.Grh = atoi(value)
+		case "OFFSETX":
+			fx.OffsetX = atoi(value)
+		case "OFFSETY":
+			fx.OffsetY = atoi(value)
+		default:
+			continue
+		}
+		out[current] = fx
+	}
+	return out, nil
+}
+
 // loadSpells reads Hechizos.dat.
 func loadSpells(path string) (map[int]Spell, error) {
 	sections, err := iniSections(path)
@@ -287,6 +434,7 @@ func loadSpells(path string) (map[int]Spell, error) {
 			Mana:             sectionInt(section, "ManaRequerido"),
 			Stamina:          sectionInt(section, "StaRequerido"),
 			FXGrh:            sectionInt(section, "FXgrh"),
+			Loops:            sectionInt(section, "Loops"),
 			AffectsHP:        sectionInt(section, "SubeHP"),
 			MinHP:            sectionInt(section, "MinHP"),
 			MaxHP:            sectionInt(section, "MaxHP"),

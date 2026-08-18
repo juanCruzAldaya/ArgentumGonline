@@ -37,6 +37,12 @@ var _targeting_spell := 0
 ## it does not need yet.
 var _seen: Dictionary = {}
 
+## Whether the server currently draws us as a ghost. Edge-detected off the
+## local entity's own dead flag rather than off a message, because there is no
+## respawn message on the wire: the server simply stops being dead, and that is
+## all the client has to notice. See the server's respawn.go.
+var _dead := false
+
 ## Own status, mirrored from the server every snapshot. The server is what
 ## actually blocks a paralyzed move or an immobilized swing; these exist so the
 ## client can say why locally instead of silently swallowing the input, and so
@@ -44,6 +50,7 @@ var _seen: Dictionary = {}
 var _paralyzed := false
 var _immobilized := false
 var _invisible := false
+var _meditating := false
 ## Debounces the "you can't do that" line the same way Argentum's own
 ## UltimoMensaje flag does: say it once when the key is first denied, not once
 ## per _process frame for as long as it's held.
@@ -64,10 +71,15 @@ func _ready() -> void:
 	_net.spell_received.connect(_on_spell)
 	_net.use_result_received.connect(_on_use_result)
 	_hud.cast_requested.connect(_on_cast_requested)
-	_hud.item_used.connect(_net.send_use)
+	# Two panel gestures, two explicit messages. Nothing on the client sends the
+	# original's overloaded click any more: the server still accepts it, but a
+	# client that knows what it meant has no reason to make the server guess.
+	_hud.item_used.connect(func(slot: int) -> void: _net.send_use_action(slot, "use"))
+	_hud.item_equipped.connect(func(slot: int) -> void: _net.send_use_action(slot, "equip"))
 	_hud.swap_requested.connect(_net.send_swap)
 	_hud.spell_swap_requested.connect(_net.send_swap_spell)
 	_hud.drop_requested.connect(_net.send_drop)
+	_hud.quit_requested.connect(_on_quit_requested)
 
 	# The world and the HUD have nothing to show until a character exists, so
 	# they stay hidden — and the server stays untouched — until the picker
@@ -76,15 +88,17 @@ func _ready() -> void:
 	_hud.visible = false
 
 	var picker := preload("res://scripts/character_picker.gd").new()
+	picker.default_nickname = _player_name
 	$UI.add_child(picker)
 	picker.confirmed.connect(_on_character_confirmed.bind(picker))
 
 
-func _on_character_confirmed(class_id: int, race_id: int, picker: Control) -> void:
+func _on_character_confirmed(player_name: String, class_id: int, race_id: int, picker: Control) -> void:
 	picker.queue_free()
 	_view.visible = true
 	_hud.visible = true
 
+	_player_name = player_name
 	_hud.set_character(_player_name)
 	_hud.set_identity(class_id, race_id)
 	_hud.log_line("conectando a %s ..." % _url, _hud.COLOR_TEXT_DIM)
@@ -118,14 +132,16 @@ func _process(delta: float) -> void:
 			return
 		# Move first, tell the server second — the order Argentum's own
 		# Map_MoveTo uses. The character reacts on the frame the key is read
-		# instead of a round trip later; see WorldView.predict_step.
+		# instead of a round trip later; see WorldView.try_step.
 		#
-		# The command is sent even when the prediction refuses the step: the
-		# server owns facing for everyone else's screen, and a walk into a wall
-		# is still a turn. It is the server's answer that is authoritative,
-		# never ours.
-		_view.predict_step(dir)
-		_net.send_move(dir)
+		# try_step itself decides whether this input is worth a packet — held
+		# against a wall or mid-turn-cooldown comes back -1 and nothing is
+		# sent, instead of flooding the connection at framerate the way
+		# sending unconditionally here used to. It is still the server's
+		# answer that is authoritative, never ours; see WorldView.set_entities.
+		var seq: int = _view.try_step(dir)
+		if seq >= 0:
+			_net.send_move(dir, seq)
 
 
 func _tell_blocked(text: String) -> void:
@@ -178,6 +194,8 @@ func _on_spell(event: Dictionary) -> void:
 	var victim := str(event.get("vn", "alguien"))
 	var spell := str(event.get("sn", "un hechizo"))
 	var words := str(event.get("w", ""))
+
+	_view.play_spell_fx(int(event.get("v", 0)), int(event.get("s", 0)))
 
 	# The magic words are half of what a spell feels like in Argentum.
 	if words != "":
@@ -342,9 +360,22 @@ func _unhandled_input(event: InputEvent) -> void:
 					# E equips and only equips; U consumes and only consumes.
 					# They used to send the identical message and let the item
 					# type decide, which meant pressing E on a potion drank it.
-					# A double-click still sends the overloaded action.
+					# The double-click is U's gesture, so E is the only way to
+					# put something on from the keyboard.
 					var action := "equip" if event.keycode == KEY_E else "use"
 					_net.send_use_action(slot, action)
+			KEY_T:
+				# Tirar: drops the whole selected slot on the spot. The original
+				# opens a quantity dialog for a stack over 1 (frmCantidad); this
+				# game has no partial-stack UI anywhere else either, so T always
+				# drops the entire stack, same as dropping from the context menu.
+				var drop_slot: int = _hud.selected_slot()
+				if drop_slot < 0:
+					_hud.log_line("Primero seleccioná un objeto del inventario.", _hud.COLOR_TEXT_DIM)
+				else:
+					_net.send_drop(drop_slot)
+			KEY_F6:
+				_net.send_meditate()
 
 	if _targeting_spell == 0:
 		_handle_inspect_click(event)
@@ -483,6 +514,24 @@ func _on_disconnected() -> void:
 	_hud.log_line("desconectado de %s" % _url, _hud.COLOR_HP)
 
 
+## SALIR and the X in the panel's title bar. Leaving the match means both
+## halves: the socket closes so the server drops the player right away — the
+## body and the inventory hit the floor for whoever is still there — and then
+## the client itself goes.
+##
+## The same web caveat as the login screen's SALIR (character_picker.gd): a
+## page cannot close a tab it did not open, so window.close() is attempted and
+## silently does nothing outside an embedded context. The disconnect is the
+## half that always works, which is the half that matters to everyone else in
+## the match.
+func _on_quit_requested() -> void:
+	_net.disconnect_from_server()
+	if OS.has_feature("web"):
+		JavaScriptBridge.eval("window.close()", true)
+	else:
+		get_tree().quit()
+
+
 func _on_welcomed(welcome: Dictionary) -> void:
 	_local_id = int(welcome.get("id", 0))
 	_view.configure(welcome)
@@ -510,7 +559,7 @@ func _on_welcomed(welcome: Dictionary) -> void:
 func _on_snapshot(snapshot: Dictionary) -> void:
 	var entities: Array = snapshot.get("e", [])
 
-	_view.set_entities(entities)
+	_view.set_entities(entities, int(snapshot.get("ack", 0)), int(snapshot.get("tick", 0)))
 	_view.set_ground(snapshot.get("g", []))
 	_minimap.set_entities(entities)
 	_hud.set_alive(int(snapshot.get("alive", 0)))
@@ -521,6 +570,7 @@ func _on_snapshot(snapshot: Dictionary) -> void:
 		_update_own_status(vitals)
 
 	_update_zone(entities)
+	_update_own_life(entities)
 	_report_arrivals_and_departures(entities)
 
 
@@ -533,7 +583,23 @@ func _update_zone(entities: Array) -> void:
 		if int(entity.get("id", 0)) == _local_id:
 			var label := _map_name if _map_name != "" else "mapa"
 			_hud.set_zone("%s   X:%d  Y:%d" % [label, int(entity.get("x", 0)), int(entity.get("y", 0))])
+			_hud.set_kills(int(entity.get("k", 0)))
 			return
+
+
+## Says one line when we come back from the dead. Dying already narrates
+## itself through the combat event ("¡X te ha matado!"), so only the return
+## needs saying — and it needs saying, because otherwise the whole event is a
+## body that silently teleports to the middle of the map.
+func _update_own_life(entities: Array) -> void:
+	for entity in entities:
+		if int(entity.get("id", 0)) != _local_id:
+			continue
+		var dead: bool = bool(entity.get("d", false))
+		if _dead and not dead:
+			_hud.log_line("Has vuelto a la vida en el centro del mapa.", _hud.COLOR_HP)
+		_dead = dead
+		return
 
 
 ## Edge-detects status transitions from the raw booleans the server sends
@@ -543,6 +609,7 @@ func _update_own_status(vitals: Dictionary) -> void:
 	var paralyzed: bool = vitals.get("paralyzed", false)
 	var immobilized: bool = vitals.get("immobilized", false)
 	var invisible: bool = vitals.get("invisible", false)
+	var meditating: bool = vitals.get("meditating", false)
 
 	if paralyzed and not _paralyzed:
 		_hud.log_line("¡Estás paralizado!", _hud.COLOR_EXP)
@@ -561,9 +628,15 @@ func _update_own_status(vitals: Dictionary) -> void:
 	elif _invisible and not invisible:
 		_hud.log_line("Ya no eres invisible.", _hud.COLOR_TEXT_DIM)
 
+	if meditating and not _meditating:
+		_hud.log_line("Te estás concentrando para meditar.", _hud.COLOR_MANA)
+	elif _meditating and not meditating:
+		_hud.log_line("Dejás de meditar.", _hud.COLOR_TEXT_DIM)
+
 	_paralyzed = paralyzed
 	_immobilized = immobilized
 	_invisible = invisible
+	_meditating = meditating
 	_view.local_invisible = invisible
 
 

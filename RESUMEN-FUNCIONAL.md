@@ -9,11 +9,20 @@ Para correrlo y deployarlo, ver [OPERACION.md](OPERACION.md).
 
 ## 1. Entrar a la partida
 
-**Selección de personaje.** Antes de conectar a nada, pantalla completa con dos
-listas: 12 clases (Guerrero, Cazador, Paladín, Bandido, Asesino, Pirata, Ladrón,
-Clérigo, Bardo, Mago, Druida, Trabajador) y 5 razas (Humano, Elfo, Elfo Oscuro,
-Enano, Gnomo). Ambas arrancan con la primera opción seleccionada, así que JUGAR
-siempre es clickeable.
+**Registro de cuenta.** Antes de conectar a nada, pantalla completa sobre arte
+real de AO (`login_bg.png`): un campo de nickname y dos desplegables, 12 clases
+(Guerrero, Cazador, Paladín, Bandido, Asesino, Pirata, Ladrón, Clérigo, Bardo,
+Mago, Druida, Trabajador) y 5 razas (Humano, Elfo, Elfo Oscuro, Enano, Gnomo).
+
+**CREAR PERSONAJE arranca deshabilitado** y solo se enciende con las tres cosas
+elegidas de verdad. El arte ya trae "[Seleccionar Clase]" horneado adentro de la
+canaleta, así que ese texto es un ítem real deshabilitado, no un default: pedir
+que elijas es el punto de la pantalla. SALIR cierra el cliente (en la build web
+intenta `window.close()`, que es todo lo que un script puede hacer ahí).
+
+El panel se escala solo para llenar la pantalla; los campos caen en los huecos
+que el arte dibuja, medidos sobre el PNG. Ver OPERACION.md §3, "Tocar los
+gráficos de interfaz".
 
 No hay creación de personaje más allá de eso: en battle royale nadie farmea un
 build, todos entran al máximo. Esa decisión eliminó de un saque la experiencia,
@@ -76,6 +85,14 @@ Cooldown de ataque: 24 ticks = 1.2 s, el intervalo de melee clásico.
 queda dibujado en el piso y **el inventario se desparrama en los tiles libres
 alrededor**. Ese drop al morir del AO hardcore ya *era* mecánica de battle
 royale, así que se dejó tal cual.
+
+**Respawn, para testear.** Hoy el servidor arranca con `-respawn 5`: el muerto
+queda de fantasma 5 segundos y vuelve a entrar **en el medio del mapa**, con
+vida llena, equipo nuevo y hechizos de nuevo, como si hubiese logueado otra
+vez. Lo único que se conserva es el contador de bajas. Es una muleta para
+probar peleas sin reiniciar el cliente cada vez, no la regla del género:
+`-respawn 0` devuelve la eliminación definitiva, y el resto del código sigue
+asumiéndola.
 
 ## 5. Maná, y quién puede lanzar
 
@@ -142,6 +159,14 @@ Duraciones (recortadas a propósito respecto del original, porque en un MMO la
 pelea es un episodio y acá es la partida entera): parálisis 6 s, invisibilidad
 12 s, buff 30 s, debuff 20 s.
 
+**Gráfico del impacto.** Todo hechizo que pega en alguien dispara el efecto
+visual real del original (`CreateFX` de `Fxs.ini`), la animación anclada al
+**objetivo**, no un proyectil viajando por la pantalla — así lo dibuja el AO de
+verdad: el server manda el id del hechizo, el cliente ya tiene su propia copia
+de `spells.json`/`bundle.json` y resuelve ahí el grh y el offset. Las 50
+animaciones de efectos vienen empaquetadas en el mismo atlas que cuerpos e
+ítems.
+
 ## 7. Ocultarse
 
 **O** intenta ocultarse (Ocultarse). Cooldown de 3 s, que es lo único que lo
@@ -154,17 +179,94 @@ no se rompe al moverse; son dos mecánicas distintas y se mantuvieron separadas.
 
 Los muertos y los paralizados no pueden ocultarse.
 
-## 8. Objetos e inventario
+## 8. Meditar
 
-**491 objetos** de `obj.dat`. El protocolo manda solo el número de item; el
+**F6** togglea meditar, la forma de recuperar maná sin poción. No se puede
+muerto ni en una clase sin maná (`MaxMana == 0`).
+
+- **2 s de "concentración"** antes de que empiece a regenerar — igual que el
+  original, para que no sea una cura gratis a mitad de pelea.
+- Después, **6% del maná máximo por segundo** (el `PorcentajeRecuperoMana` de
+  `Balance.dat`) hasta llenarse, momento en el que se corta solo. El original
+  tira ese 6% con un roll de suerte contra la skill Meditar; acá no hay esa
+  skill — nadie sube de nivel — así que la cadencia es fija, mismo criterio que
+  ya usaba Ocultarse para su propio roll.
+- **Bloquea** atacar y usar/equipar objetos mientras dura.
+- **Se corta** si caminás o si te pegan un golpe cuerpo a cuerpo — cualquier
+  golpe, no un umbral de daño.
+- Mientras meditás sos **25% más fácil de acertar**: sentarte a regenerar
+  cuesta evasión, no solo la posibilidad de pelear.
+- **Aura visible para todo el mundo**, no solo para quien medita — como todos
+  los personajes nacen al nivel tope, siempre es el aura más grande que tiene
+  el original (`FXMEDITARXXGRANDE`).
+
+## 9. Objetos e inventario
+
+**496 objetos** de `obj.dat`. El protocolo manda solo el número de item; el
 cliente ya tiene la tabla, así que una mochila llena cuesta un puñado de
 enteros.
 
-**Kit inicial.** El equipo sale del original (`AddItemsToNewUser`): una daga o
-el arma con sabor de la clase, y ropa newbie apropiada para la raza.
-Deliberadamente pobre — lo interesante es lo que encontrás. Las 60
-combinaciones clase×raza se precalculan al arrancar el servidor, no en cada
-join, y el kit respeta las prohibiciones de clase.
+**Kit inicial: el equipo básico de tu clase.** Cada personaje nace vestido,
+armado y equipado con lo suyo — arma, armadura, casco y escudo — y lo mejor
+sigue estando tirado en el mapa. Las 60 combinaciones clase×raza se precalculan
+al arrancar el servidor, no en cada join.
+
+Esto **no** está portado, porque no hay nada que portar: el original le da a un
+personaje de nivel 1 una daga y trapos newbie porque todo lo demás se gana en
+semanas de juego, y acá ese eje no existe. La regla la dan los propios datos:
+
+| Filtro | Qué saca |
+|---|---|
+| **Lo vende un mercader** (`ObjN=` de `NPCs.dat`) | `obj.dat` es el catálogo de *todo* lo que el motor conoce, herramientas de GM y trofeos de donante incluidos. La Espada Mata Dragones NatOs pega 1000 fijo y no le prohíbe la clase a nadie, así que cualquier ranking por números se la da a las doce clases. Lo que forja un herrero, lo que dropea un dragón y lo que spawnea un GM quedan afuera del kit — y quedan en el piso, que es donde vale la pena caminar hasta ellos |
+| **La clase no lo tiene prohibido** | La lista CP de `ClasePuedeUsarItem`, que ya estaba portada |
+| **De lo que queda, lo más específico de la clase** | Cuanto más larga la lista CP de un objeto, para menos clases fue hecho: el Arco de Cazador le prohíbe a diez de doce, el Hacha Larga de Guerra a ocho, y una Espada Corta a nadie. Ordenar por eso *antes* que por los números es lo que le pone un arco al Cazador en vez del hacha que le pegaría más fuerte |
+
+Nada de esto es una tabla por clase. Las 60 combinaciones salen de las listas de
+clase de `obj.dat`, así que una actualización de datos se lleva el kit con ella
+en vez de dejar un id hardcodeado apuntando a algo que se movió.
+
+Lo que sale de esa regla, para Humano (el corte de armadura cambia con la raza):
+
+| Clase | Arma | Armadura | Casco | Escudo |
+|---|---|---|---|---|
+| Guerrero | Espada de Plata 13-20 | Armadura de Placas Completa 35-40 | Casco de Hierro Completo 10-20 | Escudo de Hierro 1-3 |
+| Cazador | **Arco de Cazador 6-11** + 500 flechas | Armadura de Cazador 10-20 | Capucha de Cazador 6-14 | Escudo de Tortuga 1-1 |
+| Paladín | Espada de Plata 13-20 | Armadura de Placas Completa 35-40 | Casco de Hierro Completo 10-20 | Escudo de Hierro 1-3 |
+| Bandido | Espada de Plata 13-20 | Armadura de Cazador 10-20 | Casco de Hierro Completo 10-20 | Escudo de Hierro 1-3 |
+| Asesino | Daga +4 5-8 | Armadura de las Sombras 30-37 | Casco de Hierro Completo 10-20 | Escudo de Tortuga 1-1 |
+| Pirata | Sable 6-17 | Brial del Bosque 10-22 | Sombrero Pirata 2-6 | Escudo de Tortuga 1-1 |
+| Ladrón | Cuchillas 7-16 | Armadura de Cazador 10-20 | Sombrero Pirata 2-6 | Escudo de Hierro 1-3 |
+| Clérigo | Hacha de Guerra Dos Filos 7-20 | Armadura de Gran Sacerdote 15-22 | Casco de Hierro Completo 10-20 | Escudo de Hierro 1-3 |
+| Bardo | Daga +4 5-8 | Armadura de Gran Sacerdote 15-22 | Casco de Hierro 3-8 | Escudo de Tortuga 1-1 |
+| Mago | Bastón Nudoso 1-1 | Túnica Egregia de Mago 15-20 | Sombrero Mágico +1 1-2 | — |
+| Druida | Hacha de madera Élfica 3-8 | Armadura de Gran Sacerdote 15-22 | Casco de Tigre 10-15 | — |
+| Trabajador | Espada Vikinga 6-17 | Armadura de Campeón 25-40 | Casco de Hierro Completo 10-20 | Escudo de Tortuga 1-1 |
+
+Esa tabla no está escrita en el código: la imprime un test
+(`go test ./internal/world -run TestKitTable -v`), así que un cambio de balance
+se lee en vez de adivinarse.
+
+**Mago y Druida no llevan escudo**, y no es un agujero: los trece escudos del
+juego los nombran a los dos en su lista CP. Un slot sin candidato queda vacío.
+
+**La armadura es el cuerpo**, así que el corte importa: Argentum trae casi
+todas las armaduras dos veces, una para las razas altas y otra para las bajas
+(`RazaEnana`, que cubre Enano y Gnomo), más las de mujer. Ponerse el corte
+equivocado no se ve como una armadura mal puesta, se ve como otro personaje —
+por eso el kit filtra por raza y hay un test solo para eso.
+
+**El Cazador es el único caso raro.** Le toca arco y **500 flechas**, porque un
+arco sin flechas es un palo — y lo decide `Municiones`, no `Proyectil`: las
+Cuchillas del Ladrón se tiran y listo, el arco declara los dos campos. Como el
+combate a distancia todavía no existe, el arco pega como garrote por sus
+propios 6-11 y las flechas esperan en la mochila; para que la clase cuya
+identidad *es* el kit no sea la única que no puede pelear, el Cazador lleva
+además un arma cuerpo a cuerpo sin equipar, elegida con la misma regla.
+
+**El tier newbie no existe en este juego.** Ni en el kit ni en el piso. No es un
+punto de partida cuando todos nacen al cap: es una copia peor de un objeto que
+ya está en el mundo, y encima invisible — dos pociones rojas con el mismo ícono
+y el mismo nombre, una que cura 30 y otra que cura 10.
 
 Los consumibles **no** son los del original, a propósito. Ahí son 200 rojas y
 200 azules porque las pociones son un sumidero de oro en una economía que dura
@@ -175,10 +277,10 @@ azul, amarilla, verde) al nacer, y tiradas por todos lados. La negra queda
 afuera — 3000 frascos que te matan es un chiste que termina la partida en vez
 de uno que causa gracia.
 
-De paso se arregló un bug latente: la segunda poción del kit se elegía como "la
-primera no-roja que aparezca", y Go randomiza el orden de iteración de mapas,
-así que la mochila cambiaba entre arranques del servidor. Ahora se elige por
-`ePocionType`, determinístico.
+Las pociones del kit pasan por el mismo filtro que el equipo (la vende una
+tienda, no es newbie) y se eligen una por `ePocionType`, no "la primera que
+aparezca": Go randomiza el orden de iteración de mapas, así que una elección
+que se apoyara en eso cambiaba la mochila entre arranques del servidor.
 
 **Loot en el piso.** Dos pasadas distintas sobre un mismo pool de tiles libres
 barajado, así nunca se pisan (Argentum permite un objeto por tile y esa regla
@@ -189,9 +291,8 @@ se respeta):
 | Equipo | 1 cada 30 tiles caminables | 165 objetos | `1/(1+poder)` — una espada común (MaxHit 8) y un martillo de guerra (MaxHit 40) quedan ~5× separados |
 | Pociones | 1 stack de 25 cada 4 tiles caminables | ~1200 stacks, ~30.000 pociones | plano entre todos los tipos |
 
-La pasada de equipo excluye lo newbie (ya lo tenés) y la poción negra. La de
-pociones no excluye lo newbie: cuando el objetivo es abundancia, que la poción
-sea de tier bajo no la hace menos bienvenida.
+Las dos pasadas excluyen el tier newbie, que no existe en este juego, y la
+poción negra.
 
 Las densidades se cuentan contra **tiles caminables**, no contra el `ancho ×
 alto` crudo. La mitad de Ullathorpe es pared, así que la cuenta vieja entregaba
@@ -204,16 +305,31 @@ un mapa que no sea medio campo abierto.
 | Tecla | Acción | Detalle |
 |---|---|---|
 | `A` | Agarrar | Del tile en el que estás parado, nunca uno que señalás |
-| `U` / `E` | Usar / Equipar | Misma acción en el protocolo: el **servidor** decide si eso es tomar una poción o ponerse un arma, según el tipo del objeto |
-| doble click | Usar / Equipar | Idéntico a `U` |
-| click derecho | Menú contextual | Equipar/Quitar o Usar según el tipo, más Tirar |
+| `U` | Usar | Consume el slot seleccionado: poción, comida, bebida. Sobre algo equipable no hace nada, y lo dice |
+| `E` | Equipar | Pone o saca el slot seleccionado. Sobre un consumible no hace nada, y lo dice |
+| `T` | Tirar | El slot seleccionado completo, al tile donde estás parado. El original abre un diálogo de cantidad para un stack; acá no hay UI de cantidad parcial en ningún lado, así que `T` tira el stack entero, igual que el menú contextual |
+| doble click | Usar | Idéntico a `U`: **solo consume**. Un arma, un escudo o una armadura no responden al doble click |
+| click derecho | Menú contextual | Equipar/Quitar o Usar según el tipo, más Tirar. Es el único lugar donde el mouse equipa |
 | arrastrar | Reordenar | Drag & drop dentro de la mochila; el servidor decide qué se mueve a dónde |
 
+**Equipar y consumir no comparten gesto**, y esa es una desviación deliberada
+del original. Ahí un click en el inventario ramifica por el tipo del objeto:
+sobre una espada la equipa, sobre una poción se la toma. Las dos consecuencias
+son opuestas — equipar se deshace con otro click, tomar una poción no se
+deshace — y en una mochila donde todos los íconos se ven igual bajo el mismo
+gesto, errarle de slot cuesta una poción. Así que el gesto fácil (doble click,
+`U`) se lo queda lo que se consume, y lo reversible tiene su propia tecla (`E`)
+y el menú del botón derecho. El servidor ya sabía distinguirlos: el mensaje
+`use` lleva la acción explícita y **rechaza la que no corresponde al slot** en
+vez de hacer la otra en silencio.
+
 Equipar es un toggle, y equipar algo del mismo tipo reemplaza lo que había en
-ese slot. Los slots de equipo tienen **columna fija por tipo** (arma, escudo,
-armadura, casco, anillo) — antes se llenaban en orden de llegada y la fila se
-reordenaba entera en cada equipar/desequipar, que era el glitch visual que había
-que matar. Los slots de equipo no son arrastrables; los de mochila sí.
+ese slot. **Lo equipado no se muda a ninguna parte**: se queda en su slot de
+mochila con una `E` chiquita en la esquina. Antes había una fila de equipo
+aparte, y esa fila era una segunda casa para el mismo objeto — equipar algo lo
+*movía* en pantalla, y mantener las dos vistas de acuerdo sobre quién era dueño
+de cada slot era el origen del glitch de reordenamiento. Un objeto, un lugar, y
+la clase entera de problema se va con la fila.
 
 **Pociones**, con los tipos de `ePocionType`: agilidad, fuerza, salud, maná,
 curar veneno, y la negra. La poción de maná usa la fórmula del original, no los
@@ -222,7 +338,7 @@ los jugadores tomaban igual.
 
 Cooldown de uso, para que no se puedan encadenar pociones.
 
-## 9. Interfaz
+## 10. Interfaz
 
 Layout de Argentum, no un layout genérico de juego: consola arriba, minimapa al
 costado, viewport abajo, panel de personaje pegado al borde derecho.
@@ -238,45 +354,100 @@ costado, viewport abajo, panel de personaje pegado al borde derecho.
 +-------------------------------------------+---------------+  962
 ```
 
-El panel lateral es **una sola imagen horneada de arte real de AO** (525×962)
-con los controles vivos posicionados encima, cayendo en los agujeros que el arte
-ya dibuja. Cada offset se midió sobre el PNG fuente (1426×2612) y se escaló por
-525/1426 = 0.3682 — no están a ojo, y solo siguen siendo correctos mientras la
-imagen y el tamaño 525×962 concuerden.
+El panel lateral es **una sola imagen horneada** (525×962) con los controles
+vivos posicionados encima, cayendo en los agujeros que el arte ya dibuja. Cada
+offset se midió por componentes conexas sobre ese PNG ya horneado, no sobre un
+fuente más grande que después había que escalar — así que no hay factor de
+conversión que equivocar, y siguen siendo correctos mientras la imagen y el
+tamaño 525×962 concuerden.
 
 Sobre el arte hay:
 
 - **Barras**: salud, maná, energía, hambre y sed, todas alimentadas por el
-  servidor.
-- **Tres pestañas** superpuestas en la franja de ladrillos: Inventario,
-  Hechizos, Estadísticas. Comparten el área negra grande.
-- **Estadísticas**: fuerza, agilidad, inteligencia, carisma, constitución. Se
-  mandan frescas cada tick porque los buffs las mueven.
-- **Contador de vivos**, en la caja que el arte original reservaba para monedas
-  — no hay economía en un BR.
-- **Dos quick-slots de pociones** con el conteo real de rojas y azules de la
-  mochila.
+  servidor. Son cinco porque el arte dibuja cinco canaletas; el relleno entra
+  clavado adentro de cada una y la lectura (`SALUD 382/382`) va centrada en esa
+  misma altura.
+- **La mochila llena el agujero entero**: 30 slots de 57px, centrados en el
+  marco de hueso. Antes eran de 53 y quedaban corridos a la izquierda, porque
+  la barra de scroll pintada les robaba 26px de ancho sin scrollear nada — en
+  la pestaña de inventario no hay nada que scrollear.
+- **La lista de hechizos** son diez filas de 342x26 que ocupan todo el ancho
+  hasta el riel. Eran quince de 330x18: una fila de 18px es finita para
+  acertarle con el mouse en una pelea, y más finita todavía para agarrarla y
+  arrastrarla. **El orden lo elegís vos**: se arrastra un hechizo sobre otro
+  para reubicarlo, y acercarlo a cualquiera de las dos puntas hace que la
+  lista scrollee sola, así se puede mandar uno de la fila 30 a la 1 sin soltar
+  el botón.
+- **La barra de scroll de hueso** es la del arte y **solo existe en la pestaña
+  de hechizos**: el hueso con el anillo se recortó del fondo y es el que
+  arrastrás, el riel y las flechas se recortaron a su propio PNG para poder
+  esconderse con el libro, y la rueda del mouse lo mueve todo.
+- **LANZAR e INFO se aprietan enteros**: la placa entera es el botón, baja dos
+  píxeles y se oscurece mientras la tenés apretada, y vuelve al soltarla.
+- **Dos pestañas** sobre la franja de ladrillos: Inventario y Hechizos.
+  Comparten el área negra grande. Estadísticas se sacó: todos nacen al cap, así
+  que los cinco atributos solo se mueven bajo un buff que ya se narra en la
+  consola.
+- **Nombre y clase** grabados en el plaquete: el nombre en mayúsculas y a 26px,
+  la clase y raza debajo en más chico y más apagado, el bloque centrado en la
+  cara del plaquete. Un nombre largo baja de cuerpo hasta entrar; nunca se
+  corta.
+- **Bajas propias** en la placa al lado del cofre pintado.
+- **Fuerza y agilidad actuales** en las dos cajas al lado de las pociones que
+  pinta el arte — la amarilla es agilidad y la verde es fuerza en Argentum, así
+  que cada caja lleva el atributo que su propio frasco sube. Son valores vivos,
+  no un conteo de mochila: si un hechizo te dopa o te debilita, ahí se ve.
+- **SALIR y la X** en la barra de arriba, las dos la misma cosa: cierran la
+  conexión y después el cliente. Cerrar el socket a propósito importa — el
+  servidor te saca de la partida en el acto y tu cuerpo y tu inventario caen
+  al piso para el que esté cerca, en vez de esperar a que se le muera el
+  socket. La placa de la izquierda tenía un arbolito horneado que no
+  significaba nada acá; se pintó por encima y ahora lleva la palabra.
 - **Zona y coordenadas**, leídas de la propia entidad del jugador.
 - **Consola** con todos los eventos narrados en segunda persona ("%s te ha
   quitado %d puntos de vida").
 
-Los cuatro slots de abajo del arte están decorativos por ahora. Se quitó la
-barra de nivel/experiencia: todos spawnean al máximo, así que no tenía qué
-mostrar.
+El contador de vivos no está en el panel: vive en la barra sobre el viewport y
+en ningún otro lado. Estuvo un rato en el inset de arriba y era un readout de
+más — el mismo número dos veces en la misma pantalla se lee como dos números.
 
-## 10. Operación
+Los cuatro slots de abajo del arte, el botón con el árbol y la X de arriba
+están decorativos por ahora. No hay barra de nivel/experiencia: todos spawnean
+al máximo, así que no tendría qué mostrar.
+
+**Footer de equipo.** Cruzando el borde de abajo del viewport, continuando la
+fila inferior del panel hacia la izquierda, hay una barra de 1088×37 con cuatro
+pares icono/valor: casco, armadura, escudo y arma. Cada caja muestra el rango
+real de `obj.dat` — el arma lo que pega (`5-10`), las otras tres lo que frenan
+(`0-1`) — y **la caja queda negra solo si ese slot está vacío**. Un ítem sin
+defensa muestra su `0`: la ropa newbie no tiene ni MinDef ni MaxDef en
+`obj.dat`, así que dejarla en blanco hacía que llevar ropa se viera igual que
+andar desnudo. No viaja nada nuevo por la red: el cliente ya tiene la tabla de
+objetos y el servidor ya le dice qué slots están puestos.
+
+En Argentum eso se averigua abriendo el inventario y pasando el mouse por
+encima. En una partida de minutos, la pregunta cada vez que levantás algo del
+piso es si le gana a lo que tenés puesto, así que el número vive a la vista.
+La barra se lleva media fila de tiles del viewport.
+
+## 11. Operación
 
 **Correr el servidor:**
 
 ```powershell
 cd server
-go run ./cmd/server -map-file maps/map1.json -items-file maps/items.json -spells-file maps/spells.json
+go run ./cmd/server
 ```
 
-Sin esos tres flags arranca en un arena generada, sin objetos y sin hechizos —
-que es exactamente el síntoma de "no conozco los hechizos y el mapa no
-renderiza". Otros flags: `-addr`, `-tick`, `-map-width`, `-map-height`, `-seed`,
-`-debug`, `-web-dir`.
+`-map-file`, `-items-file` y `-spells-file` apuntan por default a los archivos
+de `server/maps/`, así que corriendo desde `server/` arranca el juego completo.
+Si alguno de esos archivos falta, el servidor **no arranca**: antes bajaba en
+silencio a una arena generada sin objetos ni hechizos, que era exactamente el
+síntoma de "no conozco los hechizos y el mapa no renderiza". Esa arena sigue
+estando pero hay que pedirla (`-map-file=""`), y `/healthz` contesta qué cargó
+(`ok map="Ciudad de Ullathorpe" items=496 spells=50`) en vez de solo decir que
+el proceso está vivo. Otros flags: `-addr`, `-tick`, `-map-width`,
+`-map-height`, `-seed`, `-debug`, `-web-dir`.
 
 **Bots.** Hablan exactamente el mismo protocolo que un cliente real; del lado
 del servidor no existe el concepto de "bot". Lo que se rompe con bots se hubiera
@@ -305,7 +476,7 @@ Fly.io región `eze` para latencia real — la imagen incluye el cliente web, as
 que el otro solo abre el link. La máquina duerme cuando no hay nadie y despierta
 en un par de segundos.
 
-## 11. Cómo está armado por dentro
+## 12. Cómo está armado por dentro
 
 Una sola goroutine es dueña de todo el estado del mundo. **No hay un mutex en
 todo el repo.**
@@ -359,6 +530,6 @@ desconexión del cliente lento.
 | **Lobby / matchmaking** | Hoy se entra a un servidor corriendo; no hay partida con principio y fin. Plan: una máquina Fly por partida vía Machines API. |
 | **Combate a distancia** | Arcos y flechas. Solo hay melee y hechizos. |
 | **Facciones** | Armada/Legión no están. |
-| **Hambre y sed que drenen** | Los vitals son estado real del servidor y el HUD los muestra, pero nada los baja. Es una decisión de diseño pendiente: ¿un battle royale quiere upkeep? |
+| **Hambre y sed que drenen** | Los vitals son estado real del servidor y el HUD los muestra en sus dos barras, pero nada los baja. Es una decisión de diseño pendiente: ¿un battle royale quiere upkeep? |
 | **Persistencia** | A propósito: nadie levelea, nada que guardar. |
 | **Codec binario** | Cuando el JSON moleste, medido. |

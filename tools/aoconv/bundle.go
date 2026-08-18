@@ -12,10 +12,17 @@ import (
 	"strings"
 )
 
-// atlasWidth is the packing width. A map contributes hundreds of distinct
-// tiles on top of the character frames, so this is wide enough to keep the
-// sheet roughly square while staying far inside every GPU's texture limit.
-const atlasWidth = 1024
+// atlasWidth is the packing width.
+//
+// This was 1024 until spell FX joined the bundle: the shelf packer sorts every
+// needed frame tallest-first and stacks shelves top to bottom, and 50 FX
+// animations' worth of explosion- and aura-sized frames pushed the height to
+// 19168px at that width — past 16384, the GL_MAX_TEXTURE_SIZE most GPUs cap
+// 2D textures at. Godot does not error on an over-limit texture; it silently
+// samples the wrong pixels for anything below the cutoff, which is what
+// "todo se rompió" looked like: every sprite in the game, not just FX, came
+// out wrong. 2048 keeps the height comfortably clear of that ceiling again.
+const atlasWidth = 2048
 
 // Rect is where a static grh ended up inside the atlas.
 type Rect struct {
@@ -89,6 +96,12 @@ type Bundle struct {
 	Weapons map[int]Gear `json:"weapons"`
 	Shields map[int]Gear `json:"shields"`
 	Helmets map[int]Gear `json:"helmets"`
+
+	// Fxs holds every spell effect animation, keyed by the 1-based index
+	// Hechizos.dat's FXgrh field names. The client plays these anchored to
+	// whoever the spell targets, offset by OffsetX/OffsetY, the same way the
+	// original draws them.
+	Fxs map[int]Fx `json:"fxs"`
 }
 
 // deriveBodies reconstructs bodies from Graficos.ini instead of from Cuerpos.
@@ -205,7 +218,7 @@ func loadBodySeeds(path string) ([]int, error) {
 
 // writeBundle packs every frame the given bodies and heads need into one atlas
 // and writes it alongside its JSON index.
-func writeBundle(grhs map[int]Grh, bodies map[int]BodyIndex, heads, weapons, shields, helmets map[int][4]int, assets string, wantBodies, wantHeads []int, outDir string, aoMap *AOMap, mapDisplayName string, items map[int]Item) error {
+func writeBundle(grhs map[int]Grh, bodies map[int]BodyIndex, heads, weapons, shields, helmets map[int][4]int, assets string, wantBodies, wantHeads []int, outDir string, aoMap *AOMap, mapDisplayName string, items map[int]Item, fxs map[int]Fx) error {
 	b := Bundle{
 		Atlas:   "atlas.png",
 		Frames:  map[int]Rect{},
@@ -215,6 +228,7 @@ func writeBundle(grhs map[int]Grh, bodies map[int]BodyIndex, heads, weapons, shi
 		Weapons: map[int]Gear{},
 		Shields: map[int]Gear{},
 		Helmets: map[int]Gear{},
+		Fxs:     map[int]Fx{},
 	}
 
 	// needed collects the static grhs to pack. Animations contribute their
@@ -368,6 +382,30 @@ func writeBundle(grhs map[int]Grh, bodies map[int]BodyIndex, heads, weapons, shi
 		fmt.Println()
 	}
 
+	if len(fxs) > 0 {
+		// Every spell effect ships regardless of which spells the map's loot
+		// table actually offers — 50 animations is cheap next to the atlas a
+		// map already contributes, and it means a rebalanced spell list never
+		// needs a bundle rebuild for its FX to work.
+		missing := 0
+		for id, fx := range fxs {
+			if fx.Grh == 0 {
+				missing++
+				continue
+			}
+			if err := collect(fx.Grh); err != nil {
+				missing++
+				continue
+			}
+			b.Fxs[id] = fx
+		}
+		fmt.Printf("fx:           %d empaquetados", len(b.Fxs))
+		if missing > 0 {
+			fmt.Printf(", %d omitidos (sin gráfico)", missing)
+		}
+		fmt.Println()
+	}
+
 	if aoMap != nil {
 		// A tile referencing a graphic that is not in the index is a data bug in
 		// a twenty year old map, not a reason to refuse the whole conversion.
@@ -495,7 +533,7 @@ func writeBundle(grhs map[int]Grh, bodies map[int]BodyIndex, heads, weapons, shi
 
 	info, _ := os.Stat(atlasPath)
 	fmt.Printf("\natlas.png   %dx%d, %d KB, %d frames\n", atlasWidth, atlasHeight, info.Size()/1024, len(b.Frames))
-	fmt.Printf("bundle.json %d cuerpos, %d cabezas, %d animaciones\n", len(b.Bodies), len(b.Heads), len(b.Anims))
+	fmt.Printf("bundle.json %d cuerpos, %d cabezas, %d animaciones, %d fx\n", len(b.Bodies), len(b.Heads), len(b.Anims), len(b.Fxs))
 
 	if aoMap != nil {
 		mapPath := filepath.Join(outDir, fmt.Sprintf("map%d.json", aoMap.Number))

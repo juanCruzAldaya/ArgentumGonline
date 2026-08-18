@@ -18,7 +18,7 @@ Se pasó de cero a un juego que se puede abrir, jugar y perder. Concretamente:
 1. **El loop de red funciona.** Servidor autoritativo a 20 Hz, snapshots por
    viewport, bots headless para simular una partida llena. Un cliente lento no
    puede frenar la simulación.
-2. **Se usan los datos reales de Argentum, no imitaciones.** 491 objetos de
+2. **Se usan los datos reales de Argentum, no imitaciones.** 496 objetos de
    `obj.dat`, 50 hechizos de `Hechizos.dat`, las tablas de balance por clase y
    raza de `Balance.dat`, y la Ciudad de Ullathorpe (100×100 tiles) como mapa de
    juego. Todo convertido por una herramienta propia (`tools/aoconv`) que

@@ -131,10 +131,3 @@ func TestSpammingTurnsDoesNotOutrunTheCadence(t *testing.T) {
 		t.Errorf("moved %d tiles from 60 commands in one tick", moved)
 	}
 }
-
-func abs(n int) int {
-	if n < 0 {
-		return -n
-	}
-	return n
-}

@@ -15,6 +15,13 @@ func (w *World) useItem(p *Player, slotIndex int, action protocol.UseAction) {
 		w.sendTo(p, protocol.TypeUseResult, protocol.UseResult{Failed: "Estás muerto."})
 		return
 	}
+	// HandleUseItem's own gate: meditating blocks the inventory entirely, not
+	// just equipping — the source's error comment says the client should have
+	// already caught this, but the server holds the line either way.
+	if p.Meditating {
+		w.sendTo(p, protocol.TypeUseResult, protocol.UseResult{Failed: "No podés hacer eso mientras meditás."})
+		return
+	}
 
 	slot, idx := findSlot(p.Inventory, slotIndex)
 	if idx < 0 {

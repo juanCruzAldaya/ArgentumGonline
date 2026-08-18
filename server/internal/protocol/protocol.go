@@ -17,15 +17,16 @@ type MsgType string
 
 const (
 	// Client -> server.
-	TypeJoin   MsgType = "join"
-	TypeMove   MsgType = "move"
-	TypeAttack MsgType = "attack"
-	TypeCast   MsgType = "cast"
-	TypeUse    MsgType = "use"
-	TypeHide   MsgType = "hide"
-	TypePickup MsgType = "pickup"
-	TypeDrop   MsgType = "drop"
-	TypeSwap   MsgType = "swap"
+	TypeJoin     MsgType = "join"
+	TypeMove     MsgType = "move"
+	TypeAttack   MsgType = "attack"
+	TypeCast     MsgType = "cast"
+	TypeUse      MsgType = "use"
+	TypeHide     MsgType = "hide"
+	TypeMeditate MsgType = "meditate"
+	TypePickup   MsgType = "pickup"
+	TypeDrop     MsgType = "drop"
+	TypeSwap     MsgType = "swap"
 	// TypeSwapSpell reorders the spell book, the same drag-and-drop Argentum
 	// gives its own spell list. Separate from TypeSwap because the two lists
 	// are separate server state and a bag index is not a spell index.
@@ -94,8 +95,14 @@ type Join struct {
 
 // Move asks to step one tile in the given direction. The server rate limits it,
 // so a client that spams this simply gets its extra requests ignored.
+//
+// Seq is the sender's own monotonic counter, one per input attempt (a step or
+// a mid-cadence turn), never reset for the life of the connection. It exists
+// so Snapshot.AckSeq can tell a predicting client exactly which of its inputs
+// the server has already answered — see AckSeq for why that matters.
 type Move struct {
 	Dir Heading `json:"dir"`
+	Seq uint32  `json:"seq"`
 }
 
 // Ping carries a client-chosen timestamp that Pong echoes back, letting the
@@ -181,6 +188,7 @@ type Vitals struct {
 	Paralyzed   bool `json:"paralyzed,omitempty"`
 	Immobilized bool `json:"immobilized,omitempty"`
 	Invisible   bool `json:"invisible,omitempty"`
+	Meditating  bool `json:"meditating,omitempty"`
 }
 
 // EntityState is one entity as seen from some player's viewport.
@@ -217,6 +225,12 @@ type EntityState struct {
 	// everyone's Entities except their own.
 	Paralyzed   bool `json:"pz,omitempty"`
 	Immobilized bool `json:"im,omitempty"`
+	// Meditating drives the meditation aura FX everyone in view sees, not just
+	// the meditator's own client — Argentum plays it as a looping CreateFX on
+	// the character, not a one-shot cast animation, so it rides the standing
+	// snapshot state the same way Paralyzed/Immobilized do rather than a
+	// one-shot event like SpellEvent.
+	Meditating bool `json:"md,omitempty"`
 
 	// Clan, Desc and Kills are what clicking a character reports, the way
 	// Argentum answers a click with "Nombre <Clan> <Descripción>". They ride
@@ -240,8 +254,24 @@ type Snapshot struct {
 	// Alive is the whole-match player count. It is deliberately global rather
 	// than viewport-scoped — knowing how many are left is the core battle
 	// royale readout, and it reveals no position.
-	Alive int     `json:"alive"`
-	Self  *Vitals `json:"self,omitempty"`
+	Alive int `json:"alive"`
+	// AckSeq is the highest Move.Seq this snapshot's own recipient has had
+	// applied so far — never meaningful for anyone else, which is why it rides
+	// on a message that is already built fresh per player rather than needing
+	// a field of its own.
+	//
+	// This is what lets client prediction reconcile precisely instead of
+	// guessing: without it, a predicting client sees only "the server's
+	// position disagrees with mine" and cannot tell a step the server simply
+	// hasn't seen yet from one it genuinely rejected. Comparing raw positions
+	// for that used to need a multi-snapshot vote (see the client's old
+	// DESYNC_SNAPSHOTS), which broke under fast, sustained input: the predicted
+	// tile is *always* ahead of the last-acked one while a key is held, so the
+	// vote fired anyway and the player got yanked backward mid-stride. With
+	// AckSeq the client drops exactly the inputs this number covers and
+	// replays only what is genuinely still in flight.
+	AckSeq uint32  `json:"ack"`
+	Self   *Vitals `json:"self,omitempty"`
 	// Entities is everyone inside the viewport, including the player itself.
 	Entities []EntityState `json:"e"`
 	// Ground is every item stack lying on the map inside the viewport.
@@ -270,6 +300,12 @@ type Loadout struct {
 // no target field on purpose: melee in Argentum hits the square in front of
 // you, so a client cannot name someone across the map as its victim.
 type Attack struct{}
+
+// Meditate toggles meditation on or off — F6 in the original, one key with no
+// payload either way. What it does is server state (Vitals.Meditating and
+// EntityState.Meditating carry that out on every snapshot); this message is
+// only ever the request to flip it.
+type Meditate struct{}
 
 // Cast asks to throw a spell at somebody.
 //

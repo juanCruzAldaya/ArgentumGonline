@@ -6,33 +6,42 @@ import (
 )
 
 // lootItems is a table shaped like the real converted obj.dat in the ways the
-// loot and kit code branches on: newbie and non-newbie tiers, weapons that
-// differ in power, the black potion, and — because obj.dat really does carry
-// them — a legacy duplicate of a newbie potion at a low id alongside the live
-// one the source hands out.
+// loot and kit code branch on: what a shop sells against what it does not,
+// weapons that differ in power, the black potion, and the newbie duplicates
+// that obj.dat really does carry — here so the tests can prove they never
+// reach a player, on the floor or in a kit.
 func lootItems() map[int]Item {
 	return map[int]Item{
-		1: {ID: 1, Name: "Daga (Newbie)", Type: ItemWeapon, MinHit: 1, MaxHit: 2},
-		2: {ID: 2, Name: "Espada Larga", Type: ItemWeapon, MinHit: 4, MaxHit: 8},
+		1: {ID: 1, Name: "Daga", Type: ItemWeapon, MinHit: 1, MaxHit: 2, Sold: true},
+		2: {ID: 2, Name: "Espada Larga", Type: ItemWeapon, MinHit: 4, MaxHit: 8, Sold: true},
+		// Not sold anywhere: the tier you go and find, never the tier you
+		// wake up holding.
 		3: {ID: 3, Name: "Martillo de Guerra", Type: ItemWeapon, MinHit: 20, MaxHit: 40},
-		4: {ID: 4, Name: "Armadura de Cuero (H/E/EO) (Newbie)", Type: ItemArmor, MaxDef: 1},
+		4: {ID: 4, Name: "Armadura de Cuero", Type: ItemArmor, MaxDef: 1, Sold: true},
 		5: {ID: 5, Name: "Armadura de Placas", Type: ItemArmor, MaxDef: 15},
-		6: {ID: 6, Name: "Anillo", Type: ItemRing},
+		6: {ID: 6, Name: "Anillo", Type: ItemRing, Sold: true},
 
-		// The legacy/live newbie potion pairs, ids as in the real data.
+		// The newbie tier, which this game does not use at all.
 		461: {ID: 461, Name: "Pocion Roja (Newbie)", Type: ItemPotion, PotionType: PotionHealth,
-			MinModificador: 30, MaxModificador: 30},
-		462: {ID: 462, Name: "Pocion Verde (Newbie)", Type: ItemPotion, PotionType: PotionStrength},
-		855: {ID: 855, Name: "Pocion Amarilla (Newbie)", Type: ItemPotion, PotionType: PotionAgility},
-		856: {ID: 856, Name: "Pocion Azul (Newbie)", Type: ItemPotion, PotionType: PotionMana},
+			MinModificador: 30, MaxModificador: 30, Newbie: true},
 		857: {ID: 857, Name: "Pocion Roja (Newbie)", Type: ItemPotion, PotionType: PotionHealth,
-			MinModificador: 10, MaxModificador: 10},
-		858: {ID: 858, Name: "Pocion Verde (Newbie)", Type: ItemPotion, PotionType: PotionStrength},
+			MinModificador: 10, MaxModificador: 10, Newbie: true, Sold: true},
+		859: {ID: 859, Name: "Arco (Newbie)", Type: ItemWeapon, MinHit: 1, MaxHit: 2,
+			Newbie: true, Sold: true, Projectile: true, NeedsAmmo: true},
 
-		900: {ID: 900, Name: "Pocion Roja", Type: ItemPotion, PotionType: PotionHealth},
-		901: {ID: 901, Name: "Pocion Negra", Type: ItemPotion, PotionType: PotionBlack},
-		902: {ID: 902, Name: "Manzana Roja (Newbie)", Type: ItemFood, Restores: 5},
-		903: {ID: 903, Name: "Botella de Agua (Newbie)", Type: ItemDrink, Restores: 5},
+		// The ordinary potions of the world, the ones a shop stocks.
+		36: {ID: 36, Name: "Pocion Amarilla", Type: ItemPotion, PotionType: PotionAgility,
+			MinModificador: 3, MaxModificador: 5, Sold: true},
+		37: {ID: 37, Name: "Pocion Azul", Type: ItemPotion, PotionType: PotionMana,
+			MinModificador: 12, MaxModificador: 20, Sold: true},
+		38: {ID: 38, Name: "Pocion Roja", Type: ItemPotion, PotionType: PotionHealth,
+			MinModificador: 30, MaxModificador: 30, Sold: true},
+		39: {ID: 39, Name: "Pocion Verde", Type: ItemPotion, PotionType: PotionStrength,
+			MinModificador: 2, MaxModificador: 6, Sold: true},
+
+		901: {ID: 901, Name: "Pocion Negra", Type: ItemPotion, PotionType: PotionBlack, Sold: true},
+		902: {ID: 902, Name: "Manzana Roja", Type: ItemFood, Restores: 5, Sold: true},
+		903: {ID: 903, Name: "Botella de Agua", Type: ItemDrink, Restores: 5, Sold: true},
 	}
 }
 
@@ -92,15 +101,39 @@ func TestStartingKitIsDeterministicAcrossRuns(t *testing.T) {
 	}
 }
 
-// Of the two Pocion Roja (Newbie) entries in obj.dat, 857 is the one
-// AddItemsToNewUser actually hands out; 461 is unreferenced legacy data.
-func TestStartingKitPrefersTheLiveNewbiePotionOverTheLegacyDuplicate(t *testing.T) {
+// The newbie tier is gone from this game — not filtered out of one list, gone
+// from every one. It has no meaning when everyone spawns at the cap: a newbie
+// red potion is a worse copy of a potion already in the world, wearing the
+// same name and the same icon while healing a third as much.
+func TestNothingNewbieReachesAPlayer(t *testing.T) {
 	items := lootItems()
-	kit := computeStartingKit(items, Guerrero, Humano)
 
-	for _, slot := range kit.slots {
-		if slot.ItemID == 461 || slot.ItemID == 462 {
-			t.Errorf("kit picked legacy potion %d over its live counterpart", slot.ItemID)
+	for _, slot := range computeStartingKit(items, Guerrero, Humano).slots {
+		if items[slot.ItemID].Newbie {
+			t.Errorf("the kit handed out %q", items[slot.ItemID].Name)
+		}
+	}
+	for _, entry := range computeLootTable(items) {
+		if entry.Item.Newbie {
+			t.Errorf("gear loot table carries %q", entry.Item.Name)
+		}
+	}
+	for _, entry := range potionLootTable(items) {
+		if entry.Item.Newbie {
+			t.Errorf("potion loot table carries %q", entry.Item.Name)
+		}
+	}
+}
+
+// And the real red potion is the one that gets handed out — the difference
+// between the two is 20 points of health per bottle.
+func TestKitCarriesTheOrdinaryPotionNotTheNewbieOne(t *testing.T) {
+	items := lootItems()
+	for _, slot := range computeStartingKit(items, Guerrero, Humano).slots {
+		if item := items[slot.ItemID]; item.Type == ItemPotion && item.PotionType == PotionHealth {
+			if item.ID != 38 {
+				t.Errorf("carrying red potion %d (%q), want the ordinary 38", item.ID, item.Name)
+			}
 		}
 	}
 }

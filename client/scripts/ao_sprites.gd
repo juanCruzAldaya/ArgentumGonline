@@ -40,6 +40,7 @@ var _heads: Dictionary = {}
 var _weapons: Dictionary = {}
 var _shields: Dictionary = {}
 var _helmets: Dictionary = {}
+var _fxs: Dictionary = {}
 var _loaded := false
 
 
@@ -68,6 +69,7 @@ func load_bundle() -> bool:
 	_weapons = parsed.get("weapons", {})
 	_shields = parsed.get("shields", {})
 	_helmets = parsed.get("helmets", {})
+	_fxs = parsed.get("fxs", {})
 	_loaded = true
 	return true
 
@@ -149,6 +151,30 @@ func _gear_rect(table: Dictionary, anim: int, heading: int, anim_time: float, mo
 ## water always run, since nothing is standing still for them to wait on.
 func grh_rect(grh: int, anim_time: float) -> Rect2:
 	return _resolve(grh, anim_time, true)
+
+
+## Spell effects. Argentum plays these anchored to whoever the spell targets,
+## offset by Fxs.ini's own OffsetX/OffsetY — never as a projectile travelling
+## from caster to target.
+func fx_grh(fx_id: int) -> int:
+	var entry: Variant = _fxs.get(str(fx_id))
+	return int(entry["grh"]) if entry != null else 0
+
+
+func fx_offset(fx_id: int) -> Vector2:
+	var entry: Variant = _fxs.get(str(fx_id))
+	if entry == null:
+		return Vector2.ZERO
+	return Vector2(float(entry.get("offsetX", 0)), float(entry.get("offsetY", 0)))
+
+
+## anim_cycle_seconds is how long one full loop of an animated grh takes. Zero
+## means the grh is not animated (a single still frame).
+func anim_cycle_seconds(grh: int) -> float:
+	var anim: Variant = _anims.get(str(grh))
+	if anim == null:
+		return 0.0
+	return maxf(float(anim.get("speed", 300.0)), 1.0) / 1000.0
 
 
 ## _resolve turns a grh into a rectangle, walking into an animation if needed.

@@ -42,6 +42,13 @@ type WSServer struct {
 	// browser client needs no configuration: its own origin is the server.
 	StaticDir string
 
+	// Health, when set, supplies the body of /healthz. A bare "ok" answers
+	// "the process is up", which is the one question that never distinguished
+	// a real server from one running on an empty generated arena with no items
+	// and no spells — the failure that reached production once already. Let
+	// the caller say what actually loaded so one curl settles it.
+	Health func() string
+
 	mu       sync.Mutex
 	listener net.Listener
 }
@@ -53,8 +60,12 @@ func (s *WSServer) ListenAndServe(ctx context.Context) error {
 	// Plain HTTP health check so a platform like Fly.io can tell whether the
 	// machine is up without speaking the game protocol.
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+		body := "ok"
+		if s.Health != nil {
+			body = s.Health()
+		}
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("ok"))
+		_, _ = w.Write([]byte(body))
 	})
 
 	if s.StaticDir != "" {

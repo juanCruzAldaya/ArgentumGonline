@@ -148,8 +148,30 @@ func main() {
 	if err != nil {
 		fatal("%v", err)
 	}
-	fmt.Printf("obj.dat:      %d objetos que se pueden llevar\n", len(items))
+	fxs, err := loadFxs(filepath.Join(*assets, "INIT", "Fxs.ini"))
+	if err != nil {
+		fatal("%v", err)
+	}
+	// Which of those a shop sells is what tells a starting kit apart from a
+	// GM's toybox — see loadSold, and the server's loadout.go for what reads
+	// it. Marked here rather than inside loadItems because it comes out of a
+	// different file entirely.
+	sold, err := loadSold(dat)
+	if err != nil {
+		fatal("%v", err)
+	}
+	inShops := 0
+	for id, item := range items {
+		if sold[id] {
+			item.Sold = true
+			items[id] = item
+			inShops++
+		}
+	}
+	fmt.Printf("obj.dat:      %d objetos que se pueden llevar, %d de ellos en tiendas\n",
+		len(items), inShops)
 	fmt.Printf("Hechizos.dat: %d hechizos\n", len(spells))
+	fmt.Printf("Fxs.ini:      %d efectos\n", len(fxs))
 
 	var aoMap *AOMap
 	var displayName string
@@ -210,7 +232,7 @@ func main() {
 
 		if err := writeBundle(grhs, bodies, heads, weaponAnims, shieldAnims, helmetAnims,
 			*assets, bodyIDs, parseList(*headList), *bundleDir,
-			aoMap, displayName, items); err != nil {
+			aoMap, displayName, items, fxs); err != nil {
 			fatal("%v", err)
 		}
 

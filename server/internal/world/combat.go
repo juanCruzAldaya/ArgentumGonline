@@ -87,6 +87,12 @@ func (w *World) hitChance(attacker, victim *Player) float64 {
 		evasion += w.poderEvasionEscudo(victim)
 	}
 	chance := 50 + (w.poderAtaque(attacker)-evasion)*0.4
+	if victim.Meditating {
+		// SistemaCombate.bas cuts a meditating target's miss chance by a
+		// quarter: sitting still to regen mana costs evasion, not just the
+		// ability to fight back.
+		chance = 100 - (100-chance)*0.75
+	}
 	return math.Max(minHitChance, math.Min(maxHitChance, chance))
 }
 
@@ -173,8 +179,10 @@ func (w *World) resolveAttack(attacker, victim *Player) AttackResult {
 // who it reaches.
 func (w *World) attack(p *Player) {
 	// Immobilize roots the feet, not the arms: melee still works. Paralysis
-	// stops everything, which is what canAct checks.
-	if p.Dead || !p.canAct(w.tick) {
+	// stops everything, which is what canAct checks. Meditating blocks a swing
+	// outright too — HandleAttack's own gate, separate from canAct because a
+	// meditating player is not paralyzed, just unwilling to break concentration.
+	if p.Dead || !p.canAct(w.tick) || p.Meditating {
 		return
 	}
 	if w.tick-p.lastAttackTick < attackCooldownTicks {
@@ -198,6 +206,12 @@ func (w *World) attack(p *Player) {
 	}
 
 	result := w.resolveAttack(p, victim)
+	if result.Hit && victim.Meditating {
+		// Any landed hit breaks concentration — SistemaCombate's own
+		// unconditional cancel for a player victim, unlike the damage-threshold
+		// roll it uses against an NPC attacker (this game has no NPCs yet).
+		victim.stopMeditating()
+	}
 	w.reportCombat(p, victim, result)
 
 	if result.Killed {
@@ -229,6 +243,11 @@ func (w *World) kill(victim, killer *Player) {
 	}
 	victim.Dead = true
 	victim.Vitals.HP = 0
+	// Zero unless a respawn delay was configured, in which case the ghost is
+	// on a clock. See respawn.go.
+	if w.respawnDelayTicks > 0 {
+		victim.respawnAt = w.tick + w.respawnDelayTicks
+	}
 
 	// The ghost stays on the map but stops blocking, so a corpse cannot wall
 	// off a doorway for the rest of the match.
