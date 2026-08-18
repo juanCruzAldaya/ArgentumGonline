@@ -29,6 +29,7 @@
 [ext_resource type="Script" path="res://scripts/world_view.gd" id="3_view"]
 [ext_resource type="Script" path="res://scripts/hud.gd" id="4_hud"]
 [ext_resource type="Script" path="res://scripts/minimap.gd" id="5_minimap"]
+[ext_resource type="Script" path="res://scripts/chat_input.gd" id="10_chatinput"]
 [ext_resource type="Texture2D" path="res://assets/ao/ui/panel_bg.png" id="6_panelbg"]
 [ext_resource type="Texture2D" path="res://assets/ao/ui/footer_bg.png" id="7_footerbg"]
 [ext_resource type="Texture2D" path="res://assets/ao/ui/scroll_rail.png" id="8_scrollrail"]
@@ -307,3 +308,10 @@ offset_bottom = 33.0
 horizontal_alignment = 1
 vertical_alignment = 1
 mouse_filter = 2
+
+[node name="ChatInput" type="LineEdit" parent="UI/Screen"]
+offset_left = 8.0
+offset_top = 132.0
+offset_right = 830.0
+offset_bottom = 162.0
+script = ExtResource("10_chatinput")

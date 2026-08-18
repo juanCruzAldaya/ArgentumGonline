@@ -13,6 +13,9 @@ signal loadout_received(loadout: Dictionary)
 signal combat_received(event: Dictionary)
 signal spell_received(event: Dictionary)
 signal use_result_received(result: Dictionary)
+## Somebody's words, to be drawn over their head. Chat and spell incantations
+## arrive through the same signal because the server sends them as one message.
+signal speech_received(speech: Dictionary)
 
 var _socket := WebSocketPeer.new()
 var _last_state := WebSocketPeer.STATE_CLOSED
@@ -114,6 +117,13 @@ func send_cast(spell_id: int, target_id: int) -> void:
 	_send("cast", {"spell": spell_id, "target": target_id})
 
 
+## Says something out loud. An empty line is meaningful rather than ignored: one
+## sign per character means it replaces whatever was over your head, which is
+## how a player wipes an incantation off themselves.
+func send_talk(text: String) -> void:
+	_send("talk", {"text": text})
+
+
 func send_ping() -> void:
 	_send("ping", {"t": Time.get_ticks_msec()})
 
@@ -158,6 +168,8 @@ func _handle_frame(text: String) -> void:
 			loadout_received.emit(data)
 		"combat":
 			combat_received.emit(data)
+		"speech":
+			speech_received.emit(data)
 		"spell":
 			spell_received.emit(data)
 		"useResult":

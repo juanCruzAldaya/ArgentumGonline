@@ -19,6 +19,7 @@ const INPUT_INTERVAL := 0.0
 @onready var _view: Node2D = $WorldView
 @onready var _hud: Control = $UI/Screen
 @onready var _minimap: Control = $UI/Screen/MinimapFrame/Minimap
+@onready var _chat: LineEdit = $UI/Screen/ChatInput
 
 var _url := DEFAULT_URL
 var _player_name := ""
@@ -75,6 +76,7 @@ func _ready() -> void:
 	_net.loadout_received.connect(_hud.set_loadout)
 	_net.combat_received.connect(_on_combat)
 	_net.spell_received.connect(_on_spell)
+	_net.speech_received.connect(_on_speech)
 	_net.use_result_received.connect(_on_use_result)
 	_hud.cast_requested.connect(_on_cast_requested)
 	# Two panel gestures, two explicit messages. Nothing on the client sends the
@@ -86,6 +88,7 @@ func _ready() -> void:
 	_hud.spell_swap_requested.connect(_net.send_swap_spell)
 	_hud.drop_requested.connect(_net.send_drop)
 	_hud.quit_requested.connect(_on_quit_requested)
+	_chat.said.connect(_net.send_talk)
 
 	# The world and the HUD have nothing to show until a character exists, so
 	# they stay hidden — and the server stays untouched — until the picker
@@ -114,6 +117,13 @@ func _on_character_confirmed(player_name: String, class_id: int, race_id: int, p
 func _process(delta: float) -> void:
 	_time_since_input += delta
 	if not _connected or _time_since_input < INPUT_INTERVAL:
+		return
+
+	# Movement and attacking read the keyboard directly rather than through
+	# events, so an open chat box cannot swallow them the way it swallows
+	# everything else — it has to be checked here explicitly, or typing a word
+	# with a "w" in it walks you north.
+	if _chat.is_open():
 		return
 
 	# Ctrl swings, as in Argentum. Immobilize roots the feet, not the arms —
@@ -222,6 +232,18 @@ func _announce_zone(zone: Variant) -> void:
 			_hud.log_line("¡Estás fuera de la zona! Corré al círculo.", _hud.COLOR_EXP)
 
 
+## Words over somebody's head. The same handler for chat and for a spell's
+## incantation, because the server sends one message for both — see
+## protocol.Speech.
+func _on_speech(speech: Dictionary) -> void:
+	_view.set_speech(
+		int(speech.get("id", 0)),
+		Vector2i(int(speech.get("x", 0)), int(speech.get("y", 0))),
+		str(speech.get("text", "")),
+		bool(speech.get("spell", false))
+	)
+
+
 func _on_spell(event: Dictionary) -> void:
 	var failed := str(event.get("failed", ""))
 	if failed != "":
@@ -232,13 +254,14 @@ func _on_spell(event: Dictionary) -> void:
 	var caster := str(event.get("cn", "alguien"))
 	var victim := str(event.get("vn", "alguien"))
 	var spell := str(event.get("sn", "un hechizo"))
-	var words := str(event.get("w", ""))
 
 	_view.play_spell_fx(int(event.get("v", 0)), int(event.get("s", 0)))
 
-	# The magic words are half of what a spell feels like in Argentum.
-	if words != "":
-		_hud.log_line("%s: ¡%s!" % [caster, words], _hud.COLOR_MANA)
+	# The magic words used to be logged here. They are not any more: the server
+	# now broadcasts them as speech to everyone who can see the caster, and the
+	# client draws them over the caster's head — which is where Argentum puts
+	# them, and the reason casting gives your position away. Logging them too
+	# would say it twice, and only to the two people who already knew.
 
 	var damage := int(event.get("dmg", 0))
 	var healed := int(event.get("heal", 0))
@@ -382,6 +405,15 @@ func _unhandled_input(event: InputEvent) -> void:
 	# type pick the branch; they now say which they mean, because a key you
 	# press expecting to put a sword on should never drink a potion instead.
 	# The overloaded action still exists and is what a double-click sends.
+	# Enter opens the chat box, and the box takes it from there — it has focus
+	# while open, so its own submit and cancel never reach this function.
+	if not _chat.is_open() and event is InputEventKey and event.pressed and not event.echo:
+		if event.keycode == KEY_ENTER or event.keycode == KEY_KP_ENTER:
+			if _connected:
+				_chat.open()
+				get_viewport().set_input_as_handled()
+			return
+
 	if _connected and event is InputEventKey and event.pressed and not event.echo:
 		match event.keycode:
 			KEY_O:

@@ -37,6 +37,18 @@ const COLOR_GRID := Color(0, 0, 0, 0.18)
 const COLOR_NAME := Color(0.92, 0.92, 0.88)
 const COLOR_NAME_LOCAL := Color(0.62, 0.92, 0.62)
 const COLOR_NAME_SHADOW := Color(0, 0, 0, 0.85)
+## Argentum's own colour for a spell's incantation, RGB(200, 250, 150) in
+## Protocol.bas's HandlePalabrasMagicas.
+const COLOR_SPELL_WORDS := Color(200.0 / 255.0, 250.0 / 255.0, 150.0 / 255.0)
+const COLOR_SPEECH := Color(0.94, 0.92, 0.80)
+## How long a sign stays up. The original computes it per message —
+## MS_ADD_EXTRA + MS_PER_CHAR * len, 5000 + 100 per character in clsDialogs.cls
+## — so a longer line lingers longer.
+const SPEECH_BASE_SECONDS := 5.0
+const SPEECH_PER_CHAR_SECONDS := 0.1
+## Wrap width, MAX_LENGTH in clsDialogs.cls.
+const SPEECH_WRAP_CHARS := 18
+const SPEECH_SIZE := 11
 
 ## The shrinking zone. Blue and translucent so the ground stays readable through
 ## it — you have to be able to see what you are running over — with a brighter
@@ -73,6 +85,12 @@ var _entities: Dictionary = {}
 ## snapshot's Ground list — the same viewport-limited interest management as
 ## _entities, so nothing here reveals loot the player hasn't actually seen.
 var _ground: Dictionary = {}
+
+## One sign per entity id, exactly as Argentum keeps one dialog per CharIndex.
+## A new line replaces the old rather than stacking, which is what lets a player
+## wipe a spell's incantation off their own head by saying anything at all —
+## including a single space.
+var _speech: Dictionary = {}
 
 ## The zone as the server last described it, or empty when the match has none.
 var _zone: Dictionary = {}
@@ -268,6 +286,49 @@ func _load_map(number: int) -> void:
 			"map%d.json trae %d tiles, el server dice %dx%d"
 			% [number, _layer1.size(), map_width, map_height]
 		)
+
+
+## set_speech puts words over somebody's head. Empty text takes the sign down,
+## which is a real move rather than a no-op: it is how you stop advertising the
+## spell you just cast.
+func set_speech(id: int, tile: Vector2i, text: String, spell: bool) -> void:
+	if text.strip_edges() == "":
+		_speech.erase(id)
+		queue_redraw()
+		return
+	var lines := _wrap_speech(text)
+	_speech[id] = {
+		"lines": lines,
+		"spell": spell,
+		"tile": tile,
+		"until": _world_time + SPEECH_BASE_SECONDS + SPEECH_PER_CHAR_SECONDS * text.length(),
+	}
+	queue_redraw()
+
+
+## Wraps on whole words at Argentum's own 18-character line, splitting a word
+## only when it cannot fit on a line by itself.
+func _wrap_speech(text: String) -> PackedStringArray:
+	var out := PackedStringArray()
+	var line := ""
+	for word in text.split(" ", false):
+		var w: String = word
+		while w.length() > SPEECH_WRAP_CHARS:
+			if line != "":
+				out.append(line)
+				line = ""
+			out.append(w.substr(0, SPEECH_WRAP_CHARS))
+			w = w.substr(SPEECH_WRAP_CHARS)
+		if line == "":
+			line = w
+		elif line.length() + 1 + w.length() <= SPEECH_WRAP_CHARS:
+			line += " " + w
+		else:
+			out.append(line)
+			line = w
+	if line != "":
+		out.append(line)
+	return out
 
 
 ## ack_seq is the snapshot's protocol.Snapshot.AckSeq: the highest input the
@@ -578,6 +639,9 @@ func _draw() -> void:
 	var font := ThemeDB.fallback_font
 	for id: int in ids:
 		_draw_entity(id, _entities[id], origin, font)
+
+	# Words from somebody the snapshot does not carry: an invisible caster.
+	_draw_orphan_speech(origin, font)
 
 	# The wall goes over the ground and the people standing on it, but under the
 	# canopy: a tree in front of you still hides what is behind it.
@@ -1027,3 +1091,55 @@ func _draw_entity(id: int, entity: Dictionary, origin: Vector2, font: Font) -> v
 			font, at + Vector2(1, 1), label, HORIZONTAL_ALIGNMENT_LEFT, -1, NAME_SIZE, COLOR_NAME_SHADOW
 		)
 		draw_string(font, at, label, HORIZONTAL_ALIGNMENT_LEFT, -1, NAME_SIZE, color)
+
+	_draw_speech(id, foot, font)
+
+
+## The sign over somebody's head: chat, or the incantation of a spell they are
+## casting. Drawn above the sprite rather than below it, where the name goes, so
+## the two never collide.
+##
+## This is the whole point of casting being loud. A hidden player who casts is
+## revealed by the server, but an *invisible* one is not — their body stays out
+## of everyone's snapshot while their words do not, so the sign hangs in empty
+## air exactly where they are standing.
+func _draw_speech(id: int, foot: Vector2, font: Font) -> void:
+	var entry: Variant = _speech.get(id)
+	if entry == null:
+		return
+	if _world_time >= float(entry["until"]):
+		_speech.erase(id)
+		return
+	_paint_speech(entry, foot, font)
+
+
+## Signs whose speaker is not in the snapshot at all — an invisible caster.
+## Drawn from the tile the server sent with the words, which is the only thing
+## about them the client is told.
+func _draw_orphan_speech(origin: Vector2, font: Font) -> void:
+	for id: int in _speech.keys():
+		if _entities.has(id):
+			continue
+		var entry: Dictionary = _speech[id]
+		if _world_time >= float(entry["until"]):
+			_speech.erase(id)
+			continue
+		var tile: Vector2i = entry.get("tile", Vector2i.ZERO)
+		var foot := (Vector2(tile) - origin) * TILE_SIZE + Vector2(TILE_SIZE * 0.5, TILE_SIZE)
+		_paint_speech(entry, foot, font)
+
+
+func _paint_speech(entry: Dictionary, foot: Vector2, font: Font) -> void:
+	var lines: PackedStringArray = entry["lines"]
+	var color: Color = COLOR_SPELL_WORDS if bool(entry["spell"]) else COLOR_SPEECH
+	# Sprites are about two tiles tall, so the block is stacked up from there
+	# and grows further up as it gains lines.
+	var top := foot.y - TILE_SIZE * 2.1 - float(lines.size() - 1) * (SPEECH_SIZE + 2)
+	for i in lines.size():
+		var line := lines[i]
+		var half := font.get_string_size(line, HORIZONTAL_ALIGNMENT_LEFT, -1, SPEECH_SIZE).x * 0.5
+		var at := Vector2(foot.x - half, top + float(i) * (SPEECH_SIZE + 2))
+		draw_string(
+			font, at + Vector2(1, 1), line, HORIZONTAL_ALIGNMENT_LEFT, -1, SPEECH_SIZE, COLOR_NAME_SHADOW
+		)
+		draw_string(font, at, line, HORIZONTAL_ALIGNMENT_LEFT, -1, SPEECH_SIZE, color)

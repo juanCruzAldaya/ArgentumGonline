@@ -384,6 +384,12 @@ func (w *World) apply(cmd command) {
 			return
 		}
 		w.swapSpells(p, s.From, s.To)
+	case protocol.TypeTalk:
+		var t protocol.Talk
+		if err := w.codec.DecodePayload(cmd.payload, &t); err != nil {
+			return
+		}
+		w.say(p, t.Text)
 	default:
 		w.log.Debug("ignoring unknown command", "id", cmd.id, "type", cmd.typ)
 	}

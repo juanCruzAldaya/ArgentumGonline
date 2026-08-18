@@ -31,6 +31,7 @@ const (
 	// gives its own spell list. Separate from TypeSwap because the two lists
 	// are separate server state and a bag index is not a spell index.
 	TypeSwapSpell MsgType = "swapSpell"
+	TypeTalk      MsgType = "talk"
 	TypePing      MsgType = "ping"
 
 	// Server -> client.
@@ -40,6 +41,7 @@ const (
 	TypeCombat    MsgType = "combat"
 	TypeSpell     MsgType = "spell"
 	TypeUseResult MsgType = "useResult"
+	TypeSpeech    MsgType = "speech"
 	TypePong      MsgType = "pong"
 	TypeError     MsgType = "error"
 )
@@ -348,6 +350,40 @@ type SpellEvent struct {
 
 	Failed string `json:"failed,omitempty"`
 	Mine   bool   `json:"mine"`
+}
+
+// Talk is a player saying something out loud.
+type Talk struct {
+	Text string `json:"text"`
+}
+
+// Speech is somebody's words, shown over their head to everyone who can see
+// them.
+//
+// It is deliberately the same message for chat and for a spell's incantation,
+// because in Argentum they are the same thing: DecirPalabrasMagicas sends the
+// spell's PalabrasMagicas to everyone in the area anchored to the caster, and
+// the client draws it with Dialogos.CreateDialog exactly as it draws a chat
+// line. One sign per character, so a new one replaces the old — which is what
+// makes saying anything a way to wipe the incantation off your own head.
+//
+// The consequence is the point: casting announces where you are. Argentum goes
+// further and drops your Ocultar outright (modHechizos.bas), which this does
+// too.
+type Speech struct {
+	EntityID uint32 `json:"id"`
+	// X and Y are where the sign hangs. They travel with the message because
+	// the speaker is not always in the receiver's snapshot: an invisible
+	// caster is absent from it by design, and drawing their words in empty air
+	// over their real tile is precisely the tell. Bounded by the viewport like
+	// everything else, so this reveals nothing about anyone you could not
+	// already have walked into.
+	X    int    `json:"x"`
+	Y    int    `json:"y"`
+	Text string `json:"text"`
+	// Spell marks an incantation rather than something the player typed, so
+	// the client can colour it the way the original does (a light green).
+	Spell bool `json:"spell,omitempty"`
 }
 
 // CombatEvent narrates one swing to both people involved.

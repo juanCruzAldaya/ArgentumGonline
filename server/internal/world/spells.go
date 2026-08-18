@@ -198,6 +198,15 @@ func (w *World) cast(caster *Player, spellID int, targetID EntityID) {
 		caster.revealHidden()
 	}
 
+	// The incantation, over the caster's head, for everyone who can see the
+	// tile — DecirPalabrasMagicas in modHechizos.bas. This is the tell: it
+	// fires before any of the spell's effects are worked out, so it lands even
+	// when the cast goes on to fail, and it carries from an invisible caster
+	// as readily as from a visible one.
+	if spell.Words != "" {
+		w.broadcastSpeech(caster, spell.Words, true)
+	}
+
 	event := protocol.SpellEvent{
 		CasterID:   uint32(caster.ID),
 		CasterName: caster.Name,
