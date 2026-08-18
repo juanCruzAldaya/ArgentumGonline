@@ -24,14 +24,17 @@ sistema por dentro. Los otros tres:
 
 ## Estado
 
-Prototipo jugable, con el loop del battle royale cerrado salvo el final de
-partida. Andando hoy:
+Prototipo jugable, con el loop del battle royale cerrado de punta a punta.
+Andando hoy:
 
 - **Mundo compuesto**: cuatro mundos de 760×760 tiles, cosidos con pedazos de
   135 mapas reales de Argentum y elegidos por una vara de coherencia calibrada
   contra el mundo original. El servidor sortea uno por partida.
 - **Zona que se achica**: doce etapas que aceleran y pegan más, desde un círculo
   que cubre el mapa entero hasta una arena de 21 tiles de radio. ~13 minutos.
+- **La partida termina**: el último en pie gana, cada eliminado ve su puesto,
+  sus bajas y cuánto sobrevivió, y la siguiente partida arranca sola sobre el
+  mismo mundo sin que nadie se reconecte.
 - Mundo autoritativo sobre grilla de tiles, tick a 20 Hz, con predicción del
   movimiento y reconciliación por número de secuencia
 - Combate cuerpo a cuerpo y 50 hechizos, con las fórmulas y los cuatro
@@ -44,9 +47,9 @@ partida. Andando hoy:
 - Export web: el mismo proceso Go sirve el cliente HTML5 y el protocolo
 - Bots headless: **101 jugadores simultáneos con el 2,6% de un core**
 
-Todavía **no**: final de partida (la zona cierra y se queda, no hay "ganaste"),
-lobby, NPCs, combate a distancia, facciones, sonido, persistencia. El roadmap
-completo y numerado está en [RESUMEN-EJECUTIVO](RESUMEN-EJECUTIVO.md).
+Todavía **no**: lobby, NPCs, combate a distancia, facciones, sonido,
+persistencia. El roadmap completo y numerado está en
+[RESUMEN-EJECUTIVO](RESUMEN-EJECUTIVO.md).
 
 ## Por qué esta arquitectura
 
@@ -101,10 +104,16 @@ Controles: WASD o flechas, Ctrl para golpear, **M** para el mapa, **Enter** para
 hablar. El resto — agarrar, tirar, equipar, ocultarse, meditar — en
 [RESUMEN-FUNCIONAL](RESUMEN-FUNCIONAL.md).
 
-Flags del servidor: `-addr`, `-tick`, `-seed`, `-debug`, `-respawn`,
+Flags del servidor: `-addr`, `-tick`, `-seed`, `-debug`,
 `-worlds` (de cuáles sortear el mapa), `-world-seed` (fijar cuál),
 `-zone` y `-zone-speed` (apagar la zona, o acelerarla para verla cerrar sin
-esperar trece minutos).
+esperar trece minutos), `-match-restart` (segundos entre una partida decidida y
+la siguiente; 0 la deja terminada) y `-respawn`.
+
+Ojo con `-respawn`: mientras esté puesto, morir no es eliminación, así que
+**la partida no se decide nunca**. Es una comodidad para probar peleas sin
+reiniciar el cliente, y por eso viene apagada — el default es la regla del
+género.
 
 ### Cliente web
 

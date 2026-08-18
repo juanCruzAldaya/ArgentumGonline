@@ -180,6 +180,7 @@ type World struct {
 	log   *slog.Logger
 	rng   *rand.Rand
 	zone  zone
+	match match
 
 	// mapNumber and mapName describe which Argentum map is loaded, so the
 	// client can pick the matching tile data it already ships with.
@@ -323,6 +324,7 @@ func (w *World) step() {
 	w.meditateTick()
 	w.zoneTick()
 	w.respawnDue()
+	w.matchTick()
 	w.broadcast()
 }
 
@@ -576,6 +578,7 @@ func (w *World) viewportOf(p *Player) []protocol.EntityState {
 func (w *World) addPlayer(req joinReq) EntityID {
 	// The match — and with it the ring — starts when somebody is here to play
 	// it, not when the process booted.
+	w.startMatchIfIdle()
 	w.startIfArmed()
 
 	w.nextID++
@@ -611,27 +614,19 @@ func (w *World) addPlayer(req joinReq) EntityID {
 		Inventory:  inventory,
 		Spells:     spellBook(class),
 		conn:       req.conn,
+		joinedAt:   w.tick,
 	}
 	w.players[id] = p
 	w.occupied[tileKey{x, y}] = id
 
-	w.sendTo(p, protocol.TypeWelcome, protocol.Welcome{
-		EntityID:  uint32(id),
-		TickRate:  w.tickRate,
-		MapNumber: w.mapNumber,
-		MapName:   w.mapName,
-		MapWidth:  w.grid.W,
-		MapHeight: w.grid.H,
-		Blocked:   base64.StdEncoding.EncodeToString(w.grid.PackedBitset()),
-		ViewW:     ViewportW,
-		ViewH:     ViewportH,
-		SpawnX:    x,
-		SpawnY:    y,
-		// Tiles per second, derived from the same constant the step gate uses
-		// so the client's interpolation cannot drift from the server's cadence.
-		WalkSpeed:  float64(w.tickRate) * 1000 / moveCooldownMilliticks,
-		SpellSlots: SpellSlots,
-	})
+	// The high-water mark is taken here rather than counted per tick: this is
+	// the only place the number can grow, and placement is reported against it
+	// ("5th of 40") long after the count itself has shrunk.
+	if n := len(w.players); n > w.match.peak {
+		w.match.peak = n
+	}
+
+	w.sendWelcome(p)
 
 	w.sendTo(p, protocol.TypeLoadout, protocol.Loadout{
 		Inventory: p.Inventory,
@@ -642,6 +637,35 @@ func (w *World) addPlayer(req joinReq) EntityID {
 		"id", id, "name", req.name, "pos", [2]int{x, y},
 		"players", len(w.players), "addr", req.conn.RemoteAddr())
 	return id
+}
+
+// sendWelcome tells one client everything about the world that does not change
+// while they play it: the map, the collision bitset, the viewport, and where
+// they are standing right now.
+//
+// It is sent on join and again on a match restart. A restart moves the player
+// to a new spawn without the connection ever dropping, and the spawn tile is
+// what stops the client predicting from where it stood in the last match —
+// reusing the join message means that path is the only one there is, rather
+// than a second one that could quietly drift from it.
+func (w *World) sendWelcome(p *Player) {
+	w.sendTo(p, protocol.TypeWelcome, protocol.Welcome{
+		EntityID:  uint32(p.ID),
+		TickRate:  w.tickRate,
+		MapNumber: w.mapNumber,
+		MapName:   w.mapName,
+		MapWidth:  w.grid.W,
+		MapHeight: w.grid.H,
+		Blocked:   base64.StdEncoding.EncodeToString(w.grid.PackedBitset()),
+		ViewW:     ViewportW,
+		ViewH:     ViewportH,
+		SpawnX:    p.X,
+		SpawnY:    p.Y,
+		// Tiles per second, derived from the same constant the step gate uses
+		// so the client's interpolation cannot drift from the server's cadence.
+		WalkSpeed:  float64(w.tickRate) * 1000 / moveCooldownMilliticks,
+		SpellSlots: SpellSlots,
+	})
 }
 
 // startingInventoryFor is the newbie kit for one class and race. Shared by the

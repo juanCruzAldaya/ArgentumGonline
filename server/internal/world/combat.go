@@ -247,6 +247,9 @@ func (w *World) kill(victim, killer *Player) {
 	if victim.Dead {
 		return
 	}
+	// Before the flag goes up, so aliveCount still counts the victim: last of
+	// five is 5th, not 4th. See match.go.
+	w.eliminate(victim)
 	victim.Dead = true
 	victim.Vitals.HP = 0
 	// Zero unless a respawn delay was configured, in which case the ghost is

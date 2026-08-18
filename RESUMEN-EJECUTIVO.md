@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Estado** | Prototipo jugable con el loop del género cerrado: mundo, combate, objetos y **zona que se achica**. Falta el final de partida. |
+| **Estado** | Prototipo jugable con el loop del género cerrado de punta a punta: mundo, combate, objetos, **zona que se achica** y **partida que termina y se reinicia sola**. |
 | **Arquitectura** | Servidor autoritativo headless en Go + cliente Godot 4 que solo renderiza. |
 | **Licencia** | AGPL-3.0 (los assets de Argentum los liberó Pablo Márquez bajo AGPL). |
 | **Tamaño** | ~11.500 líneas de Go, ~4.400 de GDScript. |
-| **Tests** | 126 tests en `internal/world`, todos verdes (`go test ./...`). |
+| **Tests** | 137 tests en `internal/world`, todos verdes (`go test ./...`). |
 | **Carga medida** | 101 jugadores simultáneos: **2,6% de un core**, 25 MB de RAM, cero frames descartados. |
 | **Deploy** | Docker + Fly.io, región `gru`. La misma imagen sirve el cliente web. |
 
@@ -34,6 +34,9 @@
 6. **Lanzar te delata.** Las palabras mágicas aparecen sobre la cabeza del que
    lanza, para todos los del área — incluso si es invisible. Es la mecánica que
    convierte el sigilo en una decisión.
+7. **La partida termina.** Último en pie gana; cada eliminado ve su puesto, sus
+   bajas y cuánto sobrevivió; y la siguiente arranca sola sobre el mismo mundo
+   sin que nadie se reconecte. El puesto se fija al morir, no al final.
 
 ## Las cuatro decisiones que definieron el proyecto
 
@@ -57,15 +60,19 @@ reglas existen porque el fallo correspondiente ya ocurrió y era invisible.
 
 Ordenado por impacto. Los tiempos son de trabajo, no de calendario.
 
-### 1. Cerrar el ciclo de la partida
+### 1. Cerrar el ciclo de la partida — hecho
 
-Sin esto no es un juego, es un sandbox con una zona.
+1.1. **Detectar el último vivo y terminar la partida.** Hecho.
+1.2. **Pantalla de fin**: puesto, bajas, tiempo sobrevivido, y quién ganó.
+Hecho.
+1.3. **Reinicio de partida** sin reiniciar el proceso. Hecho: `-match-restart`,
+que además reemplaza a `-respawn` como comodidad de testeo, así que el default
+de respawn volvió a 0 — la regla del género.
 
-1.1. **Detectar el último vivo y terminar la partida.** Hoy la zona cierra y se
-queda ahí para siempre. *(chico)*
-1.2. **Pantalla de fin**: posición, bajas, tiempo sobrevivido. *(chico)*
-1.3. **Reinicio de partida** sin reiniciar el proceso, para poder encadenar
-pruebas. *(mediano)*
+Lo que abre, y que es la próxima decisión de diseño: **hoy el muerto se queda
+de fantasma en el mapa**. La intención es que la muerte descalifique y te saque
+al lobby, con modo espectador opcional siguiendo al que te mató. El lobby es
+5.1 y el espectador no está en el roadmap todavía.
 
 ### 2. Sacar los cuellos de botella medidos
 

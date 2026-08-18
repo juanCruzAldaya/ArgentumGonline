@@ -624,6 +624,53 @@ desconexión del cliente lento.
 
 ---
 
+## La partida: cómo termina y cómo empieza la siguiente
+
+**Gana el último en pie.** El servidor mira cuántos quedan vivos en cada tick y,
+cuando queda uno, la partida se decide. Dos condiciones la habilitan:
+
+- **Tiene que haber habido dos.** Una partida que nunca tuvo dos jugadores no
+  puede ganarla uno solo — si no, el primero en conectarse a un servidor de
+  prueba es el último vivo antes de que el cliente dibuje un cuadro.
+- **La muerte tiene que ser definitiva.** Con `-respawn` puesto, morir no
+  elimina, así que no hay último en pie que encontrar. El default es 0.
+
+**El puesto se fija al morir, no al final.** Con cinco vivos, el quinto es el
+que se acaba de morir. Calcularlo al final necesitaría un historial que nadie
+guarda, y dejaría al jugador mirando su propio cadáver sin saber cómo le fue.
+
+**La tarjeta llega dos veces.** Al morir, con la mitad que ya está decidida —
+puesto, bajas y tiempo sobrevivido — y otra vez cuando la partida se define, con
+el nombre del ganador. Es el mismo mensaje porque contesta la misma pregunta, y
+la segunda se dibuja sobre la primera.
+
+El tiempo sobrevivido se cuenta **desde que entraste vos**, no desde que arrancó
+la partida: quien se conectó a los nueve minutos no sobrevivió nueve minutos.
+
+La tarjeta no bloquea el mundo de atrás. El ganador sigue parado en una partida
+a la que le quedan veinte segundos, y el muerto es un fantasma que puede seguir
+mirando. Se cierra con clic o Escape, y se va sola cuando arranca la siguiente.
+
+### La siguiente partida
+
+`-match-restart N` son los segundos entre una partida decidida y la próxima; 0
+la deja terminada. En el reinicio, sobre el mismo mundo y las mismas conexiones:
+
+- el piso se **rehace**, no se completa — si no, los restos se irían acumulando
+  partida a partida hasta empapelar el mapa
+- todos vuelven vivos, con equipo nuevo, repartidos por el mapa como en un
+  ingreso, y con bajas y reloj de supervivencia en cero
+- se limpia lo que sobrevive a un cuadro: buffs, parálisis y los carteles de
+  chat, que duran cinco segundos y si no cruzarían a la partida siguiente
+- la zona vuelve a su primer círculo
+- cada cliente recibe un **Welcome nuevo** — el mismo mensaje que un ingreso, así
+  el cliente se resetea por el camino que ya tenía y no por un segundo camino
+  que podría desincronizarse
+
+Lo que **todavía no pasa**: el muerto se queda de fantasma en el mapa. La
+intención es que la muerte te saque al lobby, con modo espectador opcional
+siguiendo al que te mató; las dos cosas esperan a que exista el lobby.
+
 ## Lo que todavía no existe
 
 | Falta | Nota |
@@ -633,5 +680,5 @@ desconexión del cliente lento.
 | **Facciones** | Armada/Legión no están. |
 | **Hambre y sed que drenen** | Los vitals son estado real del servidor y el HUD los muestra en sus dos barras, pero nada los baja. Es una decisión de diseño pendiente: ¿un battle royale quiere upkeep? |
 | **Persistencia** | A propósito: nadie levelea, nada que guardar. |
-| **Final de partida** | La zona cierra y se queda ahí. No hay "último vivo" ni pantalla de victoria: la partida no termina. Es lo que más falta. |
+| **Salir al lobby al morir** | La partida ya se decide y se reinicia, pero el muerto se queda de fantasma en el mapa en vez de salir al lobby. El modo espectador siguiendo al que te mató tampoco existe. |
 | **Codec binario** | Ya está medido y ya molesta: el snapshot pesa 3,6 KB con la partida llena, 74 KB/s por jugador. Ver OPERACION §7. |

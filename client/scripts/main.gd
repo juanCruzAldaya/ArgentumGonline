@@ -21,6 +21,7 @@ const INPUT_INTERVAL := 0.0
 @onready var _minimap: Control = $UI/Screen/MinimapFrame/Minimap
 @onready var _map_overlay: Control = $UI/Screen/MapOverlay
 @onready var _chat: LineEdit = $UI/Screen/ChatInput
+@onready var _outcome: Control = $UI/Screen/OutcomePanel
 
 var _url := DEFAULT_URL
 var _player_name := ""
@@ -64,6 +65,11 @@ var _zone_stage := -1
 var _zone_shrinking := false
 var _zone_safe := true
 
+## Whether a Welcome has already landed. The second one is not an arrival: the
+## server re-sends it to start the next match on a connection that never
+## dropped. See _on_welcomed.
+var _welcomed := false
+
 
 func _ready() -> void:
 	randomize()
@@ -78,6 +84,7 @@ func _ready() -> void:
 	_net.combat_received.connect(_on_combat)
 	_net.spell_received.connect(_on_spell)
 	_net.speech_received.connect(_on_speech)
+	_net.outcome_received.connect(_on_outcome)
 	_net.use_result_received.connect(_on_use_result)
 	_hud.cast_requested.connect(_on_cast_requested)
 	# Two panel gestures, two explicit messages. Nothing on the client sends the
@@ -232,6 +239,24 @@ func _announce_zone(zone: Variant) -> void:
 			_hud.log_line("Estás a salvo dentro de la zona.", _hud.COLOR_MANA)
 		else:
 			_hud.log_line("¡Estás fuera de la zona! Corré al círculo.", _hud.COLOR_EXP)
+
+
+## How the match ended for us. The panel takes the card; the console gets the
+## one line that is worth keeping in the log after the card is dismissed.
+func _on_outcome(outcome: Dictionary) -> void:
+	_outcome.show_outcome(outcome)
+
+	var place := int(outcome.get("place", 0))
+	var players := int(outcome.get("of", 0))
+	if bool(outcome.get("won", false)):
+		_hud.log_line("¡Ganaste! Último en pie de %d." % players, _hud.COLOR_ACCENT)
+		return
+
+	var winner := str(outcome.get("winner", ""))
+	if winner != "":
+		_hud.log_line("Ganó %s. Quedaste #%d de %d." % [winner, place, players], _hud.COLOR_EXP)
+	else:
+		_hud.log_line("Eliminado: #%d de %d." % [place, players], _hud.COLOR_EXP)
 
 
 ## Words over somebody's head. The same handler for chat and for a spell's
@@ -414,6 +439,15 @@ func _unhandled_input(event: InputEvent) -> void:
 			if _connected:
 				_chat.open()
 				get_viewport().set_input_as_handled()
+			return
+
+	# The result card is the first thing Escape should take away — it is the
+	# newest thing on screen and the only one that appeared without being asked
+	# for.
+	if _outcome.visible and event is InputEventKey and event.pressed and not event.echo:
+		if event.keycode == KEY_ESCAPE:
+			_outcome.close()
+			get_viewport().set_input_as_handled()
 			return
 
 	# The map is a modal read of something you already have: while it is open it
@@ -632,6 +666,18 @@ func _on_welcomed(welcome: Dictionary) -> void:
 	_minimap.configure(welcome)
 	_map_overlay.configure(welcome, _minimap.terrain_texture())
 	_hud.set_spell_slots(int(welcome.get("spellSlots", 0)))
+
+	# A second Welcome on a live connection is a match restart, not an arrival.
+	# Everything that belongs to the match just finished goes here: the result
+	# card, and the edge detection that decides when to call the zone out.
+	if _welcomed:
+		_outcome.close()
+		_zone_stage = -1
+		_zone_shrinking = false
+		_zone_safe = true
+		_hud.log_line("Nueva partida. Suerte.", _hud.COLOR_ACCENT)
+		return
+	_welcomed = true
 
 	_map_name = str(welcome.get("mapName", ""))
 	if _map_name != "":

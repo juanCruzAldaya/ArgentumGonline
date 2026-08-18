@@ -201,6 +201,11 @@ func (w *World) startZone() {
 		grace, hold, shrink = zoneGraceTicks, zoneHoldTicks, zoneShrinkTicks
 	}
 	w.zone = zone{
+		// Kept, not dropped: armed means "this world is configured to have a
+		// ring", which stays true for as long as the process lives. Losing it
+		// here made a restarted match silently zoneless, and made startIfArmed
+		// a one-shot despite its name.
+		armed:       true,
 		enabled:     true,
 		phase:       zoneWaiting,
 		x:           cx,

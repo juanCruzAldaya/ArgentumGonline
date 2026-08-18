@@ -1355,6 +1355,41 @@ zona es una muerte normal: soltás lo que llevabas y arranca el respawn.
 `-zone-speed N` divide todos los tiempos, que es la única forma práctica de ver
 las últimas etapas sin jugar hasta ellas.
 
+### El ciclo de la partida
+
+`internal/world/match.go`. Tres fases: `matchIdle` hasta que entra alguien,
+`matchRunning`, y `matchOver` cuando queda uno vivo.
+
+Una partida solo se **decide** si sus muertes son definitivas. Eso son dos
+condiciones (`decidable()`): que haya habido al menos dos jugadores, y que
+`-respawn` esté en 0. La segunda apareció escribiendo los tests: con respawn
+puesto, el muerto sigue muerto durante el segundo que tarda en volver, y en ese
+segundo `aliveCount()` decía 1 y la partida se daba por terminada. Un servidor
+de pruebas terminaba la partida en la primera muerte.
+
+El **puesto se fija al morir**, contando al que muere: último de cinco es 5º.
+`eliminate()` corre desde `kill()` *antes* de marcar el flag, que es lo que hace
+que la cuenta lo incluya.
+
+`-match-restart N` reinicia sin reiniciar el proceso. Lo que hay que acordarse
+al tocarlo es que el reinicio tiene que limpiar **todo lo que sobrevive a un
+cuadro**: el piso (se rehace entero), los buffs y la parálisis de quien nunca
+murió, y los carteles de chat, que duran cinco segundos y cruzarían de partida.
+
+Dos trampas que costaron un test cada una:
+
+- **Los tiles se liberan todos antes de asignar ninguno.** Reubicar jugador por
+  jugador hace que al segundo se le niegue un tile que el primero está por
+  dejar.
+- **`startZone` se comía su propio `armed`.** El literal de struct no lo
+  recopiaba, así que después del primer arranque la zona quedaba "no armada" y
+  toda partida posterior al reinicio salía sin zona. `startIfArmed` era de un
+  solo uso a pesar del nombre.
+
+Verificado de punta a punta con tres bots y `-zone-speed 60`: ganó uno a los 110
+segundos, y cinco segundos más tarde la zona volvió a activarse y arrancó la
+siguiente sobre las mismas conexiones.
+
 ### Hablar, y las palabras mágicas sobre la cabeza
 
 Un cartel por personaje, como en Argentum: lo que digás **reemplaza** lo que
@@ -1405,6 +1440,5 @@ El roadmap vive en [RESUMEN-EJECUTIVO](RESUMEN-EJECUTIVO.md), numerado y
 ordenado por impacto, para que haya una sola lista y no dos que se contradigan.
 
 Lo más urgente de ahí, en una línea: el codec binario (el snapshot mide 3,6 KB
-con la partida llena, ver §7), el final de partida (la zona cierra y se queda,
-no hay "ganaste"), y el paso de caminata a 100% para sacar el tirón de la
-interpolación.
+con la partida llena, ver §7), el paso de caminata a 100% para sacar el tirón de
+la interpolación, y salir al lobby al morir en vez de quedar de fantasma.

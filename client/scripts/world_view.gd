@@ -215,6 +215,12 @@ func configure(welcome: Dictionary) -> void:
 	_entities.clear()
 	_ground.clear()
 	_pending.clear()
+	# A match restart re-sends the Welcome on a connection that never dropped,
+	# so anything that outlives a frame has to go here too: a sign hangs over a
+	# head for five seconds, which is long enough to follow somebody into the
+	# next match and be read as them talking.
+	_speech.clear()
+	_zone = {}
 	_next_seq = 1
 	_local_step_ready_at = 0.0
 	_local_turn_ready_at = 0.0

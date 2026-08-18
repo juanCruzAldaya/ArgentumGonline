@@ -35,6 +35,17 @@ type Player struct {
 	// only sense the original allows: as a ghost. See kill().
 	Dead bool
 
+	// Placement is where this player finished the match, 1 being the winner,
+	// and 0 while they are still in it. Fixed at the moment of death by
+	// eliminate() — see match.go for why it cannot be worked out at the end.
+	Placement int
+
+	// joinedAt and diedAt bracket how long this player lasted. Both are
+	// absolute world ticks; diedAt is 0 while they are alive. joinedAt is reset
+	// by a match restart, so "time survived" always means time in *this* match.
+	joinedAt uint64
+	diedAt   uint64
+
 	// respawnAt is the tick a dead player comes back on, or 0 for never —
 	// which is the default, since elimination is the genre's rule. Only a
 	// server started with -respawn sets it. See respawn.go.

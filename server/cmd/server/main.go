@@ -53,11 +53,12 @@ func main() {
 		mapFile    = flag.String("map-file", defaultMapFile, "converted Argentum map to play on; -map-file=\"\" plays the generated demo arena instead")
 		itemsFile  = flag.String("items-file", defaultItemsFile, "converted obj.dat; -items-file=\"\" leaves every weapon and armour unknown")
 		spellsFile = flag.String("spells-file", defaultSpellsFile, "converted Hechizos.dat; -spells-file=\"\" leaves nothing castable")
-		respawn    = flag.Int("respawn", 5, "seconds a dead player stays a ghost before coming back in the middle of the map; 0 is the genre's own rule, elimination")
+		respawn    = flag.Int("respawn", 0, "seconds a dead player stays a ghost before coming back in the middle of the map; 0, the default, is the genre's own rule — and a match with respawn on is never decided")
 		worlds     = flag.String("worlds", defaultWorlds, "glob of composed worlds to draw this match's map from; -worlds=\"\" falls back to -map-file")
 		worldSeed  = flag.Int64("world-seed", 0, "pick the world deterministically; 0 draws from the clock")
 		zone       = flag.Bool("zone", true, "shrink the safe circle over the match; -zone=false leaves the whole map playable")
 		zoneSpeed  = flag.Float64("zone-speed", 1, "multiplier on every zone duration; 10 runs a whole match of contractions in about a minute")
+		restart    = flag.Int("match-restart", 20, "seconds between a match being decided and the next one starting; 0 leaves the finished match standing")
 	)
 	flag.Parse()
 
@@ -118,15 +119,21 @@ func main() {
 
 	w := world.New(grid, protocol.JSONCodec{}, *tickRate, log)
 	w.SetMap(mapNumber, mapName)
-	// A playtest affordance, not the game's rule: a battle royale eliminates
-	// you. It defaults on because testing a fight otherwise means restarting
-	// the client after every death; -respawn 0 gives permadeath back.
 	if *zone {
 		w.ArmZone(*zoneSpeed)
 	}
+	w.SetMatchRestart(*restart)
+
+	// Respawn used to default on, because dying otherwise meant restarting the
+	// client to test the next fight. -match-restart is the honest version of
+	// that convenience: the match ends, everyone is put back, and the next one
+	// starts on the same connections. So the default goes back to the genre's
+	// rule — and it has to, because a match where death is not elimination is
+	// a match that never gets decided.
 	w.SetRespawnDelay(*respawn)
 	if *respawn > 0 {
-		log.Info("respawn habilitado", "segundos", *respawn)
+		log.Warn("respawn habilitado: la muerte no elimina, asi que la partida no se va a decidir",
+			"segundos", *respawn)
 	}
 
 	itemCount, spellCount := 0, 0

@@ -16,6 +16,9 @@ signal use_result_received(result: Dictionary)
 ## Somebody's words, to be drawn over their head. Chat and spell incantations
 ## arrive through the same signal because the server sends them as one message.
 signal speech_received(speech: Dictionary)
+## How the match ended for us. Arrives once on elimination and again when the
+## match is decided — see protocol.Outcome for why it is one message twice.
+signal outcome_received(outcome: Dictionary)
 
 var _socket := WebSocketPeer.new()
 var _last_state := WebSocketPeer.STATE_CLOSED
@@ -170,6 +173,8 @@ func _handle_frame(text: String) -> void:
 			combat_received.emit(data)
 		"speech":
 			speech_received.emit(data)
+		"outcome":
+			outcome_received.emit(data)
 		"spell":
 			spell_received.emit(data)
 		"useResult":

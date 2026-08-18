@@ -209,6 +209,15 @@ func (w *World) SetItems(items map[int]Item) {
 		}
 	}
 
+	w.scatterMatchLoot()
+}
+
+// scatterMatchLoot spreads a match's worth of gear and potions over the map.
+//
+// Separate from SetItems because a match restart has to lay the floor again
+// from scratch (see resetMatch): the item table is installed once, the loot is
+// installed once per match.
+func (w *World) scatterMatchLoot() {
 	// One shuffled pool of free tiles, drained by both passes, so gear and
 	// potions can never be assigned the same tile — Argentum's map format
 	// carries one object per tile and groundStack keeps that constraint.

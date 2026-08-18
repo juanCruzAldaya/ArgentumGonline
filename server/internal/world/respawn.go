@@ -63,8 +63,31 @@ func (w *World) respawnDue() {
 // theirs, and a test session is more useful if it survives dying.
 func (w *World) respawn(p *Player) {
 	x, y := w.centreSpawn()
+	w.revive(p, x, y)
 
+	w.sendTo(p, protocol.TypeLoadout, protocol.Loadout{
+		Inventory: p.Inventory,
+		Spells:    p.Spells,
+	})
+
+	w.log.Info("player respawned", "id", p.ID, "name", p.Name, "pos", [2]int{x, y}, "alive", w.aliveCount())
+}
+
+// revive puts a player back on their feet at a given tile, alive and kitted.
+//
+// Split out of respawn because a match restart needs exactly the same work on
+// a player who never died: fresh vitals, fresh bag, a body that is not a
+// corpse, and every cooldown cleared. The caller supplies the tile because the
+// two want different ones — a respawn goes to the middle of the map so a ghost
+// comes back somewhere findable, while a new match scatters everybody the way
+// a join does.
+//
+// The caller owns the old tile: revive claims the new one but does not release
+// what the player was standing on, since after a death that has already been
+// freed and after a restart it has not.
+func (w *World) revive(p *Player, x, y int) {
 	p.Dead = false
+	p.diedAt = 0
 	p.respawnAt = 0
 	p.X, p.Y = x, y
 	p.Heading = protocol.South
@@ -89,12 +112,14 @@ func (w *World) respawn(p *Player) {
 	p.lastAttackTick, p.lastCastTick, p.lastUseTick, p.lastHideTick = 0, 0, 0, 0
 	p.moveReadyAt, p.turnReadyAt = 0, 0
 
-	w.sendTo(p, protocol.TypeLoadout, protocol.Loadout{
-		Inventory: p.Inventory,
-		Spells:    p.Spells,
-	})
-
-	w.log.Info("player respawned", "id", p.ID, "name", p.Name, "pos", [2]int{x, y}, "alive", w.aliveCount())
+	// kill() already clears these on the way out, so a ghost arrives here
+	// clean. A player who never died does not: a match restart has to take
+	// away the Celeridad they were still running on, or the new match starts
+	// with somebody buffed by the old one.
+	p.revealHidden()
+	p.ParalyzedUntil, p.ImmobilizedUntil = 0, 0
+	p.AgilityDelta, p.AgilityUntil = 0, 0
+	p.StrengthDelta, p.StrengthUntil = 0, 0
 }
 
 // centreSpawn is the free tile nearest the middle of the map, searched in

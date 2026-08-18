@@ -743,6 +743,42 @@ Los tests de la zona dejaron dos cosas más:
 casos se ven iguales en verde.
 
 
+## 21. La partida terminaba en la primera muerte de cada prueba
+
+Detectar el último vivo es comparar `aliveCount()` contra 1, y eso es
+literalmente el código. Lo que no se ve en esa línea es que **con `-respawn`
+puesto la cuenta baja igual**: el muerto está muerto durante el segundo que
+tarda en volver, y en ese segundo, con dos jugadores, `aliveCount()` da 1.
+
+O sea que un servidor de pruebas — el único modo en que se venía jugando —
+declaraba ganador en la primera muerte, mostraba la pantalla de fin, y arrancaba
+otra partida. La feature andaba perfecto y hacía exactamente lo contrario de lo
+que servía.
+
+La regla que faltaba no es un caso borde, es una definición: **una partida solo
+se puede decidir si sus muertes son definitivas.** `-respawn` dice que no lo
+son. Con eso escrito, la misma condición tapa el otro agujero — un jugador solo
+en un servidor es el último vivo desde el primer tick — y las dos salen de la
+misma función de tres líneas.
+
+Después vino la consecuencia: si el respawn impide que la partida se decida, no
+puede seguir siendo el default. Existía porque morir obligaba a reiniciar el
+cliente para probar la pelea siguiente, y `-match-restart` es la versión honesta
+de esa comodidad. El default volvió a 0.
+
+Y quedó un test que casi no prueba nada. El primero que escribí mataba a alguien
+y daba **un** `step()`, esperando que el fantasma ya hubiera vuelto. El respawn
+tarda un segundo: veinte ticks. El test fallaba con un mensaje ("el muerto no
+volvió") que era sobre el test, no sobre el código. Ahora corre los veinte ticks
+mirando que **en ninguno** se decida la partida, que es la ventana donde estaba
+el bug.
+
+**Lección:** un flag que cambia el significado de "muerto" cambia el significado
+de todo lo que cuenta muertos. Y el segundo bug de este capítulo — el de la zona
+que perdía su `armed` al arrancar — era exactamente lo mismo: un campo que decía
+"configurado" y que la propia función de arranque pisaba.
+
+
 ## Lo que quedó aprendido, en una línea cada uno
 
 1. Si el objetivo es "igual a esta imagen", usá la imagen.

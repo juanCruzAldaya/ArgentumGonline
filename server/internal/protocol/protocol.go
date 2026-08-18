@@ -42,6 +42,7 @@ const (
 	TypeSpell     MsgType = "spell"
 	TypeUseResult MsgType = "useResult"
 	TypeSpeech    MsgType = "speech"
+	TypeOutcome   MsgType = "outcome"
 	TypePong      MsgType = "pong"
 	TypeError     MsgType = "error"
 )
@@ -425,6 +426,33 @@ type Zone struct {
 	Seconds   float64 `json:"t,omitempty"`
 	Stage     int     `json:"st"`
 	Shrinking bool    `json:"s,omitempty"`
+}
+
+// Outcome is how the match ended for one player, and it is the only message
+// that is about the match rather than about the world.
+//
+// It arrives twice for anyone who does not win: once the moment they are
+// eliminated, carrying the half that is already decided — where they placed,
+// how many they took with them, how long they lasted — and again when the
+// match is called, with the winner filled in. The two are the same message
+// because they answer the same question, and a client that draws the second
+// one over the first needs no extra logic to do it.
+type Outcome struct {
+	// Placement is where this player finished, 1 being the winner. It is fixed
+	// at the moment of death: with five alive, the fifth is whoever just died.
+	Placement int `json:"place"`
+	// Players is how many the match held at its fullest, so the placement has
+	// something to be out of. Not the current connection count, which has
+	// already shrunk by the time anyone reads the card.
+	Players int `json:"of"`
+	Kills   int `json:"kills"`
+	// Seconds is time survived, measured from this player's own join: somebody
+	// who connected nine minutes in did not survive nine minutes.
+	Seconds float64 `json:"secs"`
+	Won     bool    `json:"won,omitempty"`
+	// Winner is empty in the message sent at the moment of elimination —
+	// nobody has won yet — and set in the one sent when the match is called.
+	Winner string `json:"winner,omitempty"`
 }
 
 // Drop asks to place one inventory slot's whole stack on the ground at the
