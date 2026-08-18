@@ -1381,6 +1381,21 @@ Tres decisiones que costaron una iteración cada una:
 - **Arranca con el primer jugador, no con el proceso.** Un servidor que bootea
   una hora antes de que alguien entre habría cerrado el círculo entero para
   cuando el primero elige personaje.
+- **La zona apunta a un destino sorteado, no camina a la deriva.** Cada etapa
+  puede correr el centro exactamente lo que el radio cedió, y esos permisos
+  telescopian: el presupuesto total es el radio inicial menos el final, que
+  alcanza para cruzar el mapa. Pero elegir la dirección al azar en cada etapa es
+  una caminata aleatoria, y una caminata aleatoria que arranca en el centro *se
+  queda cerca del centro* — los pasos se cancelan. Medido sobre 25 partidas:
+  terminaba a 112 tiles del centro en promedio y solo 1 de 25 pasaba los 200.
+  Sorteando el punto final al empezar y yendo hacia él, la media sube a 260 y
+  18 de 25 pasan los 200. El sobrante del permiso se gasta en un bamboleo al
+  azar, así que apuntar siempre le gana a vagar y el camino igual no se puede
+  extrapolar dos etapas antes.
+
+  El destino se puntúa por **cuánto del arena final es terreno caminable**, no
+  por si su centro lo es: el medio de un lago pasa la prueba ingenua y les deja
+  un charco a los últimos dos.
 
 El daño sube por etapa: 0 (gracia), 1, 2, 3, 4, 6, 8, 11, 14, 18, 23, 29, 36 por
 segundo, cobrado una vez por segundo para que los números se lean. Morir por la

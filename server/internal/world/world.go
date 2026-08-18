@@ -10,6 +10,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"log/slog"
+	"math"
 	"math/rand"
 	"sort"
 	"time"
@@ -707,10 +708,17 @@ func (w *World) removePlayer(id EntityID) {
 
 // freeSpawn finds an unblocked, unoccupied tile. Random probing is fast while
 // the map is mostly empty; the scan is the guarantee that it always terminates.
+//
+// The probing is confined to the safe circle whenever the ring is running. At
+// the start of a match that changes nothing — the first circle covers every
+// walkable tile, so a point inside it is a point anywhere. It is everything for
+// somebody arriving late: with the ring down to a radius of 44 on a 760-tile
+// map, a uniformly random tile is outside the circle 99,7% of the time, and
+// spawning there is not a disadvantage but a death — the walk back is longer
+// than the health bar, and the player never had a turn.
 func (w *World) freeSpawn() (int, int) {
 	for i := 0; i < spawnAttempts; i++ {
-		x := w.rng.Intn(w.grid.W)
-		y := w.rng.Intn(w.grid.H)
+		x, y := w.randomSpawnCandidate()
 		if w.tileFree(x, y) {
 			return x, y
 		}
@@ -725,6 +733,32 @@ func (w *World) freeSpawn() (int, int) {
 	// A map with no free tile is a map bug, not a runtime condition.
 	w.log.Error("no free spawn tile, placing at origin")
 	return 0, 0
+}
+
+// randomSpawnCandidate is one tile to try: uniform over the safe circle while
+// the ring is running, uniform over the map otherwise.
+//
+// The point inside the circle is drawn in polar coordinates with the radius
+// scaled by a square root, which is what makes it uniform over the *area* —
+// without it the draws bunch up in the middle, and every late arrival would
+// land on top of the same few tiles.
+func (w *World) randomSpawnCandidate() (int, int) {
+	z := &w.zone
+	if !z.enabled || z.radius <= 0 {
+		return w.rng.Intn(w.grid.W), w.rng.Intn(w.grid.H)
+	}
+
+	// A tile of margin, because the draw is continuous and the answer is a
+	// grid square: rounding moves the point by up to 0,71 of a tile, which is
+	// enough to land you just outside a circle you were drawn inside. Outside
+	// is not "nearly safe" — it is taking damage from the first second.
+	reach := math.Max(z.radius-1, 0)
+
+	angle := w.rng.Float64() * 2 * math.Pi
+	dist := reach * math.Sqrt(w.rng.Float64())
+	x := int(math.Round(z.x + math.Cos(angle)*dist))
+	y := int(math.Round(z.y + math.Sin(angle)*dist))
+	return min(max(x, 0), w.grid.W-1), min(max(y, 0), w.grid.H-1)
 }
 
 func (w *World) tileFree(x, y int) bool {

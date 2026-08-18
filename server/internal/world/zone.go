@@ -123,6 +123,10 @@ type zone struct {
 	// real starting circle rather than from wherever it happens to be.
 	fromX, fromY, fromRadius float64
 
+	// Where the last circle is meant to end up, drawn once when the match
+	// starts. See pickDestination for why the ring aims instead of wandering.
+	destX, destY float64
+
 	phaseEndsAt uint64
 	lastBiteAt  uint64
 
@@ -200,6 +204,8 @@ func (w *World) startZone() {
 	if grace == 0 {
 		grace, hold, shrink = zoneGraceTicks, zoneHoldTicks, zoneShrinkTicks
 	}
+	destX, destY := w.pickDestination()
+
 	w.zone = zone{
 		// Kept, not dropped: armed means "this world is configured to have a
 		// ring", which stays true for as long as the process lives. Losing it
@@ -215,10 +221,13 @@ func (w *World) startZone() {
 		graceTicks:  grace,
 		holdTicks:   hold,
 		shrinkTicks: shrink,
+		destX:       destX,
+		destY:       destY,
 	}
 	w.planNextCircle()
 	w.log.Info("zona activa",
 		"centro", [2]int{int(cx), int(cy)}, "radio", int(w.zone.radius),
+		"destino", [2]int{int(destX), int(destY)},
 		"etapas", zoneStages, "gracia_s", grace/uint64(w.tickRate))
 }
 
@@ -248,9 +257,82 @@ func (w *World) walkableBounds() (minX, minY, maxX, maxY int, any bool) {
 	return
 }
 
+// pickDestination chooses where the last circle is meant to end up.
+//
+// The ring used to have no destination at all: every stage stepped off in a
+// random direction, bounded by how much the radius had shrunk. That is a random
+// walk, and a random walk starting at the centre of the map *stays near the
+// centre of the map* — the steps cancel out. Twelve stages of it typically
+// drifted about 150 tiles on a 760-tile world, so the endgame was always
+// roughly the middle and the map's own places never got their turn.
+//
+// Drawing the endpoint up front and aiming at it makes the last arena land
+// anywhere: a corner, a forest, the edge of the water. Where the fight happens
+// becomes something the match decides, which is the whole reason the circle
+// moves at all.
+//
+// The candidate has to be somewhere a fight can actually happen, so it is
+// scored on how much of the final arena is walkable ground rather than just on
+// being walkable itself: the centre of a lake passes the naive test and gives
+// the last two players a puddle.
+func (w *World) pickDestination() (float64, float64) {
+	minX, minY, maxX, maxY, any := w.walkableBounds()
+	cx, cy := float64(minX+maxX)/2, float64(minY+maxY)/2
+	if !any {
+		return cx, cy
+	}
+
+	const attempts = 60
+	const wantWalkable = 0.7
+
+	bestX, bestY, best := cx, cy, -1.0
+	for i := 0; i < attempts; i++ {
+		x := float64(minX) + w.rng.Float64()*float64(maxX-minX)
+		y := float64(minY) + w.rng.Float64()*float64(maxY-minY)
+		score := w.walkableFraction(x, y, zoneFinalRadius)
+		if score > best {
+			bestX, bestY, best = x, y, score
+		}
+		if score >= wantWalkable {
+			return x, y
+		}
+	}
+	// Nothing cleared the bar: take the best seen rather than falling back to
+	// the centre, which is the one answer this whole function exists to avoid.
+	return bestX, bestY
+}
+
+// walkableFraction is how much of the disc around a point is standable, on a
+// coarse sample. Coarse on purpose: this runs sixty times at match start and
+// the answer only has to tell a field from a lake.
+func (w *World) walkableFraction(cx, cy, radius float64) float64 {
+	const step = 3.0
+	total, free := 0, 0
+	for dy := -radius; dy <= radius; dy += step {
+		for dx := -radius; dx <= radius; dx += step {
+			if dx*dx+dy*dy > radius*radius {
+				continue
+			}
+			x, y := int(cx+dx), int(cy+dy)
+			if x < 0 || y < 0 || x >= w.grid.W || y >= w.grid.H {
+				total++
+				continue
+			}
+			total++
+			if !w.grid.Blocked(x, y) {
+				free++
+			}
+		}
+	}
+	if total == 0 {
+		return 0
+	}
+	return float64(free) / float64(total)
+}
+
 // planNextCircle draws the circle for the coming stage: smaller, and centred
-// somewhere inside the current one so it never leaves the safe ground it is
-// contracting from.
+// inside the current one so it never leaves the safe ground it is contracting
+// from.
 func (w *World) planNextCircle() {
 	z := &w.zone
 	if z.stage >= zoneStages || z.radius <= zoneFinalRadius {
@@ -264,15 +346,38 @@ func (w *World) planNextCircle() {
 		next = zoneFinalRadius
 	}
 
-	// The new centre is offset by at most the difference in radii, which is
-	// exactly the condition for the smaller circle to sit wholly inside the
+	// slack is how far the centre may move: exactly the difference in radii,
+	// which is the condition for the smaller circle to sit wholly inside the
 	// larger one. A circle that poked outside would strand players who had
-	// correctly walked into the safe area.
+	// correctly walked into the safe area, so this bound is not negotiable and
+	// everything below has to fit inside it.
 	slack := z.radius - next
-	angle := w.rng.Float64() * 2 * math.Pi
-	dist := slack * math.Sqrt(w.rng.Float64())
-	z.nextX = z.x + math.Cos(angle)*dist
-	z.nextY = z.y + math.Sin(angle)*dist
+
+	// Aim at the destination, going as far as the slack allows. Early stages
+	// have the most slack and cover the most ground, which is also when the
+	// circle is huge and moving it costs the players the least.
+	dx, dy := z.destX-z.x, z.destY-z.y
+	dist := math.Hypot(dx, dy)
+	move := math.Min(dist, slack)
+	if dist > 0 {
+		dx, dy = dx/dist*move, dy/dist*move
+	} else {
+		dx, dy = 0, 0
+	}
+
+	// Whatever slack is left over is spent on a random wobble, so the path is
+	// not a straight line anyone can extrapolate two stages ahead. It is only
+	// ever the remainder, so aiming always wins over wandering — the opposite
+	// of the old behaviour, where wandering was all there was.
+	if spare := slack - move; spare > 0 {
+		angle := w.rng.Float64() * 2 * math.Pi
+		wobble := spare * math.Sqrt(w.rng.Float64())
+		dx += math.Cos(angle) * wobble
+		dy += math.Sin(angle) * wobble
+	}
+
+	z.nextX = z.x + dx
+	z.nextY = z.y + dy
 	z.nextRadius = next
 }
 

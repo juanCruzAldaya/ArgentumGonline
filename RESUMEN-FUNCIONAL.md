@@ -398,6 +398,14 @@ Después, cada etapa dibuja el próximo círculo, espera a que lo veas, y **muev
 pared hacia él de forma continua**. Nunca salta: quedar afuera es una
 persecución que se gana caminando, no un teletransporte.
 
+**Cada partida termina en otro lado del mundo.** Al empezar se sortea el punto
+donde va a quedar la arena final —un rincón, un bosque, el borde del agua— y el
+círculo va hacia ahí. Antes elegía una dirección al azar en cada etapa, que
+suena a lo mismo y no lo es: eso es una caminata aleatoria, los pasos se
+cancelan, y terminaba siempre más o menos en el medio del mapa. El punto se
+elige mirando cuánto del arena final es terreno caminable, así que no te toca
+pelear los últimos dos minutos adentro de un lago.
+
 Las etapas **se aceleran**: la primera espera 50 s y cierra en 40, la última
 espera 18 y cierra en 14. Al principio el círculo es enorme y cruzarlo es la
 mitad del trabajo; al final entra en dos pantallas.

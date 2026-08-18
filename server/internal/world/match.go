@@ -238,6 +238,14 @@ func (w *World) resetMatch() {
 	clear(w.ground)
 	w.scatterMatchLoot()
 
+	// The ring goes first, and the order is load-bearing: freeSpawn draws
+	// inside the safe circle, so reviving anybody before the zone is back at
+	// its opening radius would pack the whole match into the last one's final
+	// arena instead of spreading it over the map.
+	if w.zone.armed {
+		w.startZone()
+	}
+
 	// Every tile is released before any is claimed, so the second player placed
 	// cannot be denied a tile the first one is about to leave.
 	players := w.playersInOrder()
@@ -262,10 +270,6 @@ func (w *World) resetMatch() {
 			Inventory: p.Inventory,
 			Spells:    p.Spells,
 		})
-	}
-
-	if w.zone.armed {
-		w.startZone()
 	}
 
 	w.log.Info("partida reiniciada", "jugadores", len(w.players))

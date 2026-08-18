@@ -1,6 +1,7 @@
 package world
 
 import (
+	"math"
 	"math/rand"
 	"testing"
 
@@ -349,5 +350,65 @@ func TestRestartStartsTheZoneOver(t *testing.T) {
 	}
 	if w.zone.radius != firstRadius {
 		t.Errorf("radio = %.1f, se esperaba el inicial %.1f", w.zone.radius, firstRadius)
+	}
+}
+
+// Somebody arriving with the ring already closed has to land inside it.
+//
+// A uniformly random tile on a 760-map is outside a radius-44 circle 99,7% of
+// the time, and outside is not a disadvantage this late -- it is a death with
+// no turn taken, because the walk back is longer than the health bar.
+func TestLateJoinSpawnsInsideTheZone(t *testing.T) {
+	w := newTestWorld(t, 400, 400)
+	w.rng = rand.New(rand.NewSource(7))
+	w.ArmZone(1)
+	w.startIfArmed()
+
+	// Wind the ring down to a small circle off in one corner, so "inside" and
+	// "anywhere" cannot be confused for each other.
+	w.zone.x, w.zone.y, w.zone.radius = 90, 70, 25
+
+	for i := 0; i < 40; i++ {
+		// place() moves the player itself, and what is under test is where the
+		// world chose to put them -- so the spawn is read off the Welcome,
+		// which is also the number the client predicts from.
+		_, conn := place(t, w, "tarde", 0, 0)
+		var welcome protocol.Welcome
+		if err := w.codec.DecodePayload(conn.lastOfType(t, protocol.TypeWelcome), &welcome); err != nil {
+			t.Fatalf("decode welcome: %v", err)
+		}
+		x, y := welcome.SpawnX, welcome.SpawnY
+		dx, dy := float64(x)-w.zone.x, float64(y)-w.zone.y
+		if math.Hypot(dx, dy) > w.zone.radius {
+			t.Fatalf("spawn en (%d,%d) a %.1f tiles del centro, fuera del radio %.0f",
+				x, y, math.Hypot(dx, dy), w.zone.radius)
+		}
+	}
+}
+
+// And the same rule must not follow a restart: a new match spreads everybody
+// over the map, not into the arena the last one ended in.
+func TestRestartSpreadsBeyondTheOldFinalCircle(t *testing.T) {
+	w := matchWorld(t)
+	w.SetMatchRestart(1)
+	w.ArmZone(1)
+	a, _ := place(t, w, "a", 5, 5)
+	b, _ := place(t, w, "b", 6, 6)
+
+	// End the match with the ring squeezed into a corner.
+	w.zone.x, w.zone.y, w.zone.radius = 10, 10, 4
+	w.kill(b, a)
+	w.matchTick()
+	w.tick += 20
+	w.matchTick()
+
+	if w.zone.radius <= 4 {
+		t.Fatalf("la zona no volvió a abrirse: radio %.1f", w.zone.radius)
+	}
+	for _, p := range []*Player{a, b} {
+		if math.Hypot(float64(p.X)-10, float64(p.Y)-10) <= 4 {
+			t.Errorf("%s reapareció dentro del círculo final de la partida anterior, en (%d,%d)",
+				p.Name, p.X, p.Y)
+		}
 	}
 }

@@ -3,6 +3,7 @@ package world
 import (
 	"juegito/server/internal/protocol"
 	"math"
+	"math/rand"
 	"testing"
 )
 
@@ -277,5 +278,96 @@ func TestZoneStateStopsOfferingANextCircleAtTheEnd(t *testing.T) {
 	}
 	if state.Radius < zoneFinalRadius-1e-9 {
 		t.Errorf("el radio final quedó en %.2f, por debajo del piso de %.2f", state.Radius, zoneFinalRadius)
+	}
+}
+
+// runZoneToEnd advances the ring until it stops contracting.
+func runZoneToEnd(t *testing.T, w *World) {
+	t.Helper()
+	for i := 0; w.zone.phase != zoneDone && i < 2_000_000; i++ {
+		w.tick++
+		w.zoneTick()
+	}
+	if w.zone.phase != zoneDone {
+		t.Fatal("la zona nunca terminó de cerrar")
+	}
+}
+
+// The ring has to arrive where it said it was going.
+//
+// The slack telescopes: every stage may move the centre by exactly the radius
+// it gave up, so the total budget is the starting radius minus the final one --
+// enough to cross the map. Aiming at a destination therefore reaches it, and
+// what is left over goes into the wobble.
+func TestZoneEndsAtItsChosenDestination(t *testing.T) {
+	w := zoneWorld(t)
+	destX, destY := w.zone.destX, w.zone.destY
+	runZoneToEnd(t, w)
+
+	off := math.Hypot(w.zone.x-destX, w.zone.y-destY)
+	if off > zoneFinalRadius {
+		t.Errorf("la zona terminó a %.0f tiles de su destino (%.0f,%.0f), en (%.0f,%.0f)",
+			off, destX, destY, w.zone.x, w.zone.y)
+	}
+}
+
+// And across matches those destinations have to be all over the map.
+//
+// This is the assertion the old behaviour would fail. A ring with no
+// destination takes a random walk from the centre, and a random walk's steps
+// cancel: twelve stages drifted ~150 tiles on a 760-tile world, so the endgame
+// was always roughly the middle. The test measures how far the final circle
+// lands from the centre, and demands both that the average be large and that
+// the spread be wide -- an average alone could be met by every match landing at
+// the same wrong place.
+func TestZoneEndgamesAreSpreadOverTheMap(t *testing.T) {
+	const runs = 25
+	centre := 0.0
+	var dists []float64
+	sum := 0.0
+
+	for i := 0; i < runs; i++ {
+		w := newTestWorld(t, 760, 760)
+		w.rng = rand.New(rand.NewSource(int64(i) + 1))
+		w.tick = 1000
+		w.ArmZone(1)
+		w.startIfArmed()
+		if centre == 0 {
+			minX, minY, maxX, maxY, _ := w.walkableBounds()
+			centre = float64(minX+maxX) / 2
+			_ = minY
+			_ = maxY
+		}
+		runZoneToEnd(t, w)
+
+		d := math.Hypot(w.zone.x-centre, w.zone.y-centre)
+		dists = append(dists, d)
+		sum += d
+	}
+
+	mean := sum / runs
+	spread := 0.0
+	for _, d := range dists {
+		spread += (d - mean) * (d - mean)
+	}
+	spread = math.Sqrt(spread / runs)
+
+	far := 0
+	for _, d := range dists {
+		if d > 200 {
+			far++
+		}
+	}
+	t.Logf("distancia al centro sobre %d partidas: media %.0f, desvío %.0f, %d pasaron los 200 tiles",
+		runs, mean, spread, far)
+
+	if mean < 150 {
+		t.Errorf("media %.0f tiles del centro: la zona sigue agrupándose en el medio", mean)
+	}
+	if spread < 60 {
+		t.Errorf("desvío %.0f: las partidas terminan todas en el mismo lado", spread)
+	}
+	if far < runs/4 {
+		t.Errorf("solo %d de %d partidas pasaron los 200 tiles del centro", far, runs)
 	}
 }
