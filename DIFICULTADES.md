@@ -41,6 +41,15 @@ donde el hechizo pegó.
 etiquetas. Los agrupamientos y los tamaños de registro son evidencia; los
 comentarios de un archivo de 2002 son una hipótesis.
 
+**Epílogo: se verificó, no se asumió.** Que el juego se viera bien no probaba que
+el formato estuviera bien leído — solo que no estaba roto de forma visible. La
+prueba real llegó después: un segundo parser del `.map` escrito desde cero, solo
+a partir de estas notas, comparado contra la salida de `aoconv` tile por tile.
+**10.000 tiles × 5 campos, cero diferencias**, y consumiendo 53651/53651 bytes
+exactos. Recién ahí el formato dejó de ser una hipótesis que funcionaba. El
+detalle, y por qué el dump de otro port de AO *no* sirvió para lo mismo, en
+[OPERACION](OPERACION.md) §3.
+
 ## 2. Reconstruir la interfaz: cuatro enfoques hasta que uno funcionó
 
 Esta fue la parte más larga y la que más veces se rehízo. La secuencia completa:
@@ -363,6 +372,16 @@ de assets empaquetados es casi siempre un límite de tamaño silencioso —
 textura, buffer, atlas — no un bug de lógica en lo nuevo. Godot no avisa
 cuando lo cruza; hay que medir el archivo a mano.
 
+**Estado hoy.** 2048×9516: 58% del límite, 42% de margen. Medido por categoría,
+los FX que causaron el incidente son el **33,3% del atlas** (6,28 Mpx), segundos
+detrás de los cuerpos — o sea que el susto vino de agregar la segunda cosa más
+grande que hay adentro. Los mapas, en cambio, resultaron muchísimo más baratos de lo
+que parecía: comparten el 90% de sus tiles entre sí, así que **entran 282 de los
+317 en un solo atlas**. La primera estimación —"un mapa son ~930 px, entran
+siete"— era el peor caso suponiendo cero reuso, y estaba mal por un orden de
+magnitud. Los números medidos, y el plan de páginas por si alguna vez hace
+falta, en [OPERACION](OPERACION.md) §3.
+
 ## 13. La pantalla se dibujaba en un rectángulo chico en la esquina
 
 Al reconstruir la pantalla de login/creación de personaje (`character_picker.gd`,
@@ -566,6 +585,164 @@ ojo y las tres rompen el recorte.
 
 ---
 
+## 16. El mundo compuesto salió tapiado, y todo parecía andar
+
+Coser cien mapas de Argentum en un mundo de 760×760 dio un mundo que **dibujaba
+bien, spawneaba bien y no se podía caminar**: cien celdas selladas, con el 13%
+del terreno alcanzable desde donde caigas.
+
+Nada en el pipeline lo notó. El mapa se convertía sin errores, el atlas
+empaquetaba, el cliente renderizaba, el servidor servía. El único síntoma era
+caminar hasta la primera costura y chocar una pared invisible que recorría todo
+el mapa — y lo reportó el jugador, no el build.
+
+**La causa.** Se recortaban 9 tiles de borde, que es lo que mide el anillo de
+pared de un mapa de AO. Correcto como medición, equivocado como decisión: los
+mapas de Argentum **nunca fueron pensados para ser adyacentes**. El original
+cruza entre ellos por teleport, de un `TileExit` en x=12 a x=87 del vecino, así
+que entre la pared y esa línea hay tres tiles de decorado que nadie pisa nunca.
+
+Medido sobre una muestra de mapas, la primera columna abierta es exactamente 12:
+
+| borde recortado | columna del borde libre | costuras pasables |
+|---|---|---|
+| 9, 10, 11 | 0 de 80 y pico | **0 de 13.680** |
+| **12** | **73,6 de 76** | 5.626 (41%) |
+
+El arreglo fue una constante. Lo que importó fue lo otro.
+
+**Un mundo que no se puede caminar tiene que ser un error de build.** El
+conversor ahora hace un flood fill sobre el resultado y **se niega a emitir un
+mundo con menos del 90% del terreno alcanzable**. No 100: los mapas reales traen
+patios cerrados y edificios sin puerta, y unos cientos de tiles detrás de una
+puerta trabada son decorado. Un fallo de costura no se parece a eso — lleva la
+cifra a 13%.
+
+**Lección:** cuando una etapa del build produce algo que solo se valida
+jugando, la etapa tiene que validarlo ella. La diferencia entre "se ve bien" y
+"funciona" fue, acá, un flood fill de veinte líneas.
+
+
+## 17. El minimapa hacía 13 millones de llamadas de dibujo por segundo
+
+Con el mundo grande el cliente se congelaba. La hipótesis natural — y la del
+jugador — era que el mapa era demasiado grande para renderizarlo.
+
+No era eso. El renderer del mundo siempre estuvo acotado al viewport: dibuja
+19×15 tiles, existan 10.000 o 672.400.
+
+Era el **minimapa**, que hacía un `draw_rect` **por tile** y se redibujaba en
+cada snapshot:
+
+| | tiles | por redibujo | por segundo (20 Hz) |
+|---|---|---|---|
+| Ullathorpe | 10.000 | 10.000 rects | 200.000 |
+| mundo compuesto | 672.400 | 672.400 rects | **13.448.000** |
+
+Con el mapa chico era pesado y nunca molestó lo suficiente para notarlo. El
+mundo grande lo multiplicó por 67 y lo volvió imposible.
+
+**El arreglo estaba en el original.** Argentum **nunca dibuja un minimapa desde
+los tiles**: trae 325 BMP en `Graficos/MiniMapa`, uno por mapa, uno por píxel
+por tile. El terreno no cambia durante la partida, así que dibujarlo más de una
+vez es trabajo tirado sin importar el tamaño. Ahora `aoconv` hornea el PNG y el
+cliente lo blittea: **una llamada de dibujo en vez de 672.400**.
+
+**Lección:** un costo por tile que era tolerable en un mapa chico no es un costo
+pequeño — es una bomba con el tamaño del mapa como mecha. Y la intuición de que
+"algo dibuja todo el mapa" era correcta; lo que estaba mal era *qué* lo dibujaba.
+
+
+## 18. Tres límites de tamaño que nadie declara
+
+El mundo grande destapó tres techos distintos, ninguno de los cuales avisa antes
+de romperse.
+
+**El barrido del piso, 90 millones de lecturas por segundo.**
+`groundItemsInView` recorría **todo** el diccionario de objetos del piso por
+jugador y por tick, descartando lo que quedaba fuera del viewport. Con
+Ullathorpe eran ~1.400 objetos × 50 jugadores × 20 Hz = 1,4 M/s, invisible. Con
+la misma densidad por tile sobre 310.000 caminables son 90.000 objetos, y con
+101 jugadores **180 millones de lecturas de mapa por segundo**. Ahora recorre el
+viewport y busca cada tile: **221 lecturas, sin importar cuánto loot haya**. Las
+dos versiones son correctas; solo una tiene un costo que no depende del tamaño
+del mundo.
+
+**El límite de lectura del WebSocket, compartido entre dos direcciones que no se
+parecen.** Había una sola constante de 32 KB. Lo más grande que manda un cliente
+es un movimiento; lo primero que recibe es el Welcome, que lleva el bitset de
+colisión entero — 1,7 KB en Ullathorpe, **112 KB** en un mundo compuesto. Todos
+los clientes se desconectaban a mitad del saludo, con un error que nombraba el
+síntoma (`use of closed network connection`) y no la causa.
+
+**El buffer de entrada de Godot, 64 KB por default.** El mismo problema del otro
+lado, con un síntoma peor: el paquete se descarta en silencio y el cliente se
+queda en negro **habiendo conectado bien**.
+
+**Lección:** los tres eran constantes elegidas cuando el mapa medía 100×100, y
+las tres estaban bien entonces. Un cambio de escala no rompe la lógica, rompe
+los supuestos que nadie escribió al lado de un número.
+
+
+## 19. Un tipo demasiado angosto dejó el mapa en negro
+
+El mapa grande abría con su marco, su título, sus coordenadas y su cruz de
+posición — y el terreno en negro.
+
+Lo primero fue descartar lo obvio con un probe headless: el PNG existía, estaba
+importado, `load()` devolvía una textura de 760×760 con los colores correctos.
+El recurso estaba perfecto.
+
+El problema era una línea de declaración:
+
+```gdscript
+var _terrain: ImageTexture = null          # el tipo angosto
+_terrain = load("res://assets/ao/map1004_mini.png")   # devuelve CompressedTexture2D
+```
+
+Un PNG cargado desde disco llega como `CompressedTexture2D`. Godot rechaza la
+asignación, la variable queda en `null`, y el overlay termina pintando solo su
+fondo — que es casi negro. El log lo decía textual:
+
+```
+SCRIPT ERROR: Trying to assign value of type 'CompressedTexture2D' to a
+variable of type 'ImageTexture'.
+```
+
+Es el mismo patrón de §5, con una vuelta de tuerca: acá el error **sí** se
+escribió, pero el síntoma en pantalla — un rectángulo negro — no se parecía en
+nada a la causa, y la búsqueda arrancó mirando el archivo en vez del log.
+
+**Lección:** tipar una variable con la clase concreta que le vas a asignar hoy
+la rompe el día que la fuente cambia. `Texture2D` acepta la horneada en memoria
+y la cargada de disco; `ImageTexture` acepta una sola. Y antes de investigar un
+síntoma visual, leer el log.
+
+
+## 20. La zona podía cerrarse a un punto, y lo encontró un test
+
+Escribir los tests de la zona que se achica destapó un caso que el flujo real no
+produce: si algo entraba en fase de contracción **sin un círculo siguiente
+planificado**, el radio interpolaba contra cero y el círculo colapsaba a un
+punto, matando a quien estaba correctamente parado adentro.
+
+En la máquina de estados real no pasa — cuando se acaban las etapas la fase
+queda en `zoneDone` y nunca vuelve a contraer. Pero era una bomba esperando un
+refactor, y costó una guarda de tres líneas.
+
+Los tests de la zona dejaron dos cosas más:
+
+- Uno asertaba sobre el daño de un golpe, y un golpe puede errar por evasión:
+  era un test que fallaba con los dados, no con la regla. Ahora mira el cooldown
+  que el golpe consume.
+- Otro comprobaba que morir por la zona soltaba el inventario mirando si el piso
+  tenía algo — y el piso **siempre** tiene algo, porque el loot se esparce al
+  cargar. Pasaba sin que el cadáver soltara nada. Ahora busca el stack propio.
+
+**Lección:** un test que no puede fallar no es cobertura, es decoración. Los dos
+casos se ven iguales en verde.
+
+
 ## Lo que quedó aprendido, en una línea cada uno
 
 1. Si el objetivo es "igual a esta imagen", usá la imagen.
@@ -610,3 +787,13 @@ ojo y las tres rompen el recorte.
 18. Una hoja de sprites generada *parece* tener grilla. Medile el paso antes de
     creerle: celdas irregulares, filas de distinta altura y frames que se tocan
     son invisibles a ojo y las tres rompen el recorte.
+19. Un mundo que no se puede caminar tiene que romper el build, no la partida.
+    Si una etapa produce algo que solo se valida jugando, que lo valide ella.
+20. Un costo por tile no es un costo chico: es una bomba con el tamaño del mapa
+    como mecha. Lo que se banca 10.000 tiles no se banca 672.400.
+21. Una constante elegida para un mapa de 100×100 es un supuesto que nadie
+    escribió. Un cambio de escala no rompe la lógica, rompe esos supuestos.
+22. Tipar una variable con la clase concreta que le asignás hoy la rompe el día
+    que cambia la fuente. Y antes de investigar un síntoma visual, leer el log.
+23. Un test que no puede fallar no es cobertura. Se ve igual de verde que uno
+    que sirve.

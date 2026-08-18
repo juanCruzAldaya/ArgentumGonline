@@ -24,22 +24,29 @@ sistema por dentro. Los otros tres:
 
 ## Estado
 
-Vertical slice del loop de red. Andando hoy:
+Prototipo jugable, con el loop del battle royale cerrado salvo el final de
+partida. Andando hoy:
 
-- Mundo autoritativo sobre grilla de tiles, tick a 20 Hz
-- Movimiento por casillas con cooldown de paso (5 tiles/s, cadencia AO)
-- Colisiones contra paredes y contra otros jugadores
-- Snapshots por viewport (17x13 tiles, la ventana clásica de AO)
-- Cliente Godot con la interfaz clásica de AO (panel lateral con vida/maná/
-  energía, inventario, hechizos; consola abajo) más los datos de battle royale
-  encima del viewport: vivos, minimapa, y el lugar reservado para la zona
+- **Mundo compuesto**: cuatro mundos de 760×760 tiles, cosidos con pedazos de
+  135 mapas reales de Argentum y elegidos por una vara de coherencia calibrada
+  contra el mundo original. El servidor sortea uno por partida.
+- **Zona que se achica**: doce etapas que aceleran y pegan más, desde un círculo
+  que cubre el mapa entero hasta una arena de 21 tiles de radio. ~13 minutos.
+- Mundo autoritativo sobre grilla de tiles, tick a 20 Hz, con predicción del
+  movimiento y reconciliación por número de secuencia
+- Combate cuerpo a cuerpo y 50 hechizos, con las fórmulas y los cuatro
+  intervalos del original
+- **Lanzar te delata**: las palabras mágicas aparecen sobre la cabeza del que
+  lanza, para todos los del área, incluso si es invisible
+- Chat con Enter, dibujado sobre el personaje igual que los hechizos
+- Objetos, inventario y loot en el piso, con densidad de battle royale
+- Mapa grande con **M**, dibujado con el color real del terreno
 - Export web: el mismo proceso Go sirve el cliente HTML5 y el protocolo
-- Bots headless para llenar la partida en tests de carga
+- Bots headless: **101 jugadores simultáneos con el 2,6% de un core**
 
-Todavía **no**: combate, clases, razas, facciones, zona que se achica, loot,
-persistencia, matchmaking. La lista de hechizos del panel es decorativa y está
-dibujada en gris justamente por eso; vida/maná/energía y el contador de vivos
-sí vienen del servidor.
+Todavía **no**: final de partida (la zona cierra y se queda, no hay "ganaste"),
+lobby, NPCs, combate a distancia, facciones, sonido, persistencia. El roadmap
+completo y numerado está en [RESUMEN-EJECUTIVO](RESUMEN-EJECUTIVO.md).
 
 ## Por qué esta arquitectura
 
@@ -90,10 +97,14 @@ go run ./cmd/server                 # escucha en :8080
 godot --path client -- --server=ws://127.0.0.1:8080/ws --name=wachin
 ```
 
-Controles: WASD o flechas.
+Controles: WASD o flechas, Ctrl para golpear, **M** para el mapa, **Enter** para
+hablar. El resto — agarrar, tirar, equipar, ocultarse, meditar — en
+[RESUMEN-FUNCIONAL](RESUMEN-FUNCIONAL.md).
 
-Flags del servidor: `-addr`, `-tick`, `-map-width`, `-map-height`, `-seed`,
-`-debug`.
+Flags del servidor: `-addr`, `-tick`, `-seed`, `-debug`, `-respawn`,
+`-worlds` (de cuáles sortear el mapa), `-world-seed` (fijar cuál),
+`-zone` y `-zone-speed` (apagar la zona, o acelerarla para verla cerrar sin
+esperar trece minutos).
 
 ### Cliente web
 
@@ -183,6 +194,7 @@ client/
   scenes/main.tscn estructura y posiciones; lo cosmético vive en hud.gd
   export_presets.cfg
 tools/aoconv/      lee los indices de AO (grh, cuerpos, cabezas) y extrae sprites
+tools/verify/      parser de referencia del .map, para validar aoconv
 scripts/
   build-web.ps1    export a WebAssembly
 Dockerfile         servidor + cliente web en una imagen
@@ -210,6 +222,16 @@ fly.toml           deploy de test compartido
 ```powershell
 go run -C tools/aoconv . -assets <dir> -body 1 -info -out ./sprites
 ```
+
+**El formato está verificado, no supuesto.** Se escribió un segundo parser del
+`.map` desde cero, solo a partir de estas notas, y se comparó contra la salida de
+`aoconv`: **10.000 tiles × 5 campos, cero diferencias**, consumiendo 53651/53651
+bytes exactos. Ver [OPERACION](OPERACION.md) §3.
+
+Un detalle que sorprende y define cómo se cosen los mundos: **un mapa de AO es
+100×100 pero solo aporta 76×76**. El anillo exterior está bloqueado, y hay que
+recortar hasta la línea de traslados (12 tiles), no hasta la pared (9) — con 9
+las costuras salen tapiadas al 100%. Ver OPERACION §8.
 
 ## Referencia de diseño
 

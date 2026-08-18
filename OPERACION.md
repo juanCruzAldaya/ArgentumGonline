@@ -34,17 +34,26 @@ La arena de prueba sigue estando, pero ahora hay que pedirla:
 `-map-file="" -items-file="" -spells-file=""`. En ese caso el arranque avisa
 con un `WARN` y `/healthz` contesta `degradado: ...` en vez de `ok`.
 
-Si el arranque está bien, el log dice las seis líneas:
+**El mapa se sortea.** `-worlds` toma por default el patrón
+`maps/map1[0-9][0-9][0-9].json`, que son los cuatro mundos compuestos, y elige
+uno al arrancar; `-map-file` queda como respaldo para cuando no hay ninguno.
+`-world-seed N` fija cuál, para poder repetir una prueba.
+
+Si el arranque está bien, el log dice estas líneas:
 
 ```
-mapa cargado         name="Ciudad de Ullathorpe" size="[100 100]"
-loot esparcido       pedido=165  colocado=165
-pociones esparcidas  pedido=1199 colocado=1199 unidades=29975
+mundo sorteado       de=4 archivo=map1003.json
+mapa cargado         number=1003 name=Yermo size="[760 760]"
+loot esparcido       pedido=1435 colocado=1435
+pociones esparcidas  pedido=2857 colocado=2857 unidades=14285
 items cargados       count=496
 hechizos cargados    count=50
 world running        tickRate=20
 listening            addr=[::]:8080
 ```
+
+**No aparece "zona activa" hasta que entra el primer jugador**, y eso está bien:
+el anillo no corre en un servidor vacío.
 
 Si falta alguna de esas líneas, no estás corriendo el juego. El atajo para
 preguntárselo al servidor, sin leer el log, es el health check — contesta qué
@@ -57,6 +66,11 @@ curl.exe -s http://localhost:8080/healthz
 
 Otros flags: `-addr` (default `:8080`), `-tick`, `-map-width`, `-map-height`,
 `-seed`, `-debug`, `-web-dir`, `-respawn`.
+
+De la zona: `-zone=false` la apaga y deja el mapa entero jugable, y
+`-zone-speed N` divide todas sus duraciones — con 8 se ve una partida entera de
+cierres en minuto y medio, con 40 en quince segundos. Es la única forma de
+mirar las últimas etapas sin jugar hasta ellas.
 
 **`-respawn` es una muleta de testeo, no una regla del juego.** Por default
 vale 5: el muerto queda de fantasma 5 segundos y vuelve a entrar en el medio
@@ -201,6 +215,63 @@ revisar: `xxd -s 16 -l 8 client/assets/ao/atlas.png` da el ancho/alto del PNG
 en los bytes 17-24 (big-endian); la altura tiene que quedar bien por debajo de
 16384.
 
+**De qué está hecho el atlas.** Medido sobre el `bundle.json` de hoy: 2048×9516,
+10.154 frames, 18,9 Mpx de contenido y **96% de ocupación** — el shelf-packer
+casi no desperdicia.
+
+| categoría | frames | Mpx | % del atlas | alto propio a 2048 |
+|---|---:|---:|---:|---:|
+| cuerpos | 6.678 | 8,54 | 45,3% | 4.906 px |
+| FX | 632 | 6,28 | 33,3% | 3.607 px |
+| armas | 1.583 | 1,78 | 9,4% | 1.023 px |
+| tiles del mapa 1 | 621 | 1,62 | 8,6% | 931 px |
+| items y demás | 395 | 0,43 | 2,3% | 245 px |
+| escudos | 153 | 0,17 | 0,9% | 98 px |
+| cabezas | 36 | 0,03 | 0,2% | 17 px |
+| cascos | 56 | 0,02 | 0,1% | 10 px |
+
+Dos números que deciden lo que viene. El primero: **los mapas comparten casi
+todos sus tiles**. Los 317 mapas de AO usan 61.707 grhs sumados pero solo **6.338
+distintos** — un factor de reuso de **9,7×**. Por eso el costo del segundo mapa no
+se parece al del primero:
+
+| mapas | grhs distintos | alto de tiles | atlas total | del límite |
+|---:|---:|---:|---:|---:|
+| 1 | 609 | 824 px | 9.516 px | 58% |
+| 9 | 823 | 1.252 px | 9.944 px | 61% |
+| 25 | 1.212 | 1.913 px | 10.605 px | 65% |
+| 100 | 2.364 | 3.768 px | 12.459 px | 76% |
+| 200 | 4.326 | 6.507 px | 15.199 px | 93% |
+| 317 | 6.338 | 8.498 px | 17.190 px | 105% |
+
+**Entran 282 mapas en un solo atlas de 2048 de ancho.** Un super-mapa de 10×10
+no necesita páginas ni nada: queda en 73%.
+
+El segundo número: el solapamiento entre los tiles del mapa y los frames de
+personaje es **exactamente cero**, así que si algún día hace falta separarlos, el
+corte es limpio.
+
+**Si alguna vez hace falta partirlo: páginas, no PNGs sueltos.** El límite de
+16.384 es sobre *una* textura, no sobre el total, así que la salida es partir el
+atlas en varias páginas — no atomizarlo. Atomizarlo sería lo peor de los dos
+mundos: el renderer 2D de Godot batchea por textura, y con un PNG por frame los
+221 tiles del viewport pasarían de **1 bind de textura por frame a 221 o más**.
+Tampoco ahorraría descarga, porque los assets viajan adentro de `index.pck`
+igual. El corte que piden los números es por rol:
+
+| página | contenido | alto a 2048 | cuándo se carga |
+|---|---|---:|---|
+| `atlas_chars` | cuerpos, cabezas, armas, escudos, cascos | ~6.050 px | siempre |
+| `atlas_fx` | las 50 animaciones de `Fxs.ini` | ~3.607 px | diferible al primer hechizo |
+| `atlas_map<N>` | los tiles de un mapa | ~930 px | uno por mapa, bajo demanda |
+| `atlas_items` | íconos y sprites de piso | ~245 px | siempre |
+
+Son 4 binds de textura por frame en vez de 1, contra 221+ de la versión atómica,
+y ningún techo. El costo es agregarle un campo `page` a cada frame del
+`bundle.json` y que `ao_sprites.gd` tenga un array de texturas en vez de una.
+**No está hecho, y con los números de arriba probablemente no haga falta**: el
+disparador real sería pasar de ~280 mapas, no el segundo.
+
 **Para leer la lógica del original, no solo sus datos:** el código fuente VB6
 (no los assets) está en `ao-cliente-master.zip` y `ao-server-master.zip`, en
 Downloads también (bajados de [ao-libre](https://github.com/ao-libre)).
@@ -229,6 +300,111 @@ para que registre la clase global:
 ```powershell
 godot --headless --path client --editor --quit-after 2
 ```
+
+### Generar los cuatro mundos
+
+```powershell
+go run -C tools/aoconv . `
+  -assets "$env:USERPROFILE\Downloads\ao-assets" `
+  -bundle "$PWD\client\assets\ao" `
+  -heads 1,2,3,4,5,6,7,8,500 `
+  -map 1 -worlds `
+  -server-out "$PWD\server\maps"
+```
+
+`-worlds` lee `tools/aoconv/worlds/layout.json` y escribe, por cada mundo:
+
+| archivo | para | qué lleva |
+|---|---|---|
+| `map100N.json` (cliente) | dibujar | las cuatro capas y los techos |
+| `map100N.json` (servidor) | simular | solo el bitset de bloqueo, 112 KB |
+| `map100N_mini.png` | el mapa y el minimapa | un píxel por tile, con el color real del terreno |
+
+Ese PNG es el mismo truco del original: Argentum trae 325 BMP en
+`Graficos/MiniMapa`, uno por mapa, y **nunca dibuja un minimapa desde los
+tiles**. Go recorre los 577.600 tiles en milisegundos; el cliente solo carga la
+imagen.
+
+El atlas sale en **dos páginas** — ver "De qué está hecho el atlas" más arriba —
+porque los tiles de cuatro mundos más los personajes no entran cómodos en una.
+
+### Exportar los mundos a Tiled
+
+Para que alguien con un editor abierto les agregue detalle:
+
+```powershell
+go run -C tools/aoconv . -assets "$env:USERPROFILE\Downloads\ao-assets" -tiled .\export
+```
+
+Sale un `.tmj` por mundo con cinco capas — `piso`, `objetos`, `encima`, `techo`,
+`bloqueado` — más `tiles/`, una PNG por grh.
+
+Dos decisiones hacen que el viaje de vuelta sea posible:
+
+- **El tileset es una colección de imágenes, no una grilla.** Un grh es un
+  rectángulo de tamaño arbitrario dentro de una hoja numerada; ninguna grilla
+  uniforme lo describe.
+- **Cada PNG se llama con su número de grh.** Un mapa editado sigue diciendo,
+  tile por tile, qué gráfico de Argentum era. Arte nuevo va en otra carpeta y se
+  distingue por eso.
+
+Las capas van en base64 + zlib, que es lo que Tiled lee más rápido: un mundo
+pesa ~450 KB en vez de los ~9 MB que serían en CSV.
+
+### Verificar el conversor contra un parser independiente
+
+Los formatos binarios de AO no están documentados (ver
+[DIFICULTADES](DIFICULTADES.md) §1), así que "el juego se ve bien" no alcanza
+como prueba de que se leen bien. La verificación que sí vale es escribir un
+**segundo parser desde cero**, solo a partir del formato documentado, y comparar
+campo por campo contra la salida de `aoconv`.
+
+El parser de referencia vive en `tools/verify/verify_map.py` — deliberadamente
+en otro lenguaje y por otro camino que `aoconv`, para que un error de lectura
+tenga que repetirse idéntico en los dos lados para pasar desapercibido. Sale con
+código 1 si algo no coincide, así que sirve en CI:
+
+```powershell
+python tools\verify\verify_map.py --map "$env:USERPROFILE\Downloads\ao-assets\Mundos\Mapa1.map"
+```
+
+Sobre Mapa1 da:
+
+| campo | resultado |
+|---|---|
+| layer1 | 10.000/10.000 idénticos |
+| layer2 | 10.000/10.000 idénticos |
+| layer3 | 10.000/10.000 idénticos |
+| layer4 | 10.000/10.000 idénticos |
+| bloqueados | 10.000/10.000 idénticos |
+
+50.000 comparaciones de campo, cero diferencias. Con dos señales más que
+respaldan al parser independiente: consume **53651/53651 bytes exactos** — el
+`.map` no lleva largo por tile, así que un solo byte mal leído desincroniza todo
+lo que sigue y sería imposible terminar justo en EOF — y da 5038 tiles
+bloqueados, el mismo número que `aoconv`. El parser de `.map` queda validado
+para los 317 mapas, no solo para el 1.
+
+**El dump de aoweb no sirve como oráculo.** aoweb es otro port de AO a la web
+que también convirtió los mapas y el `obj.dat` a JSON, así que parecía un
+segundo par de ojos gratis. No lo es: **usa otra distribución de Argentum**.
+Contra su Mapa1 dan 3.015 diferencias en layer1 y 1.202 en bloqueados, y no las
+explica ningún corrimiento — probadas las 49 combinaciones de (dx,dy) en ±3, la
+mejor alineación sigue siendo (0,0). Cada campo en disputa se fue a buscar al
+archivo original, y en todos ganó el nuestro:
+
+- `obj.dat` dice literal `Name=Porcion de Tarta`, `Pan de Maiz`, `Sandia`, **sin
+  acento**. Los acentos que trae aoweb no están en la fuente.
+- `OBJ461` es `Pocion Roja (Newbie)` con `GrhIndex=5736`; aoweb dice 542.
+- `OBJ1053` es `Tunica de Campeon` con `ObjType=3`; aoweb dice 24.
+- Nuestro `obj.dat` trae 171 variantes de armadura por sexo y raza (sufijo
+  `(H/E/EO-M)`) que su revisión no tiene.
+
+La causa está en el header del propio `.map`, que se identifica como **"GS-Zone
+Argentum Online MOD - Copyright GS-Zone 2012 - Original by Pablo Marquez"**.
+Coinciden en el 70% porque es el mismo mapa base; difieren en las ediciones de
+cada fork. **Mezclar sus datos con los nuestros inyectaría otra revisión del
+juego** — y eso vale para cualquier asset suyo, no solo para los mapas.
 
 
 ### Tocar los gráficos de interfaz (login y panel lateral)
@@ -732,6 +908,32 @@ lado (otra máquina de Fly, o un VPS) y volver a medir.
 La prueba entera, 13.6 minutos con 41 jugadores, salió **$0.042**: 1.04 GB de
 salida a $0.04/GB. La tabla de la red de más abajo predijo ese número clavado.
 
+### Con el mundo compuesto y la partida llena
+
+Medido con `cmd/probe`, contra un mundo de 760×760:
+
+| | 1 jugador | 100 bots |
+|---|---|---|
+| ping ida y vuelta | 0,0 ms | 0,0 ms |
+| regularidad del snapshot | ±0,2 ms | ±2,1 ms (min 43, max 56) |
+| **tamaño del snapshot** | 574 B | **3.588 B** |
+| tráfico por jugador | 15,2 KB/s | **74,2 KB/s** = 261 MB/hora |
+| CPU del servidor | — | **2,6% de un core** |
+| RAM del servidor | — | 25 MB |
+
+**El cuello de botella no es CPU ni latencia: es el ancho de banda de salida.**
+El snapshot se sextuplica con gente en pantalla porque viaja en JSON con nombres
+de campo. Con 100 jugadores son ~7 MB/s de salida agregada, que en Fly.io se
+paga.
+
+Eso convierte el codec binario de "cuando el JSON moleste, medido" en una tarea
+con número: ya moleste y el `probe` da el antes y el después.
+
+El Welcome también creció: lleva el bitset de colisión, un bit por tile, que
+pasó de 1,7 KB en Ullathorpe a **96 KB** en un mundo compuesto. Va una sola vez
+por conexión, pero es lo que obligó a subir los límites de lectura de los dos
+lados — ver §18 de [DIFICULTADES](DIFICULTADES.md).
+
 ### Qué consume el servidor
 
 Medido con 40 bots conectados, o sea el mundo real corriendo a 20 Hz:
@@ -872,7 +1074,7 @@ entera de bugs antes de que existiera.
 
 El viewport de **17×13 tiles** — la ventana clásica de AO — *es* el interest
 management. Cada snapshot lleva solo las entidades y los objetos del piso que
-están dentro de tu ventana. Con 50 jugadores en 100×100, cada uno ve a poquitos,
+están dentro de tu ventana. Con 50 jugadores en 760×760, cada uno ve a poquitos,
 y un cliente modificado no puede aprender posiciones que no vio.
 
 Lo que **nunca** viaja a un cliente ajeno: tu HP. Los vitals van solo al dueño.
@@ -1038,6 +1240,137 @@ solo al llenar el maná, se cancela caminando o al recibir un golpe cuerpo a
 cuerpo, bloquea atacar y usar objetos mientras dura, y reduce en 25% la
 evasión de quien medita (`SistemaCombate.bas`).
 
+### El borde de un mapa de AO, y por qué se recortan 12 y no 9
+
+Un mapa de Argentum es 100×100, pero **no se juega en 100×100**. El anillo
+exterior está bloqueado: es la zona muerta que el cliente original nunca deja
+ver, porque la cámara se clava antes de llegar al borde.
+
+Medir ese anillo da **9 tiles** — 290 de los 317 mapas tienen exactamente nueve.
+Y recortar nueve es el error, de una forma que no se ve hasta que caminás.
+
+**Los mapas de AO nunca fueron pensados para ser adyacentes.** El original cruza
+entre ellos por teleport, desde un `TileExit` en x=12 hasta x=87 del vecino, así
+que los tres tiles entre la pared y esa línea son decorado que nadie pisa. Medido
+sobre una muestra de mapas:
+
+| borde recortado | columna del borde libre |
+|---|---|
+| 9, 10, 11 | **0 de 80 y pico** |
+| **12** | **73,6 de 76** |
+
+Con 9 el mundo compuesto sale con **las costuras tapiadas en el 100% de los
+tiles**: cien celdas selladas y el 13% del terreno alcanzable. Con 12 las
+costuras quedan 41-44% pasables y el mundo es 93-97% conectado.
+
+Por eso el recorte es la línea de traslados, no la pared. Cada mapa aporta
+**76×76 tiles** al mundo compuesto — ver la sección de los mundos, más abajo, y
+§16 de [DIFICULTADES](DIFICULTADES.md).
+
+### Los mundos compuestos
+
+El juego ya no se juega sobre un mapa de Argentum: se juega sobre **uno de
+cuatro mundos** cosidos con pedazos de varios.
+
+| | |
+|---|---|
+| grilla | 10×10 celdas de 76 tiles = **760×760** |
+| núcleo jugable | 8×8 celdas |
+| anillo exterior | océano, forzado bloqueado: el borde del mundo |
+| caminables | ~310.000 por mundo |
+| conectado | 93-97% |
+| mapas distintos | 70-73 por mundo, 135 entre los cuatro |
+
+Los cuatro son `map1001`..`map1004` — Selva, Tundra, Yermo y Confín — y el
+servidor **sortea uno al arrancar la partida**.
+
+**El layout es un dato, no algo que el conversor derive.** Componer un mundo es
+un trabajo de diseño: se mide cuánto encaja el borde de un mapa contra el de
+otro, se recuece la grilla para minimizar el desencaje, y el resultado se mira
+antes de aceptarlo. Eso vive horneado en `tools/aoconv/worlds/layout.json`, lo
+que hace el build reproducible y permite cambiar una celda a mano.
+
+La vara de encaje no se inventó, se calibró contra el mundo original de AO:
+
+| | costura media |
+|---|---|
+| vecinos reales de Argentum | **0,213** |
+| mundos compuestos | 0,28-0,30 |
+| mapas puestos al azar | 0,585 |
+
+Dos cosas que hubo que descubrir para que el pool sirviera:
+
+- **118 de los 272 mapas del mundo abierto son océano puro.** Con ellos adentro
+  el optimizador junta toda el agua en un mar gigante, porque agua contra agua da
+  costura perfecta. El pool real son **111 mapas de tierra**, filtrando por menos
+  de 40% de agua, menos de 25% de vacío y al menos 4.000 caminables.
+- **`Zona=DUNGEON` del `.dat` no significa "interior".** Marca así 31 de los 32
+  mapas de nieve, que son región abierta. El filtro correcto es el grafo de
+  traslados, no la metadata.
+
+**El agua no está bloqueada en el `.map`.** El servidor original te frena con un
+flag de navegación y un bote, que este juego no tiene; sin cerrarla, se camina
+sobre el mar y el anillo de océano deja de ser un borde. La lista de 205 grhs de
+agua sale de comparar frecuencias entre los mapas 100% agua y los 0% agua, y
+cubre el 95% de los tiles de un mapa de océano.
+
+**El conversor verifica el resultado en vez de confiar en la constante:** hace un
+flood fill y **se niega a emitir un mundo con menos del 90% del terreno
+alcanzable**. Un mundo mal cosido dibuja bien, spawnea bien, y solo se delata al
+caminar — exactamente el bug que este chequeo existe para que no vuelva.
+
+### La zona que se achica
+
+Un círculo de terreno seguro que cierra en **12 etapas**. Cada una espera con el
+próximo círculo ya dibujado, y después la pared se mueve **continuamente** hacia
+él: quedar afuera es una persecución, no un teletransporte.
+
+| | |
+|---|---|
+| radio inicial | 429 — llega a las esquinas: **nada arranca afuera** |
+| gracia | 60 s quieta, **sin daño** |
+| etapas | 12, factor 0,605 por etapa |
+| radio final | **21** — unas dos pantallas y media, con lugar para pelear |
+| duración | ~13 minutos |
+
+Tres decisiones que costaron una iteración cada una:
+
+- **El círculo se dibuja circunscripto, no inscripto.** El mapa es cuadrado y la
+  zona es un círculo, así que solo coinciden en cuatro puntos. Un círculo que toca
+  el medio de cada lado deja las cuatro esquinas afuera, y eso es **el 21% de un
+  cuadrado**: arrancar con un quinto del mapa pintado de azul se lee como "la
+  zona ya está medio cerrada", no como "todavía no empezó".
+- **Las etapas se aceleran.** Espera y cierre bajan linealmente hasta el 35% de
+  la primera (50 s + 40 s al principio, 18 s + 14 s al final). Al principio el
+  círculo es enorme y cruzarlo *es* el trabajo; al final la zona segura entra en
+  dos pantallas y la misma ventana serían dos minutos esperando.
+- **Arranca con el primer jugador, no con el proceso.** Un servidor que bootea
+  una hora antes de que alguien entre habría cerrado el círculo entero para
+  cuando el primero elige personaje.
+
+El daño sube por etapa: 0 (gracia), 1, 2, 3, 4, 6, 8, 11, 14, 18, 23, 29, 36 por
+segundo, cobrado una vez por segundo para que los números se lean. Morir por la
+zona es una muerte normal: soltás lo que llevabas y arranca el respawn.
+
+`-zone-speed N` divide todos los tiempos, que es la única forma práctica de ver
+las últimas etapas sin jugar hasta ellas.
+
+### Hablar, y las palabras mágicas sobre la cabeza
+
+Un cartel por personaje, como en Argentum: lo que digás **reemplaza** lo que
+tenías encima. De ahí sale gratis el truco que usan los jugadores — decir un
+espacio para borrarse el cartel.
+
+Lanzar un hechizo grita sus `PalabrasMagicas` a todos los que te ven, ancladas a
+tu cabeza (`DecirPalabrasMagicas`, `modHechizos.bas`). **Es el delator del
+juego**, y por eso el mensaje lleva la posición: un invisible no está en el
+snapshot de nadie, así que sin ella el cartel no se podría dibujar — con ella,
+las palabras quedan flotando exactamente sobre su tile. Lanzar estando **oculto**
+además te saca el ocultamiento, igual que el original.
+
+Los carteles expiran con la fórmula de AO: `5000 ms + 100 ms por carácter`
+(`clsDialogs.cls`), con corte de línea a los 18 caracteres.
+
 ### Dónde vive cada cosa
 
 ```
@@ -1061,20 +1394,17 @@ client/
   scenes/main.tscn estructura y posiciones; lo cosmético vive en hud.gd
 tools/aoconv/      lee los índices de AO y arma el atlas y los .json
   overrides/       arte que reemplaza gráficos de AO, pintado sobre el atlas
+tools/verify/      parser de referencia del .map, independiente de aoconv
 ```
 
 ---
 
 ## 9. Lo que falta
 
-| Falta | Nota |
-|---|---|
-| **Zona que se achica** | La mecánica que define el género. Es lo que más falta. |
-| **Mapa grande** | Mergear varios de los 317 mapas reales en una grilla con zonas coherentes. Es lo próximo. |
-| **NPCs / bichos** | Sistema entero nuevo: spawn, IA, combate contra jugadores. Va después del mapa. |
-| **Lobby / matchmaking** | Hoy se entra a un servidor corriendo; no hay partida con principio y fin. Plan: una máquina Fly por partida vía Machines API. |
-| **Combate a distancia** | Arcos y flechas. Solo hay melee y hechizos. |
-| **Codec binario** | Cuando el JSON moleste, medido. |
-| **Recortar el atlas** | Hoy empaqueta las 309 armaduras del juego entero; un BR podría spawnear solo un subconjunto. |
-| **Descarga Eléctrica con arte nuevo** | Quedó a mitad de camino: va en `overrides/anim221.png`, 15 frames de 128×128 (fx 11 → grh 221), contiguos en el atlas igual que el Apocalipsis. Falta la hoja de origen **sobre negro sólido** — la que se probó traía el damero de transparencia horneado y es irrecuperable, ver DIFICULTADES §15. |
-| **Link al fuente en el cliente** | Se sacó del login. **Ya no es hipotético: `juegito.fly.dev` está deployado y cualquiera con el link juega**, y el AGPL §13 pide que la oferta de código le llegue a quien interactúa por red. El código está pusheado, que es la otra mitad del requisito; falta devolver el link a algún lado del cliente — ver §5. |
+El roadmap vive en [RESUMEN-EJECUTIVO](RESUMEN-EJECUTIVO.md), numerado y
+ordenado por impacto, para que haya una sola lista y no dos que se contradigan.
+
+Lo más urgente de ahí, en una línea: el codec binario (el snapshot mide 3,6 KB
+con la partida llena, ver §7), el final de partida (la zona cierra y se queda,
+no hay "ganaste"), y el paso de caminata a 100% para sacar el tirón de la
+interpolación.

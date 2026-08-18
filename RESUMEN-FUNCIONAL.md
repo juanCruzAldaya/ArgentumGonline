@@ -52,15 +52,16 @@ no cambia durante la partida), el tamaño del viewport y el punto de spawn.
 
 **Viewport de 17×13 tiles** — la ventana clásica de AO. Y eso *es* el interest
 management: cada snapshot lleva solo las entidades y los objetos del piso que
-están dentro de tu ventana. Con 50 jugadores en un mapa de 100×100, cada uno ve
+están dentro de tu ventana. Con 50 jugadores en un mundo de 760×760, cada uno ve
 a poquitos. Un cliente modificado no puede aprender posiciones que no vio.
 
 Lo que **nunca** viaja al cliente ajeno: tu HP. Los vitals van solo al jugador
 dueño de esos números.
 
-**Mapa.** Se juega en la Ciudad de Ullathorpe, 100×100 tiles, extraída del mapa
-1 original. Los sprites son cuerpos y cabezas reales de Argentum, empaquetados
-en un atlas.
+**Mapa.** Se juega en uno de cuatro mundos compuestos de 760×760 tiles, sorteado
+al crear la partida — ver §10. Están armados con pedazos de 135 mapas reales de
+Argentum, así que el terreno, los edificios y los caminos son los del juego
+original aunque la geografía sea nueva.
 
 ## 4. Combate cuerpo a cuerpo
 
@@ -172,6 +173,24 @@ del efecto original. Es puro reemplazo de arte: el hechizo sigue resolviéndose
 por el mismo camino (FX 13 de `Fxs.ini` → grh 259), y lo único que cambia son
 los píxeles de esos 21 frames dentro del atlas — ver "Reemplazar un gráfico de
 AO por otro" en OPERACION §3.
+
+### Los cuatro intervalos
+
+Lanzar y golpear no son dos botones independientes. Argentum los cruza, y esos
+cruces son de donde sale la cadencia de su PvP. Los cuatro números salen del
+`Server.ini` original:
+
+| | |
+|---|---|
+| hechizo → hechizo | 1400 ms |
+| golpe → golpe | 1500 ms |
+| **lanzaste → cuánto esperás para pegar** | **1000 ms** |
+| **pegaste → cuánto esperás para lanzar** | **1000 ms** |
+
+Además, **el click gasta el hechizo**. Elegiste el hechizo, apareció la cruz, y
+el próximo click la consume le pegues a quien le pegues — o al pasto. Errar
+cuesta el casteo y hay que volver a apretar LANZAR. Es lo que hace el original:
+`UsingSkill = 0` va incondicional después de cualquier click.
 
 ## 7. Ocultarse
 
@@ -344,7 +363,83 @@ los jugadores tomaban igual.
 
 Cooldown de uso, para que no se puedan encadenar pociones.
 
-## 10. Interfaz
+## 10. El mundo, y la zona que lo cierra
+
+### En qué mundo se juega
+
+No se juega sobre un mapa de Argentum: se juega sobre **uno de cuatro mundos**
+cosidos con pedazos de muchos. El servidor **sortea cuál al crear la partida**.
+
+| mundo | carácter |
+|---|---|
+| **Selva** | bosque parejo cortado por ríos, con la capital al sudoeste |
+| **Tundra** | degrada a nieve en el sur, con una región de lava al noroeste |
+| **Yermo** | una cuña de desierto lo parte al medio |
+| **Confín** | el más costero, con pueblos repartidos en vez de una capital |
+
+Cada uno es de **760×760 tiles** — un núcleo de 8×8 mapas de Argentum rodeado por
+un anillo de océano que es el borde del mundo — con unos **310.000 tiles
+caminables**. Cruzarlo de punta a punta a la cadencia de AO lleva algo más de dos
+minutos.
+
+El agua no se camina. Argentum tampoco te deja, pero te frena con un bote que
+este juego no tiene, así que acá está cerrada directamente.
+
+### La zona
+
+Un círculo azul y eléctrico se cierra sobre el mundo en **12 etapas**, y quedarse
+afuera cuesta vida.
+
+Arranca **cubriendo el mapa entero** — llega hasta las esquinas, nada empieza
+afuera — y se queda quieto **un minuto sin hacer daño**: es el tiempo de caer,
+encontrar algo y ubicarse.
+
+Después, cada etapa dibuja el próximo círculo, espera a que lo veas, y **mueve la
+pared hacia él de forma continua**. Nunca salta: quedar afuera es una
+persecución que se gana caminando, no un teletransporte.
+
+Las etapas **se aceleran**: la primera espera 50 s y cierra en 40, la última
+espera 18 y cierra en 14. Al principio el círculo es enorme y cruzarlo es la
+mitad del trabajo; al final entra en dos pantallas.
+
+Y **pegan cada vez más**: 1, 2, 3, 4, 6, 8, 11, 14, 18, 23, 29 y 36 puntos por
+segundo. Los primeros anillos empujan; los últimos matan en seis segundos. Morir
+por la zona es una muerte normal — soltás lo que llevabas.
+
+Termina en un radio de **21 tiles**, y ahí se queda. Si cerrara del todo, los dos
+últimos morirían por el anillo en vez de matarse entre ellos.
+
+Una partida completa dura unos **13 minutos**.
+
+La consola avisa en los dos momentos en que podés estar mirando otra cosa: cuando
+empieza a cerrar, y cuando **vos** quedás afuera. El círculo actual y el próximo
+se ven en el mapa grande.
+
+## 11. Hablar, y lo que eso te delata
+
+**Enter** abre el renglón de chat, **Enter** de nuevo lo manda, **Escape**
+cancela. Lo que decís aparece **sobre tu cabeza**, no en la consola, y lo ven
+todos los que te ven.
+
+Hay **un solo cartel por personaje**: lo que digas reemplaza lo anterior. De ahí
+sale el truco que usan los jugadores de Argentum — decir un espacio para
+borrarte el cartel.
+
+Y ahí está el punto: **lanzar un hechizo grita sus palabras mágicas**, sobre tu
+cabeza, para todos los del área. Es el delator del juego.
+
+- Lanzar estando **oculto** te saca el ocultamiento, igual que en el original.
+- Estando **invisible** no: seguís invisible, pero las palabras quedan flotando
+  exactamente sobre tu tile. Tu cuerpo no está en la pantalla de nadie; tus
+  palabras sí.
+
+La única contra es taparlo diciendo cualquier otra cosa — lo cual, por supuesto,
+también te delata.
+
+Los carteles se van solos a los 5 segundos más 100 ms por carácter, la misma
+fórmula del cliente original.
+
+## 12. Interfaz
 
 Layout de Argentum, no un layout genérico de juego: consola arriba, minimapa al
 costado, viewport abajo, panel de personaje pegado al borde derecho.
@@ -436,7 +531,7 @@ encima. En una partida de minutos, la pregunta cada vez que levantás algo del
 piso es si le gana a lo que tenés puesto, así que el número vive a la vista.
 La barra se lleva media fila de tiles del viewport.
 
-## 11. Operación
+## 13. Operación
 
 **Correr el servidor:**
 
@@ -483,7 +578,7 @@ duerme cuando no hay nadie y despierta en un par de segundos. Medido: 67 ms de
 latencia sentida, contra 116 ms de un túnel casero y 25 ms en local; el detalle
 está en OPERACION §7.
 
-## 12. Cómo está armado por dentro
+## 14. Cómo está armado por dentro
 
 Una sola goroutine es dueña de todo el estado del mundo. **No hay un mutex en
 todo el repo.**
@@ -533,10 +628,10 @@ desconexión del cliente lento.
 
 | Falta | Nota |
 |---|---|
-| **Zona que se achica** | La mecánica que define el género. Es lo que más falta. |
 | **Lobby / matchmaking** | Hoy se entra a un servidor corriendo; no hay partida con principio y fin. Plan: una máquina Fly por partida vía Machines API. |
 | **Combate a distancia** | Arcos y flechas. Solo hay melee y hechizos. |
 | **Facciones** | Armada/Legión no están. |
 | **Hambre y sed que drenen** | Los vitals son estado real del servidor y el HUD los muestra en sus dos barras, pero nada los baja. Es una decisión de diseño pendiente: ¿un battle royale quiere upkeep? |
 | **Persistencia** | A propósito: nadie levelea, nada que guardar. |
-| **Codec binario** | Cuando el JSON moleste, medido. |
+| **Final de partida** | La zona cierra y se queda ahí. No hay "último vivo" ni pantalla de victoria: la partida no termina. Es lo que más falta. |
+| **Codec binario** | Ya está medido y ya molesta: el snapshot pesa 3,6 KB con la partida llena, 74 KB/s por jugador. Ver OPERACION §7. |
