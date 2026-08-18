@@ -188,6 +188,12 @@ func (w *World) attack(p *Player) {
 	if w.tick-p.lastAttackTick < attackCooldownTicks {
 		return
 	}
+	// IntervaloMagiaGolpe: a swing is also gated by how recently you cast, so
+	// magic and melee cannot be fired together. See the interval block in
+	// spells.go for why the two crossed intervals matter.
+	if w.tick-p.lastCastTick < castToAttackTicks {
+		return
+	}
 	p.lastAttackTick = w.tick
 
 	// Swinging reveals whoever was hidden, spell or skill alike.

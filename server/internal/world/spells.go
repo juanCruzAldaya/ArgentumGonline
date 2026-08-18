@@ -23,8 +23,23 @@ const (
 	targetTerrain = 4
 )
 
-// castCooldownTicks paces casting. At 20 Hz this is one spell per second.
-const castCooldownTicks = 20
+// The four intervals Argentum paces a fight with, straight out of the original
+// Server.ini's [INTERVALOS] block. They are in milliseconds there and in ticks
+// here; at 20 Hz a tick is 50 ms.
+//
+// The two crossed ones are the interesting half. Casting does not only delay
+// the next spell, it delays your next swing, and swinging delays your next
+// spell — which is what stops magic and melee from being two independent
+// buttons mashed at once, and is the reason AO's PvP has the rhythm it does.
+// modNuevoTimer.bas is where the original enforces them.
+const (
+	// IntervaloLanzaHechizo, 1400 ms.
+	castCooldownTicks = 28
+	// IntervaloMagiaGolpe, 1000 ms: cast, then wait before you can hit.
+	castToAttackTicks = 20
+	// IntervaloGolpeMagia, 1000 ms: hit, then wait before you can cast.
+	attackToCastTicks = 20
+)
 
 // Spell is one Hechizos.dat entry, as converted by tools/aoconv.
 type Spell struct {
@@ -125,6 +140,9 @@ func (w *World) cast(caster *Player, spellID int, targetID EntityID) {
 		return
 	}
 	if w.tick-caster.lastCastTick < castCooldownTicks {
+		return
+	}
+	if w.tick-caster.lastAttackTick < attackToCastTicks {
 		return
 	}
 
