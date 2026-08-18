@@ -471,10 +471,11 @@ cliente web deduce el servidor del origen de la página, y se puede pisar con
 `?server=` o `?name=`. El server manda los headers COOP/COEP que el export con
 threads necesita.
 
-**Probar de a dos.** Tailscale para iteración rápida (cero deploy, cero NAT), o
-Fly.io región `eze` para latencia real — la imagen incluye el cliente web, así
-que el otro solo abre el link. La máquina duerme cuando no hay nadie y despierta
-en un par de segundos.
+**Probar de a dos.** Fly.io región `gru` (São Paulo) para latencia real — la
+imagen incluye el cliente web, así que el otro solo abre el link. La máquina
+duerme cuando no hay nadie y despierta en un par de segundos. Medido: 67 ms de
+latencia sentida, contra 116 ms de un túnel casero y 25 ms en local; el detalle
+está en OPERACION §7.
 
 ## 12. Cómo está armado por dentro
 

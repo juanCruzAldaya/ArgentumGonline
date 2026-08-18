@@ -160,7 +160,9 @@ fly deploy
 # https://juegito.fly.dev
 ```
 
-La región es `eze` (Ezeiza). La máquina duerme cuando no hay nadie conectado y
+La región es `gru` (São Paulo): `eze` (Ezeiza) está deprecada y Fly ya no
+provisiona ahí. Son 42 ms de ida y vuelta desde Buenos Aires, 67 con la espera
+de tick — ver OPERACION §7. La máquina duerme cuando no hay nadie conectado y
 despierta en un par de segundos con la próxima conexión.
 
 La URL del servidor nunca está hardcodeada: `--server=`, o la variable de

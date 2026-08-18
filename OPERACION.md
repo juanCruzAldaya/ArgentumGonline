@@ -476,8 +476,12 @@ El script exporta y después **precomprime**. Eso no es cosmético:
 | Archivo | Crudo | Comprimido |
 |---|---|---|
 | `index.wasm` | 38.8 MB | **10.1 MB** |
-| `index.pck` | 8.4 MB | **7.5 MB** |
-| **Primera carga** | **46 MB** | **~17.7 MB** |
+| `index.pck` | 12.9 MB | **11.6 MB** |
+| **Primera carga** | **51.7 MB** | **21.7 MB** |
+
+El `.pck` creció de 8.4 a 12.9 MB cuando el atlas sumó las 309 armaduras del
+juego: el peso de la primera carga lo domina el contenido gráfico, no el
+motor.
 
 El servidor sirve el `.gz` a quien acepte gzip y cae al archivo plano si no
 (`transport.precompressed`). Se comprime una vez en el build y no por request,
@@ -600,17 +604,168 @@ Fly no tiene free tier desde octubre de 2024. Para este deploy:
 | Máquina dormida | $0.15 por GB de rootfs / 30 días → centavos |
 | Ancho de banda saliente, Sudamérica | **$0.04/GB** |
 
-El ancho de banda es lo único que mueve la aguja: ~17.7 MB por visitante nuevo,
-o sea ~56 primeras cargas por dólar-céntimo. Una sesión de prueba con cinco
-amigos cuesta menos de $0.10. Un mes de testeo casual queda abajo de $1.
+El ancho de banda es lo único que mueve la aguja, y ahora está medido en vez de
+estimado: **21.7 MB por visitante nuevo** (la primera carga del cliente) más
+**115 MB por hora de juego y por jugador** (los snapshots). Una partida de 50
+personas sale ocho centavos. Las tablas completas, con el desglose por escala,
+están en §7.
 
 **La región `eze` (Ezeiza) está deprecada** y Fly no provisiona ahí. Estamos en
-`gru` (São Paulo), lo único que queda en Sudamérica: ~25-40 ms desde Buenos
-Aires en vez de un dígito.
+`gru` (São Paulo), lo único que queda en Sudamérica. Medido desde Buenos Aires:
+**42 ms de ida y vuelta**, que con la espera de tick dan 67 ms de latencia
+sentida — ver §7.
+
+**La cuenta en trial apaga la máquina a los 5 minutos.** Sale en los logs
+(`Trial machine stopping. To run for longer than 5m0s, add a credit card`) y se
+confirma porque el uptime da 301 segundos clavados. Como el estado del mundo
+vive en memoria, cada apagón reinicia la partida entera: loot nuevo, todos
+afuera, bajas en cero. Hasta que haya tarjeta, Fly no sirve para jugar más de
+cinco minutos seguidos.
 
 ---
 
-## 7. Cómo está armado
+## 7. Latencia y recursos, medidos
+
+Nada de esta sección está estimado. Todos los números salen de
+`server/cmd/probe`, que entra al servidor como un jugador más y mide lo que un
+jugador siente:
+
+```powershell
+go run -C server ./cmd/probe -url ws://127.0.0.1:8080/ws -for 30s
+go run -C server ./cmd/probe -url wss://juegito.fly.dev/ws -for 30s
+```
+
+El ping usa el propio protocolo (`TypePing`): `session.go` devuelve el
+timestamp tal cual, sin que el servidor guarde estado de reloj, así que la
+resta se hace entera del lado del cliente y no hay relojes que sincronizar.
+
+### Latencia
+
+La latencia que se siente tiene dos partes que se suman, y solo una es red:
+
+```
+                       ping/pong             llegada de snapshots        total
+                                          (deberían ser 50 ms clavados)
+local                mediana   0.0 ms  σ 0.2    mediana 50.0  σ  0.6     25 ms
+Fly.io (gru)         mediana  41.9 ms  σ 1.8    mediana 49.7  σ  2.2     67 ms
+túnel casero (gru20) mediana  91.2 ms  σ19.0    mediana 50.5  σ 26.1    116 ms
+```
+
+**Los 25 ms de tick son el piso y no dependen de la red.** El mundo mira los
+comandos encolados una vez por tick, así que un click cae en algún punto de
+`[0, 50 ms)` y espera 25 en promedio antes de que el servidor lo mire. Bajar
+eso es subir el tick rate: a 30 Hz serían 17 ms, a cambio de un 50% más de
+tráfico, porque el volumen escala con la cantidad de snapshots.
+
+**Lo que decide la sensación no es la mediana, es el desvío.** Por Fly los
+snapshots llegan con σ 2.2 ms: la cadencia de 20 Hz sobrevive la red casi
+intacta. Por el túnel casero, σ 26 ms, con huecos de 0 y de 93 — o sea que
+llegan **apelotonados**, el mundo se congela ~90 ms y después salta dos ticks
+juntos. Un retardo constante el cliente lo tapa interpolando; contra uno que
+salta no puede hacer nada. Es la diferencia entre "va lento" y "va a tirones",
+y por eso Fly se siente mucho mejor que el túnel aunque la mediana sea solo el
+doble.
+
+De referencia: un servidor de Argentum bien hosteado anda en **32 ms**. La
+única configuración que llega ahí es una IP pública propia con el puerto
+directo (~30 ms totales); Fly en `gru` es lo mejor alcanzable sin depender del
+proveedor de internet.
+
+### Qué consume el servidor
+
+Medido con 40 bots conectados, o sea el mundo real corriendo a 20 Hz:
+
+```
+RAM (working set) : 22.6 MB
+CPU               : 15.1% de un core
+threads           : 29
+```
+
+RAM y CPU **no son el cuello**. Una sola goroutine dueña de enteros, con
+interest management por viewport, es barata: la máquina más chica de Fly
+(`shared-cpu-1x`, 256 MB) sobra. Ojo con un detalle de esa medición: se tomó en
+un desktop, donde un core es bastante más rápido que el `shared-cpu-1x` de Fly,
+que tiene cuota base y burstea por encima. Antes de invitar a 50 personas
+conviene repetirla contra la máquina real.
+
+### Qué consume la red
+
+El único número que mueve la aguja. Cada jugador recibe **20 snapshots por
+segundo, esté quieto o no**:
+
+| Jugadores | Salida | Costo/hora en `gru` ($0.04/GB) | Partida de 20 min |
+|---|---|---|---|
+| 1 | 115 MB/h | $0.005 | $0.002 |
+| 4 | 0.45 GB/h | $0.02 | $0.007 |
+| 10 | 1.13 GB/h | $0.05 | $0.02 |
+| 50 | 5.63 GB/h | $0.23 | **$0.08** |
+| 100 | 11.3 GB/h | $0.45 | $0.15 |
+
+Una partida entera de 50 jugadores cuesta **ocho centavos**. El snapshot pesa
+1679 bytes con pocos jugadores en pantalla y 2100 con veinte bots dando
+vueltas, porque lleva solo las entidades del viewport — el volumen crece con lo
+que ves, no con cuánta gente hay en el mapa.
+
+**Acá es donde el codec binario deja de ser prolijidad y pasa a ser plata.** El
+99% del tráfico son esos snapshots en JSON; el `welcome` con el mapa de
+colisiones entero son 1857 bytes una sola vez. Un codec binario corta eso entre
+5 y 8 veces, y recién a ~50 jugadores concurrentes el ahorro justifica el
+trabajo. Antes de eso, no.
+
+### Qué necesita el que juega
+
+| | |
+|---|---|
+| Primera carga (web) | **21.7 MB** comprimidos — `index.wasm.gz` 9.7 + `index.pck.gz` 11.1 |
+| VRAM | **74 MB** solo del atlas (2048x9516 RGBA) |
+| Red en partida | 32.8 KB/s de bajada (~0.26 Mbps); la subida es despreciable |
+| Requisitos | WebGL2 y `SharedArrayBuffer` — de ahí los headers COOP/COEP |
+
+Los 74 MB de VRAM son el número más fácil de bajar: el atlas empaqueta las 309
+armaduras del juego entero porque cualquiera puede aparecer en el piso. Un BR
+podría spawnear solo un subconjunto por partida — está en §9.
+
+### Hostear desde casa
+
+Se probó y **hoy no se puede llegar directo**: la conexión está detrás de
+CGNAT. El traceroute lo dice sin ambigüedad, el salto 2 cae en el rango
+reservado de carrier-grade NAT:
+
+```
+1   192.168.100.1    router
+2   100.72.48.2      CGNAT del proveedor (100.64.0.0/10, RFC 6598)
+3   10.10.7.3        red privada del ISP
+5   45.68.8.181      recién acá empieza el internet público
+```
+
+Con eso, **abrir el puerto en el router no sirve**: las conexiones entrantes
+mueren en el NAT del proveedor antes de llegar. Hace falta pedirle IP pública
+al ISP. Tampoco hay IPv6, que sería el otro atajo. Ojo con el diagnóstico
+rápido: mirar que la IP pública no esté en `100.64/10` **no alcanza** — el
+rango CGNAT aparece del lado del router, no del lado que ve internet.
+
+Mientras tanto la única vía es un túnel, y no todos sirven:
+
+| | Ubicación | Ida y vuelta HTTP |
+|---|---|---|
+| Cloudflare (`cloudflared tunnel --url`) | gru20, São Paulo | **0.18 s** |
+| localhost.run (`ssh -R`) | Virginia | 0.62 s |
+| serveo.net (`ssh -R`) | Finlandia | 1.59 s |
+
+Los dos últimos son injugables. Dos trampas del camino de Cloudflare:
+
+- **El router de casa filtra `trycloudflare.com` a propósito**: resuelve
+  `cloudflare.com`, `github.com` y hasta `region1.v2.argotunnel.com`, pero
+  devuelve NXDOMAIN para el dominio de los quick tunnels. Se arregla apuntando
+  la placa a `1.1.1.1` (`Set-DnsClientServerAddress`, necesita admin).
+- **El cliente web no arranca por `http://` pelado.** El export tiene
+  `thread_support=true` y `SharedArrayBuffer` solo existe en contexto seguro:
+  HTTPS o `localhost`. Por eso un túnel con TLS sirve y una IP pelada no —
+  ahí habría que reexportar sin threads, o usar el cliente nativo.
+
+---
+
+## 8. Cómo está armado
 
 ### La forma general
 
@@ -840,7 +995,7 @@ tools/aoconv/      lee los índices de AO y arma el atlas y los .json
 
 ---
 
-## 8. Lo que falta
+## 9. Lo que falta
 
 | Falta | Nota |
 |---|---|

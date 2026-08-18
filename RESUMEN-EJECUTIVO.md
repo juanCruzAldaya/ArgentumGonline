@@ -9,7 +9,7 @@
 | **Licencia** | AGPL-3.0 (los assets de Argentum los liberó Pablo Márquez bajo AGPL). |
 | **Tamaño** | ~6.100 líneas de Go, ~2.300 de GDScript, 10 commits. |
 | **Tests** | 66 tests unitarios en `internal/world`, todos verdes (`go test ./...`). |
-| **Deploy** | Docker + Fly.io, región `eze`. La misma imagen sirve el cliente web. |
+| **Deploy** | Docker + Fly.io, región `gru`. La misma imagen sirve el cliente web. |
 
 ## Qué se logró
 
