@@ -60,8 +60,8 @@ func (b *accountBridge) run() {
 	}
 }
 
-func (b *accountBridge) Register(name, password string) error {
-	return b.store.Register(name, password)
+func (b *accountBridge) Register(name, email, password string) error {
+	return b.store.Register(name, email, password)
 }
 
 func (b *accountBridge) Authenticate(name, password string) (string, error) {

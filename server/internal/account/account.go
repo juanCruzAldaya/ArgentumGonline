@@ -17,6 +17,7 @@ package account
 
 import (
 	"errors"
+	"net/mail"
 	"strings"
 	"time"
 )
@@ -27,6 +28,7 @@ var (
 	ErrNoSuchUser   = errors.New("no existe esa cuenta")
 	ErrBadPassword  = errors.New("contraseña incorrecta")
 	ErrBadName      = errors.New("el nombre tiene que ser de 3 a 16 letras o números")
+	ErrBadEmail     = errors.New("ese correo no parece un correo")
 	ErrShortPass    = errors.New("la contraseña tiene que tener al menos 6 caracteres")
 	ErrStoreClosed  = errors.New("account: store cerrado")
 	ErrNotRecording = errors.New("account: sin almacenamiento configurado")
@@ -96,3 +98,33 @@ func validName(name string) bool {
 }
 
 func foldName(name string) string { return strings.ToLower(strings.TrimSpace(name)) }
+
+// maxEmailLen is the practical ceiling: 254 is the longest address SMTP will
+// carry, and a line in the log is not the place to discover that.
+const maxEmailLen = 254
+
+// validEmail leans on net/mail rather than on a regular expression, because the
+// grammar it is checking against is genuinely baroque and the standard library
+// already implements it. Two rules are added on top:
+//
+//   - ParseAddress also accepts a display name ("Wachín <a@b.com>"), which is a
+//     valid address and the wrong thing to store as one, so the parse has to
+//     round-trip to exactly what was typed.
+//   - It accepts a dotless domain ("wachin@localhost"), legal on a LAN and
+//     never what somebody registering for a game meant to type.
+//
+// What it deliberately does not do is prove the address exists. Nothing here
+// sends mail, so the only honest claim is that this is shaped like an address.
+func validEmail(email string) bool {
+	if email == "" || len(email) > maxEmailLen || strings.ContainsAny(email, " \t\r\n") {
+		return false
+	}
+	addr, err := mail.ParseAddress(email)
+	if err != nil || addr.Name != "" || addr.Address != email {
+		return false
+	}
+	at := strings.LastIndex(email, "@")
+	return strings.Contains(email[at+1:], ".")
+}
+
+func foldEmail(email string) string { return strings.ToLower(strings.TrimSpace(email)) }

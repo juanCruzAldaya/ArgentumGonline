@@ -134,9 +134,14 @@ func (w *World) signIn(conn transport.Conn) (string, bool) {
 }
 
 // authenticate is sign-in or sign-up, told apart by the flag the client set.
+//
+// The email only means anything on the sign-up branch: signing in is answered
+// by the name and the password, so an address sent alongside one is ignored
+// rather than checked against what is stored. Nothing here would be improved by
+// making somebody retype their address to get back in.
 func (w *World) authenticate(login protocol.Login) (string, error) {
 	if login.Register {
-		if err := w.accounts.Register(login.Name, login.Password); err != nil {
+		if err := w.accounts.Register(login.Name, login.Email, login.Password); err != nil {
 			return "", err
 		}
 	}

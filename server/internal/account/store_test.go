@@ -22,7 +22,7 @@ func openTemp(t *testing.T) (*Store, string) {
 func TestRegisterAndAuthenticate(t *testing.T) {
 	s, _ := openTemp(t)
 
-	if err := s.Register("wachin", "seiscaracteres"); err != nil {
+	if err := s.Register("wachin", "wachin@ejemplo.com", "seiscaracteres"); err != nil {
 		t.Fatalf("register: %v", err)
 	}
 	name, err := s.Authenticate("wachin", "seiscaracteres")
@@ -48,7 +48,7 @@ func TestThePasswordNeverReachesTheDisk(t *testing.T) {
 	s, path := openTemp(t)
 	const secret = "manzanaroja2026"
 
-	if err := s.Register("wachin", secret); err != nil {
+	if err := s.Register("wachin", "wachin@ejemplo.com", secret); err != nil {
 		t.Fatalf("register: %v", err)
 	}
 	blob, err := os.ReadFile(path)
@@ -67,10 +67,10 @@ func TestThePasswordNeverReachesTheDisk(t *testing.T) {
 // an attacker which players to crack together.
 func TestSamePasswordHashesDifferently(t *testing.T) {
 	s, _ := openTemp(t)
-	if err := s.Register("uno", "lamismaclave"); err != nil {
+	if err := s.Register("uno", "wachin@ejemplo.com", "lamismaclave"); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Register("dos", "lamismaclave"); err != nil {
+	if err := s.Register("dos", "wachin@ejemplo.com", "lamismaclave"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -92,10 +92,10 @@ func TestSamePasswordHashesDifferently(t *testing.T) {
 // the same account -- otherwise anybody can register "Wachin" next to "wachin".
 func TestNamesAreCaseInsensitive(t *testing.T) {
 	s, _ := openTemp(t)
-	if err := s.Register("Wachin", "seiscaracteres"); err != nil {
+	if err := s.Register("Wachin", "wachin@ejemplo.com", "seiscaracteres"); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Register("wachin", "otraclave"); err != ErrNameTaken {
+	if err := s.Register("wachin", "wachin@ejemplo.com", "otraclave"); err != ErrNameTaken {
 		t.Errorf("dio %v, se esperaba ErrNameTaken", err)
 	}
 	// And logging in with any casing lands on the registered spelling.
@@ -111,11 +111,11 @@ func TestNamesAreCaseInsensitive(t *testing.T) {
 func TestRejectsBadNamesAndShortPasswords(t *testing.T) {
 	s, _ := openTemp(t)
 	for _, name := range []string{"ab", "con espacio", "diecisieteletrass", "acentó", ""} {
-		if err := s.Register(name, "seiscaracteres"); err != ErrBadName {
+		if err := s.Register(name, "wachin@ejemplo.com", "seiscaracteres"); err != ErrBadName {
 			t.Errorf("nombre %q dio %v, se esperaba ErrBadName", name, err)
 		}
 	}
-	if err := s.Register("valido", "corta"); err != ErrShortPass {
+	if err := s.Register("valido", "wachin@ejemplo.com", "corta"); err != ErrShortPass {
 		t.Errorf("contraseña corta dio %v, se esperaba ErrShortPass", err)
 	}
 }
@@ -123,7 +123,7 @@ func TestRejectsBadNamesAndShortPasswords(t *testing.T) {
 // The career is the point: it has to survive the process.
 func TestProfileSurvivesAReopen(t *testing.T) {
 	s, path := openTemp(t)
-	if err := s.Register("wachin", "seiscaracteres"); err != nil {
+	if err := s.Register("wachin", "wachin@ejemplo.com", "seiscaracteres"); err != nil {
 		t.Fatal(err)
 	}
 	matches := []Match{
@@ -171,7 +171,7 @@ func TestProfileSurvivesAReopen(t *testing.T) {
 // fine; losing every account before it is not.
 func TestATornLastLineDoesNotLoseTheFile(t *testing.T) {
 	s, path := openTemp(t)
-	if err := s.Register("wachin", "seiscaracteres"); err != nil {
+	if err := s.Register("wachin", "wachin@ejemplo.com", "seiscaracteres"); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Record("wachin", Match{Placement: 1, Players: 10, Kills: 3, Won: true}); err != nil {
@@ -216,7 +216,7 @@ func TestRecordingForAnUnknownAccountFails(t *testing.T) {
 // Only the last few matches are kept, so a profile stays one message.
 func TestRecentHistoryIsBounded(t *testing.T) {
 	s, _ := openTemp(t)
-	if err := s.Register("wachin", "seiscaracteres"); err != nil {
+	if err := s.Register("wachin", "wachin@ejemplo.com", "seiscaracteres"); err != nil {
 		t.Fatal(err)
 	}
 	for i := 0; i < recentKept+5; i++ {
@@ -240,7 +240,7 @@ func TestRecentHistoryIsBounded(t *testing.T) {
 func TestLeaderboardRanksByWinsThenKills(t *testing.T) {
 	s, _ := openTemp(t)
 	for _, name := range []string{"uno", "dos", "tres", "cuatro"} {
-		if err := s.Register(name, "seiscaracteres"); err != nil {
+		if err := s.Register(name, "wachin@ejemplo.com", "seiscaracteres"); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -255,5 +255,94 @@ func TestLeaderboardRanksByWinsThenKills(t *testing.T) {
 	}
 	if board[0].Name != "dos" || board[1].Name != "uno" || board[2].Name != "tres" {
 		t.Errorf("orden = %s, %s, %s", board[0].Name, board[1].Name, board[2].Name)
+	}
+}
+
+// The email is the only personal data this server keeps, so what it accepts is
+// worth pinning down. The list is not academic: every rejected case here is
+// something a real form receives.
+func TestEmailShape(t *testing.T) {
+	good := []string{
+		"wachin@ejemplo.com",
+		"w@ej.co",
+		"nombre.apellido+juegito@sub.dominio.com.ar",
+		"guion-bajo_1@dominio.io",
+	}
+	for _, email := range good {
+		if !validEmail(email) {
+			t.Errorf("%q se rechazó y es un correo válido", email)
+		}
+	}
+
+	bad := []string{
+		"",                            // vacío: el registro lo pide
+		"wachin",                      // sin arroba
+		"wachin@",                     // sin dominio
+		"@ejemplo.com",                // sin buzón
+		"wachin@localhost",            // dominio sin punto: legal en una LAN, nunca lo que alguien quiso escribir
+		"wachin @ejemplo.com",         // con espacio
+		"Wachín <wachin@ejemplo.com>", // net/mail lo acepta, y no es una dirección
+		"wachin@ejemplo.com\nX-Cosa:", // salto de línea: una línea del log es una línea
+		strings.Repeat("a", 250) + "@ejemplo.com",
+	}
+	for _, email := range bad {
+		if validEmail(email) {
+			t.Errorf("%q se aceptó y no es un correo", email)
+		}
+	}
+}
+
+func TestRegisterRequiresAnEmail(t *testing.T) {
+	s, _ := openTemp(t)
+	for _, email := range []string{"", "no-es-un-correo", "wachin@localhost"} {
+		if err := s.Register("wachin", email, "seiscaracteres"); err != ErrBadEmail {
+			t.Errorf("correo %q dio %v, se esperaba ErrBadEmail", email, err)
+		}
+	}
+	// Y ninguno de esos intentos dejó la cuenta a medio crear.
+	if _, err := s.Authenticate("wachin", "seiscaracteres"); err != ErrNoSuchUser {
+		t.Errorf("después de tres registros fallidos la cuenta existe: %v", err)
+	}
+}
+
+// The email has to survive a restart like everything else, and the only way to
+// see it is the file itself: nothing exported ever hands it back, which is the
+// point — it is written, never read.
+func TestEmailReachesTheDiskAndSurvivesAReopen(t *testing.T) {
+	s, path := openTemp(t)
+	if err := s.Register("Wachin", "Wachin@Ejemplo.COM", "seiscaracteres"); err != nil {
+		t.Fatal(err)
+	}
+
+	blob, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Guardado en minúsculas: una dirección es la misma dirección se escriba
+	// como se escriba, igual que el nombre de la cuenta.
+	if !strings.Contains(string(blob), `"email":"wachin@ejemplo.com"`) {
+		t.Errorf("el correo no quedó en el log:\n%s", blob)
+	}
+
+	_ = s.Close()
+	again, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer again.Close()
+	if got := again.accounts[foldName("wachin")].Email; got != "wachin@ejemplo.com" {
+		t.Errorf("después de reabrir el correo es %q", got)
+	}
+}
+
+// Signing in never asks for the address, so a wrong one alongside a right
+// password still gets you in: the email is not a credential.
+func TestSignInIgnoresTheEmail(t *testing.T) {
+	s, _ := openTemp(t)
+	if err := s.Register("wachin", "wachin@ejemplo.com", "seiscaracteres"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Authenticate("wachin", "seiscaracteres"); err != nil {
+		t.Errorf("entrar sin dar el correo falló: %v", err)
 	}
 }

@@ -16,7 +16,10 @@ import (
 // goes back to trusting the name in the join, which is what every test and
 // every local run does.
 type Accounts interface {
-	Register(name, password string) error
+	// Register creates the account. The email is required, and the world takes
+	// it on faith the same way it takes the password: this side neither
+	// validates nor stores it, it only carries it from the wire to the store.
+	Register(name, email, password string) error
 	Authenticate(name, password string) (string, error)
 	Profile(name string) (protocol.Account, error)
 	// Record files one finished match. It must not block: it is called from

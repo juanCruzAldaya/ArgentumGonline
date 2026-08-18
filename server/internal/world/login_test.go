@@ -95,6 +95,7 @@ func (c *scriptedConn) payloadOf(t *testing.T, typ protocol.MsgType, into any) b
 type fakeAccounts struct {
 	mu       sync.Mutex
 	byName   map[string]string // name -> password
+	byEmail  map[string]string // name -> email, so a test can check it travelled
 	profiles map[string]protocol.Account
 	recorded []struct {
 		name string
@@ -104,16 +105,24 @@ type fakeAccounts struct {
 }
 
 func newFakeAccounts() *fakeAccounts {
-	return &fakeAccounts{byName: map[string]string{}, profiles: map[string]protocol.Account{}}
+	return &fakeAccounts{
+		byName:   map[string]string{},
+		byEmail:  map[string]string{},
+		profiles: map[string]protocol.Account{},
+	}
 }
 
-func (f *fakeAccounts) Register(name, password string) error {
+func (f *fakeAccounts) Register(name, email, password string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if _, taken := f.byName[name]; taken {
 		return errors.New("ese nombre ya está tomado")
 	}
+	if email == "" {
+		return errors.New("falta el correo")
+	}
 	f.byName[name] = password
+	f.byEmail[name] = email
 	f.profiles[name] = protocol.Account{Name: name}
 	return nil
 }
@@ -159,7 +168,7 @@ func TestLoginThenJoin(t *testing.T) {
 	go w.Run(t.Context())
 
 	conn := &scriptedConn{}
-	conn.push(t, protocol.TypeLogin, protocol.Login{Name: "wachin", Password: "seiscaracteres", Register: true})
+	conn.push(t, protocol.TypeLogin, protocol.Login{Name: "wachin", Email: "wachin@ejemplo.com", Password: "seiscaracteres", Register: true})
 	conn.push(t, protocol.TypeJoin, protocol.Join{Name: "otro", Class: 0, Race: 0})
 	w.HandleConn(conn)
 
@@ -174,6 +183,35 @@ func TestLoginThenJoin(t *testing.T) {
 	if !conn.payloadOf(t, protocol.TypeWelcome, &welcome) {
 		t.Fatalf("no se entró al mundo; se mandó %v", conn.types())
 	}
+
+	// El correo del registro tiene que haber llegado hasta el store. El mundo
+	// no lo valida ni lo guarda — solo lo acarrea — así que si se pierde, se
+	// pierde en silencio y la cuenta queda creada igual.
+	if got := accounts.byEmail["wachin"]; got != "wachin@ejemplo.com" {
+		t.Errorf("el correo que llegó al store es %q", got)
+	}
+}
+
+// Signing in does not carry an address, and must not start asking for one: the
+// email is what registration collects, not a second credential.
+func TestSignInNeedsNoEmail(t *testing.T) {
+	w := newTestWorld(t, 40, 40)
+	accounts := newFakeAccounts()
+	if err := accounts.Register("wachin", "wachin@ejemplo.com", "seiscaracteres"); err != nil {
+		t.Fatal(err)
+	}
+	w.SetAccounts(accounts)
+	go w.Run(t.Context())
+
+	conn := &scriptedConn{}
+	conn.push(t, protocol.TypeLogin, protocol.Login{Name: "wachin", Password: "seiscaracteres"})
+	conn.push(t, protocol.TypeJoin, protocol.Join{Class: 0, Race: 0})
+	w.HandleConn(conn)
+
+	var welcome protocol.Welcome
+	if !conn.payloadOf(t, protocol.TypeWelcome, &welcome) {
+		t.Fatalf("entrar sin correo no dejó entrar; se mandó %v", conn.types())
+	}
 }
 
 // The name in the join is ignored once there is an account behind the
@@ -182,7 +220,7 @@ func TestLoginThenJoin(t *testing.T) {
 func TestTheJoinCannotRenameAnAccount(t *testing.T) {
 	w := newTestWorld(t, 40, 40)
 	accounts := newFakeAccounts()
-	if err := accounts.Register("wachin", "seiscaracteres"); err != nil {
+	if err := accounts.Register("wachin", "wachin@ejemplo.com", "seiscaracteres"); err != nil {
 		t.Fatal(err)
 	}
 	w.SetAccounts(accounts)
@@ -215,7 +253,7 @@ func TestTheJoinCannotRenameAnAccount(t *testing.T) {
 func TestAWrongPasswordCanBeRetried(t *testing.T) {
 	w := newTestWorld(t, 40, 40)
 	accounts := newFakeAccounts()
-	if err := accounts.Register("wachin", "seiscaracteres"); err != nil {
+	if err := accounts.Register("wachin", "wachin@ejemplo.com", "seiscaracteres"); err != nil {
 		t.Fatal(err)
 	}
 	w.SetAccounts(accounts)
@@ -245,14 +283,14 @@ func TestAWrongPasswordCanBeRetried(t *testing.T) {
 func TestRegisteringATakenNameFails(t *testing.T) {
 	w := newTestWorld(t, 40, 40)
 	accounts := newFakeAccounts()
-	if err := accounts.Register("wachin", "seiscaracteres"); err != nil {
+	if err := accounts.Register("wachin", "wachin@ejemplo.com", "seiscaracteres"); err != nil {
 		t.Fatal(err)
 	}
 	w.SetAccounts(accounts)
 	go w.Run(t.Context())
 
 	conn := &scriptedConn{}
-	conn.push(t, protocol.TypeLogin, protocol.Login{Name: "wachin", Password: "otraclave", Register: true})
+	conn.push(t, protocol.TypeLogin, protocol.Login{Name: "wachin", Email: "otro@ejemplo.com", Password: "otraclave", Register: true})
 	w.HandleConn(conn)
 
 	if types := conn.types(); !contains(types, protocol.TypeError) {

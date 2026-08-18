@@ -34,7 +34,12 @@ type Store struct {
 }
 
 type record struct {
-	Name      string
+	Name string
+	// Email is collected at registration and never shown to anybody, including
+	// its owner. Nothing in the server sends mail; it is kept so there is a way
+	// to reach a player later, which makes it the only personal data this
+	// project holds — see Register for what that costs.
+	Email     string
 	Hash      string
 	CreatedAt time.Time
 
@@ -52,6 +57,7 @@ type line struct {
 	Type string `json:"t"`
 
 	Name      string    `json:"name,omitempty"`
+	Email     string    `json:"email,omitempty"`
 	Hash      string    `json:"hash,omitempty"`
 	CreatedAt time.Time `json:"at,omitempty"`
 
@@ -116,7 +122,7 @@ func (s *Store) load() error {
 				continue
 			}
 			s.accounts[foldName(ln.Name)] = &record{
-				Name: ln.Name, Hash: ln.Hash, CreatedAt: ln.CreatedAt,
+				Name: ln.Name, Email: ln.Email, Hash: ln.Hash, CreatedAt: ln.CreatedAt,
 			}
 		case lineMatch:
 			rec, ok := s.accounts[foldName(ln.Name)]
@@ -169,9 +175,25 @@ func (s *Store) append(ln line) error {
 
 // Register creates an account. The name is taken case-insensitively, so nobody
 // can register the visually identical name of somebody already playing here.
-func (s *Store) Register(name, password string) error {
+//
+// The email is required and stored in the clear, which is a deliberate decision
+// and the one thing in this package worth arguing about. The log is append-only
+// by design: there is no rewrite path, so an address written here cannot be
+// edited or deleted without rewriting the file by hand, and it is not
+// encrypted. That is fine for a prototype whose account file lives on one Fly
+// volume; it is the first thing to revisit if this ever holds real players.
+// Nothing sends mail, so the address is only ever written, never read back out.
+//
+// Two addresses can register the same email on purpose. Uniqueness would only
+// matter for a recovery flow, which does not exist, and enforcing it now would
+// turn "is that address already here" into something an outsider could probe.
+func (s *Store) Register(name, email, password string) error {
 	if !validName(name) {
 		return ErrBadName
+	}
+	email = foldEmail(email)
+	if !validEmail(email) {
+		return ErrBadEmail
 	}
 	if len(password) < MinPasswordLen {
 		return ErrShortPass
@@ -190,10 +212,10 @@ func (s *Store) Register(name, password string) error {
 	}
 
 	created := time.Now().UTC().Truncate(time.Second)
-	if err := s.append(line{Type: lineAccount, Name: name, Hash: hash, CreatedAt: created}); err != nil {
+	if err := s.append(line{Type: lineAccount, Name: name, Email: email, Hash: hash, CreatedAt: created}); err != nil {
 		return err
 	}
-	s.accounts[key] = &record{Name: name, Hash: hash, CreatedAt: created}
+	s.accounts[key] = &record{Name: name, Email: email, Hash: hash, CreatedAt: created}
 	return nil
 }
 

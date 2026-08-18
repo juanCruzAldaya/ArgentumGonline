@@ -456,6 +456,11 @@ type Hello struct {
 type Login struct {
 	Name     string `json:"name"`
 	Password string `json:"pass"`
+	// Email is collected when registering and ignored otherwise, so signing in
+	// never asks for it. It is stored in the clear in the account log, which is
+	// append-only and never rewritten — see account.Store.Register for what
+	// that means and when it should stop being true.
+	Email string `json:"email,omitempty"`
 	// Register asks for the account to be created. It fails if the name is
 	// taken rather than falling through to a sign-in attempt, so a typo in an
 	// existing name never silently becomes "wrong password".
