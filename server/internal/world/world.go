@@ -13,6 +13,7 @@ import (
 	"math"
 	"math/rand"
 	"sort"
+	"sync"
 	"time"
 
 	"juegito/server/internal/protocol"
@@ -197,6 +198,17 @@ type World struct {
 	rng   *rand.Rand
 	zone  zone
 	match match
+
+	// accounts is nil on a server without them; see accounts.go.
+	accounts Accounts
+	// accountNames maps a live entity to the account it signed in as.
+	//
+	// A sync.Map rather than a plain one because it is the single piece of
+	// world state written from a connection's own goroutine — the handshake
+	// finishes there, before the player exists to anybody else — and the rule
+	// that the world goroutine owns everything is worth more than the
+	// convenience of breaking it here.
+	accountNames sync.Map
 
 	// mapNumber and mapName describe which Argentum map is loaded, so the
 	// client can pick the matching tile data it already ships with.
@@ -746,6 +758,9 @@ func (w *World) removePlayer(id EntityID) {
 	delete(w.occupied, tileKey{p.X, p.Y})
 	w.removeCorpse(p)
 	delete(w.players, id)
+	// The account name goes with them, or a long-running server accumulates one
+	// entry per connection it has ever had.
+	w.accountNames.Delete(id)
 	w.log.Info("player left", "id", id, "name", p.Name, "players", len(w.players))
 }
 

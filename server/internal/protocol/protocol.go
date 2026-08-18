@@ -31,6 +31,7 @@ const (
 	// gives its own spell list. Separate from TypeSwap because the two lists
 	// are separate server state and a bag index is not a spell index.
 	TypeSwapSpell MsgType = "swapSpell"
+	TypeLogin     MsgType = "login"
 	TypeTalk      MsgType = "talk"
 	TypePing      MsgType = "ping"
 
@@ -43,6 +44,7 @@ const (
 	TypeUseResult MsgType = "useResult"
 	TypeSpeech    MsgType = "speech"
 	TypeOutcome   MsgType = "outcome"
+	TypeAccount   MsgType = "account"
 	TypePong      MsgType = "pong"
 	TypeError     MsgType = "error"
 )
@@ -426,6 +428,51 @@ type Zone struct {
 	Seconds   float64 `json:"t,omitempty"`
 	Stage     int     `json:"st"`
 	Shrinking bool    `json:"s,omitempty"`
+}
+
+// Login is the first message on a server that has accounts, and it replaces
+// Join's name: from here on the name is something the server knows rather than
+// something the client asserts, which is the whole point of keeping a record.
+//
+// One message for both sign-in and sign-up, told apart by a flag, because they
+// are the same form with the same two fields and a client that had to guess
+// which one it was on would guess wrong for somebody.
+type Login struct {
+	Name     string `json:"name"`
+	Password string `json:"pass"`
+	// Register asks for the account to be created. It fails if the name is
+	// taken rather than falling through to a sign-in attempt, so a typo in an
+	// existing name never silently becomes "wrong password".
+	Register bool `json:"new,omitempty"`
+}
+
+// MatchRow is one finished match in a career.
+type MatchRow struct {
+	At    int64   `json:"at"`
+	Place int     `json:"place"`
+	Of    int     `json:"of"`
+	Kills int     `json:"kills"`
+	Secs  float64 `json:"secs"`
+	Won   bool    `json:"won,omitempty"`
+	Map   string  `json:"map,omitempty"`
+}
+
+// Account is a career, sent once the login succeeds and again whenever it
+// changes. It is what the account screen draws.
+type Account struct {
+	Name  string `json:"name"`
+	Since int64  `json:"since"`
+
+	Matches int `json:"matches"`
+	Wins    int `json:"wins"`
+	Kills   int `json:"kills"`
+	// Best is the highest placement ever reached, 1 being a win. Zero means no
+	// match has finished yet, and the client draws a dash rather than a
+	// suspiciously good "0th".
+	Best    int     `json:"best"`
+	Seconds float64 `json:"secs"`
+	// Recent is the last few matches, newest first.
+	Recent []MatchRow `json:"recent,omitempty"`
 }
 
 // Outcome is how the match ended for one player, and it is the only message

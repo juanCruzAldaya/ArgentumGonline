@@ -150,7 +150,14 @@ func (w *World) endMatch(winner *Player) {
 	// own card when they died and are still watching, and who won is the half
 	// of it they could not have known then.
 	for _, p := range w.playersInOrder() {
-		w.sendTo(p, protocol.TypeOutcome, w.outcomeFor(p))
+		out := w.outcomeFor(p)
+		w.sendTo(p, protocol.TypeOutcome, out)
+		// Only the survivor is filed here. Everybody else was filed the moment
+		// they were eliminated, and recording them again would give each of
+		// them two rows for one match.
+		if winner != nil && p.ID == winner.ID {
+			w.recordOutcome(p, out)
+		}
 	}
 
 	w.log.Info("partida terminada",
@@ -176,7 +183,12 @@ func (w *World) eliminate(p *Player) {
 	if w.match.phase != matchRunning || !w.decidable() {
 		return
 	}
-	w.sendTo(p, protocol.TypeOutcome, w.outcomeFor(p))
+	out := w.outcomeFor(p)
+	w.sendTo(p, protocol.TypeOutcome, out)
+	// Filed here rather than at the end of the match: the placement is already
+	// final, and a player who closes the client on their own corpse still
+	// played the match.
+	w.recordOutcome(p, out)
 }
 
 // outcomeFor is one player's own view of how the match went.

@@ -17,25 +17,27 @@ const maxNameLen = 16
 func (w *World) HandleConn(conn transport.Conn) {
 	defer conn.Close()
 
-	first, err := conn.Recv()
-	if err != nil {
-		return
-	}
-	typ, payload, err := w.codec.DecodeEnvelope(first)
-	if err != nil || typ != protocol.TypeJoin {
-		w.sendError(conn, "first message must be a join")
-		return
-	}
-	var join protocol.Join
-	if err := w.codec.DecodePayload(payload, &join); err != nil {
-		w.sendError(conn, "malformed join")
+	name, ok := w.signIn(conn)
+	if !ok {
 		return
 	}
 
-	id, err := w.Join(sanitizeName(join.Name), Class(join.Class), Race(join.Race), conn)
+	join, ok := w.awaitJoin(conn)
+	if !ok {
+		return
+	}
+	// With accounts on, the name is the one the server authenticated, never the
+	// one in the join — otherwise the record is of whoever the client felt like
+	// claiming to be that match.
+	if name == "" {
+		name = sanitizeName(join.Name)
+	}
+
+	id, err := w.Join(name, Class(join.Class), Race(join.Race), conn)
 	if err != nil {
 		return
 	}
+	w.setAccount(id, name)
 	defer w.Leave(id)
 
 	for {
@@ -62,6 +64,86 @@ func (w *World) HandleConn(conn transport.Conn) {
 		default:
 			w.Submit(id, typ, payload)
 		}
+	}
+}
+
+// signIn runs the account half of the handshake, and returns the authenticated
+// name — or the empty string when this server has no accounts configured, which
+// leaves the old behaviour of trusting the name in the join.
+//
+// A failed attempt answers with an error and waits for another one instead of
+// dropping the connection. A wrong password is the single most common thing
+// that will happen on this path, and making it cost a reconnect — with the map
+// and the collision bitset downloaded again — would be punishing the typo, not
+// the attacker.
+func (w *World) signIn(conn transport.Conn) (string, bool) {
+	if w.accounts == nil {
+		return "", true
+	}
+
+	for {
+		frame, err := conn.Recv()
+		if err != nil {
+			return "", false
+		}
+		typ, payload, err := w.codec.DecodeEnvelope(frame)
+		if err != nil || typ != protocol.TypeLogin {
+			w.sendError(conn, "este servidor pide cuenta: mandá un login")
+			continue
+		}
+
+		var login protocol.Login
+		if err := w.codec.DecodePayload(payload, &login); err != nil {
+			w.sendError(conn, "login ilegible")
+			continue
+		}
+
+		name, err := w.authenticate(login)
+		if err != nil {
+			w.sendError(conn, err.Error())
+			continue
+		}
+
+		// The career goes out before the player picks a character, because it
+		// is the thing the account screen is there to show.
+		profile, err := w.accounts.Profile(name)
+		if err == nil {
+			if frame, err := w.codec.Encode(protocol.TypeAccount, profile); err == nil {
+				_ = conn.Send(frame)
+			}
+		}
+		return name, true
+	}
+}
+
+// authenticate is sign-in or sign-up, told apart by the flag the client set.
+func (w *World) authenticate(login protocol.Login) (string, error) {
+	if login.Register {
+		if err := w.accounts.Register(login.Name, login.Password); err != nil {
+			return "", err
+		}
+	}
+	return w.accounts.Authenticate(login.Name, login.Password)
+}
+
+// awaitJoin waits for the join that says which character to play.
+func (w *World) awaitJoin(conn transport.Conn) (protocol.Join, bool) {
+	for {
+		frame, err := conn.Recv()
+		if err != nil {
+			return protocol.Join{}, false
+		}
+		typ, payload, err := w.codec.DecodeEnvelope(frame)
+		if err != nil || typ != protocol.TypeJoin {
+			w.sendError(conn, "falta el join con clase y raza")
+			continue
+		}
+		var join protocol.Join
+		if err := w.codec.DecodePayload(payload, &join); err != nil {
+			w.sendError(conn, "join ilegible")
+			continue
+		}
+		return join, true
 	}
 }
 

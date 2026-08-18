@@ -18,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"juegito/server/internal/account"
 	"juegito/server/internal/protocol"
 	"juegito/server/internal/transport"
 	"juegito/server/internal/world"
@@ -58,6 +59,7 @@ func main() {
 		worldSeed  = flag.Int64("world-seed", 0, "pick the world deterministically; 0 draws from the clock")
 		zone       = flag.Bool("zone", true, "shrink the safe circle over the match; -zone=false leaves the whole map playable")
 		zoneSpeed  = flag.Float64("zone-speed", 1, "multiplier on every zone duration; 10 runs a whole match of contractions in about a minute")
+		accounts   = flag.String("accounts", "", "archivo de cuentas; vacio deja el servidor sin cuentas y confia en el nombre del join")
 		restart    = flag.Int("match-restart", 20, "seconds between a match being decided and the next one starting; 0 leaves the finished match standing")
 	)
 	flag.Parse()
@@ -123,6 +125,22 @@ func main() {
 		w.ArmZone(*zoneSpeed)
 	}
 	w.SetMatchRestart(*restart)
+
+	// Accounts are opt-in. Without the flag this is the server it always was:
+	// you are whatever name you typed, and nothing outlives the process. With
+	// it, the name is checked against a password and every finished match is
+	// filed against it.
+	if *accounts != "" {
+		store, err := account.Open(*accounts)
+		if err != nil {
+			log.Error("no se pudo abrir el archivo de cuentas", "path", *accounts, "err", err)
+			os.Exit(1)
+		}
+		bridge := newAccountBridge(store, log)
+		defer bridge.Close()
+		w.SetAccounts(bridge)
+		log.Info("cuentas habilitadas", "archivo", *accounts, "registradas", store.Count())
+	}
 
 	// Respawn used to default on, because dying otherwise meant restarting the
 	// client to test the next fight. -match-restart is the honest version of
