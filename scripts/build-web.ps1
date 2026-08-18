@@ -32,19 +32,36 @@ if (-not (Get-Command $Godot -ErrorAction SilentlyContinue)) {
 New-Item -ItemType Directory -Force -Path $outDir | Out-Null
 
 # Stale files from an older export would be served alongside the new ones.
-Get-ChildItem $outDir -File -Exclude ".gitkeep" | Remove-Item -Force
+#
+# The path needs the trailing wildcard: Get-ChildItem with -Exclude and a plain
+# directory path matches nothing at all, silently. This deleted zero files for
+# as long as it existed, which is worse than not being here -- the export
+# overwrites index.* but leaves every .gz behind, and the server prefers the .gz
+# for any client that accepts gzip. That is a deploy that ships the previous
+# client to every browser while the files next to it look new.
+Get-ChildItem -Path (Join-Path $outDir "*") -File -Exclude ".gitkeep" | Remove-Item -Force
 
 $exportFlag = if ($Debug) { "--export-debug" } else { "--export-release" }
 
 Write-Host "Exportando '$Preset' a $outDir ..."
+$startedAt = Get-Date
 & $Godot --headless --path $projectDir $exportFlag $Preset $outFile
+$exit = $LASTEXITCODE
 
-if ($LASTEXITCODE -ne 0) {
-    throw "El export fallo (exit $LASTEXITCODE). Si dice 'No export template found', instalalos desde Editor > Manage Export Templates."
+# $LASTEXITCODE comes back empty from a non-interactive host even when Godot
+# exits 0, so an empty value cannot be read as failure -- it aborted a perfectly
+# good export. A number that is not zero still is one, and either way the real
+# check is below: the file has to be there *and* have been written just now.
+if ($null -ne $exit -and $exit -ne 0) {
+    throw "El export fallo (exit $exit). Si dice 'No export template found', instalalos desde Editor > Manage Export Templates."
 }
 
 if (-not (Test-Path $outFile)) {
     throw "El export termino OK pero no aparecio $outFile"
+}
+
+if ((Get-Item $outFile).LastWriteTime -lt $startedAt) {
+    throw "El export no reescribio ${outFile}: quedo el de antes, no el de ahora"
 }
 
 # Pre-compress the big files. The server serves "<file>.gz" to any client that
