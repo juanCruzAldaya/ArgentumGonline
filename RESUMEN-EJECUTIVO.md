@@ -9,7 +9,7 @@
 | **Licencia** | AGPL-3.0 (los assets de Argentum los liberó Pablo Márquez bajo AGPL). |
 | **Tamaño** | ~11.500 líneas de Go, ~4.400 de GDScript. |
 | **Tests** | 137 tests en `internal/world`, todos verdes (`go test ./...`). |
-| **Carga medida** | 101 jugadores simultáneos: **2,6% de un core**, 25 MB de RAM, cero frames descartados. |
+| **Carga medida** | 101 jugadores **contra Fly**: 76 ms de punta a punta, 20 Hz clavados, cero descartes. En local, 28% de un core y 31 MB. |
 | **Deploy** | Docker + Fly.io, región `gru`. La misma imagen sirve el cliente web. |
 
 ## Qué se logró

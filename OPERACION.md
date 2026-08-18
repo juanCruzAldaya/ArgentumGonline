@@ -910,24 +910,47 @@ salida a $0.04/GB. La tabla de la red de más abajo predijo ese número clavado.
 
 ### Con el mundo compuesto y la partida llena
 
-Medido con `cmd/probe`, contra un mundo de 760×760:
+Medido con `cmd/probe` entrando como jugador 101, contra un mundo de 760×760 y
+100 bots adentro. Dos corridas de 60 s: una en local, para poder mirarle CPU y
+RAM al proceso, y otra **contra Fly**, que es la que dice lo que se siente.
 
-| | 1 jugador | 100 bots |
+| | local | Fly (`gru`) |
 |---|---|---|
-| ping ida y vuelta | 0,0 ms | 0,0 ms |
-| regularidad del snapshot | ±0,2 ms | ±2,1 ms (min 43, max 56) |
-| **tamaño del snapshot** | 574 B | **3.588 B** |
-| tráfico por jugador | 15,2 KB/s | **74,2 KB/s** = 261 MB/hora |
-| CPU del servidor | — | **2,6% de un core** |
-| RAM del servidor | — | 25 MB |
+| ping ida y vuelta | mediana 0,0 ms  σ 0,3 | mediana **50,7 ms**  σ **3,2** (p95 57,0, max 70,2) |
+| llegada del snapshot | mediana 50,0  σ 0,8 | mediana 49,9  σ 14,9 (un hueco suelto de 512 ms) |
+| snapshots recibidos | 1200 en 60 s | 1199 en 60 s |
+| **tamaño del snapshot** | 543 B | 725 B |
+| tráfico por jugador | 12,3 KB/s | 16,0 KB/s = 56 MB/hora |
+| CPU del servidor | **28,1% de un core** | no medible desde afuera |
+| RAM del servidor | 31,4 MB, 29 threads | ídem |
+| descartes / desconexiones | 0 | 0 |
+| lo que siente el jugador | 25 ms | **76 ms** (51 de red + 25 de tick) |
 
-**El cuello de botella no es CPU ni latencia: es el ancho de banda de salida.**
-El snapshot se sextuplica con gente en pantalla porque viaja en JSON con nombres
-de campo. Con 100 jugadores son ~7 MB/s de salida agregada, que en Fly.io se
-paga.
+**Los 20 Hz aguantan 101 jugadores sin despeinarse**, y en Fly la mediana del
+ping ni se mueve respecto del servidor vacío.
 
-Eso convierte el codec binario de "cuando el JSON moleste, medido" en una tarea
-con número: ya moleste y el `probe` da el antes y el después.
+**El desvío mejoró con más del doble de jugadores**, que es lo contrario de lo
+que decía la medición de 41 bots de más arriba: σ del ping de 25,5 ms bajó a
+3,2, y el pico de 271 ms a 70. Eso confirma la sospecha que quedó anotada
+entonces — **ese desvío era del router de casa, no de Fly**. Lo que cambió es
+que el snapshot es cinco veces más chico, así que el enlace doméstico ya no va
+al límite.
+
+#### El tamaño del snapshot depende del momento de la partida, no de la cantidad de gente
+
+Es el matiz que faltaba, y explica por qué una medición anterior daba 3.588 B
+para la misma escena: **el snapshot lleva solo el viewport**. Con 101 jugadores
+recién entrados a un mundo de 760×760 casi nadie tiene a otro en pantalla, y son
+543 bytes. Al final de la partida la zona los mete a todos en un círculo de 21
+tiles de radio, todos se ven entre todos, y el snapshot vuelve a los ~3,6 KB.
+
+O sea que estos números son el **piso**, no el techo: el pico de tráfico es el
+endgame y dura los últimos minutos. Cualquier presupuesto de ancho de banda hay
+que hacerlo con el número grande.
+
+Eso deja al codec binario donde estaba — es la tarea con número — pero la
+urgencia es menor de lo que parecía: los ~7 MB/s agregados con 100 jugadores son
+el final de la partida, no toda la partida.
 
 El Welcome también creció: lleva el bitset de colisión, un bit por tile, que
 pasó de 1,7 KB en Ullathorpe a **96 KB** en un mundo compuesto. Va una sola vez
@@ -936,28 +959,39 @@ lados — ver §18 de [DIFICULTADES](DIFICULTADES.md).
 
 ### Qué consume el servidor
 
-Medido con 40 bots conectados, o sea el mundo real corriendo a 20 Hz:
+Medido en un desktop, mirando el proceso que tiene el puerto 8080 y sacando la
+diferencia de CPU acumulada sobre una ventana:
 
-```
-RAM (working set) : 22.6 MB
-CPU               : 15.1% de un core
-threads           : 29
-```
+| bots | RAM (working set) | CPU | threads |
+|---|---|---|---|
+| 40 | 22,6 MB | 15,1% de un core | 29 |
+| **100** | **31,4 MB** | **28,1% de un core** | 29 |
 
-RAM y CPU **no son el cuello**. Una sola goroutine dueña de enteros, con
-interest management por viewport, es barata: la máquina más chica de Fly
-(`shared-cpu-1x`, 256 MB) sobra. Ojo con un detalle de esa medición: se tomó en
-un desktop, donde un core es bastante más rápido que el `shared-cpu-1x` de Fly,
-que tiene cuota base y burstea por encima.
+Escala más o menos lineal con la cantidad de conexiones, que es lo que se
+espera: el trabajo por tick es serializar un snapshot por jugador y escribirlo.
 
-**Contra la máquina real esto sigue sin medirse, y no por falta de ganas.** La
-latencia y el ancho de banda con 41 jugadores ya están arriba, pero RAM y CPU
-del servidor en Fly no se pueden sacar desde afuera: la imagen es `distroless`,
-no tiene shell, así que `fly ssh console` no entra, y el token de métricas del
-CLI viene fallando (`Metrics token unavailable` en cada comando). El camino que
-no depende de ninguna de las dos cosas es que lo reporte el propio servidor —
-un endpoint `/debug/stats` con `runtime.MemStats` y `NumGoroutine`, que `probe`
-levantaría junto al resto y dejaría el número acá al lado de los otros.
+RAM y CPU **no son el cuello**, pero tampoco son gratis como decía una medición
+anterior de esta misma tabla, que daba 2,6% con 100 bots. Ese número no
+sobrevive el escrutinio: contradice al de 40 bots de la fila de arriba, y es
+implausible contra un payload seis veces más grande. Quedó corregido acá y en
+RESUMEN-EJECUTIVO.
+
+Ojo con un detalle de las dos filas: se tomaron en un desktop, donde un core es
+bastante más rápido que el `shared-cpu-1x` de Fly, que tiene cuota base y
+burstea por encima.
+
+**En Fly esto sigue sin medirse, y no por falta de ganas.** La latencia y el
+ancho de banda con 101 jugadores ya están arriba, pero RAM y CPU del servidor
+allá no se pueden sacar desde afuera: la imagen es `distroless`, no tiene shell,
+así que `fly ssh console` no entra, y el token de métricas del CLI viene
+fallando (`Metrics token unavailable` en cada comando). El camino que no depende
+de ninguna de las dos cosas es que lo reporte el propio servidor — un endpoint
+`/debug/stats` con `runtime.MemStats` y `NumGoroutine`, que `probe` levantaría
+junto al resto y dejaría el número acá al lado de los otros.
+
+Lo que sí se sabe de la máquina real, después de 101 jugadores durante un minuto:
+siguió `started`, con el health check pasando, sin OOM, sin panics, sin reinicio
+y sin un solo cliente descartado.
 
 ### Qué consume la red
 
