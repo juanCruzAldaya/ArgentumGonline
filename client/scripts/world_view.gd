@@ -37,6 +37,16 @@ const COLOR_GRID := Color(0, 0, 0, 0.18)
 const COLOR_NAME := Color(0.92, 0.92, 0.88)
 const COLOR_NAME_LOCAL := Color(0.62, 0.92, 0.62)
 const COLOR_NAME_SHADOW := Color(0, 0, 0, 0.85)
+
+## The shrinking zone. Blue and translucent so the ground stays readable through
+## it — you have to be able to see what you are running over — with a brighter
+## edge that pulses, because the wall is the thing you need to find at a glance.
+const COLOR_ZONE_FILL := Color(0.20, 0.45, 0.95, 0.26)
+const COLOR_ZONE_EDGE := Color(0.55, 0.85, 1.00, 0.90)
+const COLOR_ZONE_NEXT := Color(0.85, 0.95, 1.00, 0.55)
+## Segments around the ring. 64 is smooth at any radius the world reaches and
+## is 64 quads a frame, which is nothing.
+const ZONE_SEGMENTS := 64
 const COLOR_SHADOW := Color(0, 0, 0, 0.25)
 const COLOR_TARGET := Color(0.95, 0.35, 0.30)
 const COLOR_CORPSE := Color(0.45, 0.42, 0.45, 0.85)
@@ -63,6 +73,9 @@ var _entities: Dictionary = {}
 ## snapshot's Ground list — the same viewport-limited interest management as
 ## _entities, so nothing here reveals loot the player hasn't actually seen.
 var _ground: Dictionary = {}
+
+## The zone as the server last described it, or empty when the match has none.
+var _zone: Dictionary = {}
 var _camera := Vector2.ZERO
 
 ## One-shot spell effects in flight: { entity, grh, offset, start, until }.
@@ -566,6 +579,10 @@ func _draw() -> void:
 	for id: int in ids:
 		_draw_entity(id, _entities[id], origin, font)
 
+	# The wall goes over the ground and the people standing on it, but under the
+	# canopy: a tree in front of you still hides what is behind it.
+	_draw_zone(origin)
+
 	if _has_map and _sprites.is_loaded():
 		_draw_layer(_layer3, first, shift, false)
 		# Layer 4 is the roofs, and it is skipped entirely while the player is
@@ -578,6 +595,80 @@ func _draw() -> void:
 		# Nothing was blocking the way out; there was just no way to see it.
 		if not _under_roof():
 			_draw_layer(_layer4, first, shift, false)
+
+
+## Where the local player is standing right now, in tiles, or null when the
+## snapshot has not placed us yet.
+func local_tile() -> Variant:
+	var me: Variant = _entities.get(local_id)
+	if me == null:
+		return null
+	return me["render"]
+
+
+## set_zone takes the shrinking circle from the snapshot. Empty turns it off.
+func set_zone(zone: Variant) -> void:
+	_zone = zone if typeof(zone) == TYPE_DICTIONARY else {}
+
+
+## Is a tile inside the safe circle? Used for the local warning, never for
+## anything the server decides — it does its own check and its answer wins.
+func in_safe_zone(tile: Vector2) -> bool:
+	if _zone.is_empty():
+		return true
+	var d := tile - Vector2(float(_zone.get("x", 0.0)), float(_zone.get("y", 0.0)))
+	return d.length() <= float(_zone.get("r", 0.0))
+
+
+## _draw_zone paints everything outside the circle.
+##
+## Drawn as a ring of quads running from the circle's edge out to well past the
+## corner of the screen, rather than as a rectangle with a hole cut in it:
+## Godot's 2D canvas has no boolean clipping, and a fan of quads is both exact
+## and cheap. Anything beyond the outer radius is off screen anyway.
+func _draw_zone(origin: Vector2) -> void:
+	if _zone.is_empty():
+		return
+
+	var centre := (Vector2(float(_zone.get("x", 0.0)), float(_zone.get("y", 0.0))) - origin) * TILE_SIZE
+	var radius := float(_zone.get("r", 0.0)) * TILE_SIZE
+	if radius <= 0.0:
+		return
+
+	# Far enough to cover the viewport from wherever the centre happens to be.
+	var span := Vector2(view_w + 2, view_h + 2) * TILE_SIZE
+	var outer := radius + centre.length() + span.length()
+
+	var fill := PackedVector2Array()
+	fill.resize(4)
+	for i in ZONE_SEGMENTS:
+		var a0 := TAU * float(i) / ZONE_SEGMENTS
+		var a1 := TAU * float(i + 1) / ZONE_SEGMENTS
+		var d0 := Vector2(cos(a0), sin(a0))
+		var d1 := Vector2(cos(a1), sin(a1))
+		fill[0] = centre + d0 * radius
+		fill[1] = centre + d0 * outer
+		fill[2] = centre + d1 * outer
+		fill[3] = centre + d1 * radius
+		draw_colored_polygon(fill, COLOR_ZONE_FILL)
+
+	# The edge, breathing. Two arcs slightly out of phase read as electric
+	# without needing a shader or a particle system.
+	var pulse := 0.5 + 0.5 * sin(_world_time * 4.0)
+	var edge := COLOR_ZONE_EDGE
+	edge.a *= 0.55 + 0.45 * pulse
+	draw_arc(centre, radius, 0.0, TAU, ZONE_SEGMENTS, edge, 2.0 + 1.5 * pulse)
+	var inner := COLOR_ZONE_EDGE
+	inner.a *= 0.25 * (1.0 - pulse)
+	draw_arc(centre, maxf(radius - 3.0, 0.0), 0.0, TAU, ZONE_SEGMENTS, inner, 6.0)
+
+	# Where it is going, so there is somewhere to run to.
+	var next_r := float(_zone.get("nr", 0.0))
+	if next_r > 0.0:
+		var next_c := (
+			Vector2(float(_zone.get("nx", 0.0)), float(_zone.get("ny", 0.0))) - origin
+		) * TILE_SIZE
+		draw_arc(next_c, next_r * TILE_SIZE, 0.0, TAU, ZONE_SEGMENTS, COLOR_ZONE_NEXT, 1.5)
 
 
 ## Steps (or turns) the local player right now, without waiting for the server

@@ -179,6 +179,7 @@ type World struct {
 	codec protocol.Codec
 	log   *slog.Logger
 	rng   *rand.Rand
+	zone  zone
 
 	// mapNumber and mapName describe which Argentum map is loaded, so the
 	// client can pick the matching tile data it already ships with.
@@ -320,6 +321,7 @@ func (w *World) step() {
 	w.pending = w.pending[:0]
 
 	w.meditateTick()
+	w.zoneTick()
 	w.respawnDue()
 	w.broadcast()
 }
@@ -483,6 +485,9 @@ func (w *World) movePlayer(p *Player, dir protocol.Heading) {
 }
 
 func (w *World) broadcast() {
+	// One zone state per tick, not per player: it is identical for everybody.
+	zoneState := w.zoneState()
+
 	alive := w.aliveCount()
 	for _, p := range w.players {
 		// Vitals go out every tick even though they change rarely. At this
@@ -508,6 +513,7 @@ func (w *World) broadcast() {
 			Self:     &vitals,
 			Entities: w.viewportOf(p),
 			Ground:   w.groundItemsInView(p),
+			Zone:     zoneState,
 		})
 	}
 }
@@ -562,6 +568,10 @@ func (w *World) viewportOf(p *Player) []protocol.EntityState {
 }
 
 func (w *World) addPlayer(req joinReq) EntityID {
+	// The match — and with it the ring — starts when somebody is here to play
+	// it, not when the process booted.
+	w.startIfArmed()
+
 	w.nextID++
 	id := EntityID(w.nextID)
 

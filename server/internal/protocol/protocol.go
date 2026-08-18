@@ -276,6 +276,10 @@ type Snapshot struct {
 	Entities []EntityState `json:"e"`
 	// Ground is every item stack lying on the map inside the viewport.
 	Ground []GroundItem `json:"g,omitempty"`
+	// Zone is the shrinking circle, or nil when the match has none. Sent to
+	// everybody in full: unlike positions, where the ring is going is public
+	// information — the whole mechanic is that everyone can see it coming.
+	Zone *Zone `json:"z,omitempty"`
 }
 
 // InventorySlot is one bag slot. ItemID indexes Argentum's obj.dat, which the
@@ -359,6 +363,32 @@ type CombatEvent struct {
 	// Mine tells the client whether it was the one swinging, so it can word
 	// the line without having to compare ids itself.
 	Mine bool `json:"mine"`
+	// Zone marks damage taken from the shrinking ring rather than from a
+	// player, so the client can say "the zone is killing you" instead of
+	// naming an attacker that does not exist.
+	Zone bool `json:"zone,omitempty"`
+}
+
+// Zone is the shrinking circle of safe ground.
+//
+// Positions are floats over a tile grid on purpose: the ring moves continuously
+// during a contraction, and rounding it to tiles would make it jump a whole
+// square at a time and make "am I inside" flicker for anyone standing on the
+// edge.
+type Zone struct {
+	X      float64 `json:"x"`
+	Y      float64 `json:"y"`
+	Radius float64 `json:"r"`
+	// The circle being closed toward, drawn ahead of time so players can see
+	// where to run. Radius is zero once there is no further contraction.
+	NextX      float64 `json:"nx,omitempty"`
+	NextY      float64 `json:"ny,omitempty"`
+	NextRadius float64 `json:"nr,omitempty"`
+	// Seconds until the current phase ends: until the ring starts moving, or
+	// until it stops.
+	Seconds   float64 `json:"t,omitempty"`
+	Stage     int     `json:"st"`
+	Shrinking bool    `json:"s,omitempty"`
 }
 
 // Drop asks to place one inventory slot's whole stack on the ground at the

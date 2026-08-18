@@ -56,6 +56,8 @@ func main() {
 		respawn    = flag.Int("respawn", 5, "seconds a dead player stays a ghost before coming back in the middle of the map; 0 is the genre's own rule, elimination")
 		worlds     = flag.String("worlds", defaultWorlds, "glob of composed worlds to draw this match's map from; -worlds=\"\" falls back to -map-file")
 		worldSeed  = flag.Int64("world-seed", 0, "pick the world deterministically; 0 draws from the clock")
+		zone       = flag.Bool("zone", true, "shrink the safe circle over the match; -zone=false leaves the whole map playable")
+		zoneSpeed  = flag.Float64("zone-speed", 1, "multiplier on every zone duration; 10 runs a whole match of contractions in about a minute")
 	)
 	flag.Parse()
 
@@ -119,6 +121,9 @@ func main() {
 	// A playtest affordance, not the game's rule: a battle royale eliminates
 	// you. It defaults on because testing a fight otherwise means restarting
 	// the client after every death; -respawn 0 gives permadeath back.
+	if *zone {
+		w.ArmZone(*zoneSpeed)
+	}
 	w.SetRespawnDelay(*respawn)
 	if *respawn > 0 {
 		log.Info("respawn habilitado", "segundos", *respawn)

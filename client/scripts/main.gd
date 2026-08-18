@@ -56,6 +56,12 @@ var _meditating := false
 ## per _process frame for as long as it's held.
 var _told_blocked := false
 
+## Edge-detection for the zone callouts, so a line is said once per change
+## rather than once per snapshot.
+var _zone_stage := -1
+var _zone_shrinking := false
+var _zone_safe := true
+
 
 func _ready() -> void:
 	randomize()
@@ -181,6 +187,39 @@ func _on_combat(event: Dictionary) -> void:
 			_hud.log_line("¡Has matado a %s!" % victim, _hud.COLOR_ACCENT)
 		else:
 			_hud.log_line("¡%s te ha matado!" % attacker, _hud.COLOR_EXP)
+
+
+## Zone callouts. The ring is public information — the whole mechanic is that
+## everyone can see it coming — so this only says out loud what the circle on
+## screen already shows, at the two moments a player might be looking elsewhere:
+## when it starts moving, and when they are the one standing outside it.
+func _announce_zone(zone: Variant) -> void:
+	if typeof(zone) != TYPE_DICTIONARY or zone.is_empty():
+		_zone_stage = -1
+		return
+
+	var stage := int(zone.get("st", 0))
+	var shrinking: bool = bool(zone.get("s", false))
+	if shrinking != _zone_shrinking or stage != _zone_stage:
+		_zone_stage = stage
+		_zone_shrinking = shrinking
+		if shrinking:
+			_hud.log_line("¡La zona se está cerrando!", _hud.COLOR_EXP)
+		elif float(zone.get("nr", 0.0)) > 0.0:
+			_hud.log_line(
+				"La zona se cierra en %d segundos." % int(zone.get("t", 0.0)), _hud.COLOR_ACCENT
+			)
+
+	var me: Variant = _view.local_tile()
+	if me == null:
+		return
+	var safe: bool = _view.in_safe_zone(me)
+	if safe != _zone_safe:
+		_zone_safe = safe
+		if safe:
+			_hud.log_line("Estás a salvo dentro de la zona.", _hud.COLOR_MANA)
+		else:
+			_hud.log_line("¡Estás fuera de la zona! Corré al círculo.", _hud.COLOR_EXP)
 
 
 func _on_spell(event: Dictionary) -> void:
@@ -561,6 +600,8 @@ func _on_snapshot(snapshot: Dictionary) -> void:
 
 	_view.set_entities(entities, int(snapshot.get("ack", 0)), int(snapshot.get("tick", 0)))
 	_view.set_ground(snapshot.get("g", []))
+	_view.set_zone(snapshot.get("z", {}))
+	_announce_zone(snapshot.get("z", {}))
 	_minimap.set_entities(entities)
 	_hud.set_alive(int(snapshot.get("alive", 0)))
 
