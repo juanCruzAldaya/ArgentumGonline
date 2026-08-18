@@ -44,11 +44,14 @@ Andando hoy:
 - Chat con Enter, dibujado sobre el personaje igual que los hechizos
 - Objetos, inventario y loot en el piso, con densidad de battle royale
 - Mapa grande con **M**, dibujado con el color real del terreno
+- **Cuentas con carrera**: usuario y contraseña, y una ficha con partidas,
+  victorias, bajas, mejor puesto y las últimas seis partidas. Opcional: sin
+  `-accounts` el servidor es el de siempre.
 - Export web: el mismo proceso Go sirve el cliente HTML5 y el protocolo
 - Bots headless: **101 jugadores simultáneos con el 2,6% de un core**
 
-Todavía **no**: lobby, NPCs, combate a distancia, facciones, sonido,
-persistencia. El roadmap completo y numerado está en
+Todavía **no**: lobby, matchmaking, NPCs, combate a distancia, facciones,
+sonido. El roadmap completo y numerado está en
 [RESUMEN-EJECUTIVO](RESUMEN-EJECUTIVO.md).
 
 ## Por qué esta arquitectura
@@ -108,7 +111,8 @@ Flags del servidor: `-addr`, `-tick`, `-seed`, `-debug`,
 `-worlds` (de cuáles sortear el mapa), `-world-seed` (fijar cuál),
 `-zone` y `-zone-speed` (apagar la zona, o acelerarla para verla cerrar sin
 esperar trece minutos), `-match-restart` (segundos entre una partida decidida y
-la siguiente; 0 la deja terminada) y `-respawn`.
+la siguiente; 0 la deja terminada), `-accounts` (archivo de cuentas; vacío deja
+el servidor sin ellas) y `-respawn`.
 
 Ojo con `-respawn`: mientras esté puesto, morir no es eliminación, así que
 **la partida no se decide nunca**. Es una comodidad para probar peleas sin

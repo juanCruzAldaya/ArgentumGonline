@@ -1480,6 +1480,80 @@ Verificado de punta a punta con tres bots y `-zone-speed 60`: ganó uno a los 11
 segundos, y cinco segundos más tarde la zona volvió a activarse y arrancó la
 siguiente sobre las mismas conexiones.
 
+### Las cuentas
+
+`internal/account`, y son opcionales: `-accounts <archivo>` las prende, sin el
+flag el servidor es el de siempre.
+
+**El almacenamiento es un log de solo-append, no una base de datos.** Una línea
+JSON por hecho, cada una con su etiqueta: alguien se registró, alguien terminó
+una partida. Cargar es reproducirlo; escribir es agregar una línea y bajarla al
+disco con `Sync`. No hay camino de reescritura ni compactación porque **nada de
+esto se edita jamás**.
+
+Se probó SQLite y se descartó midiendo el costo: son **nueve dependencias
+transitivas** en un repo que tiene una a propósito y compila estático para
+distroless. Todo está detrás de `Store`, así que cambiar el fondo es reemplazar
+un archivo.
+
+**Del hash, tres cosas que no se pueden aflojar:**
+
+- PBKDF2-HMAC-SHA256 con **600.000 iteraciones**, el piso de OWASP.
+  `crypto/pbkdf2` está en la biblioteca estándar desde Go 1.24, así que no costó
+  ninguna dependencia. argon2id resistiría mejor una GPU y está a un módulo de
+  distancia; esta es la moneda que paga este repo.
+- **Los parámetros viajan con el hash** (`pbkdf2-sha256$600000$salt$key`), así
+  que subir el costo más adelante aplica a las contraseñas nuevas sin invalidar
+  una sola de las viejas.
+- La comparación es de **tiempo constante**, y una cuenta que no existe igual
+  paga el costo de verificar contra un hash falso. Si decir que no fuera más
+  rápido para un nombre inexistente, ese tiempo enumera quién juega acá.
+
+Los nombres se comparan **sin distinguir mayúsculas**: ahora son una identidad y
+no una etiqueta, así que "Wachin" y "wachin" son la misma cuenta.
+
+**Una línea a medio escribir se descarta al cargar en vez de ser fatal.** Es lo
+que deja un corte de luz. Perder la última escritura está bien; perder todas las
+cuentas para proteger a la más nueva, no.
+
+**El registro de partidas no bloquea al mundo.** Escribir es un append más un
+fsync, un par de milisegundos, y el mundo tiene 50 por tick para todo lo que
+hace. Una muerte no es nada; la zona llevándose cuarenta personas en el mismo
+segundo serían cuarenta tirones. Va por una cola con fondo (`recordQueue`), y si
+se llena se pierde la fila y se dice en el log.
+
+Se archiva **una fila por jugador por partida**: al eliminarse, cuando el puesto
+ya es definitivo, y al que queda parado al decidirse. Registrar en los dos lados
+le daría dos filas a cada muerto.
+
+#### El handshake
+
+El servidor **habla primero** con un `hello` que dice si pide cuenta. Sin eso el
+cliente no tiene forma de saber qué pantalla dibujar, y adivinar mal es un
+formulario de login contra un servidor que no sabe qué es una cuenta.
+
+    servidor → hello {accounts, minpass}
+    cliente  → login {name, pass, new}      ← se repite mientras falle
+    servidor → account {ficha}
+    cliente  → join {class, race}           ← el name se ignora si hay cuenta
+
+#### En Fly
+
+Las cuentas viven en un **volumen**, montado en `/data`. Sin él cada deploy se
+las lleva: el rootfs se reemplaza entero.
+
+```powershell
+& $fly volumes create juegito_data --region gru --size 1
+& $fly deploy --remote-only
+```
+
+Un volumen ata la máquina a un host, lo cual ya era cierto acá por la regla de
+una sola máquina de §6 — el mundo vive en memoria y dos máquinas son dos
+partidas distintas.
+
+Para mirar el archivo, `-accounts` acepta cualquier ruta; en local conviene una
+fuera del repo.
+
 ### Hablar, y las palabras mágicas sobre la cabeza
 
 Un cartel por personaje, como en Argentum: lo que digás **reemplaza** lo que

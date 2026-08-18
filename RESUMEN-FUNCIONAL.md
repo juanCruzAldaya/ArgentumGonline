@@ -447,7 +447,54 @@ también te delata.
 Los carteles se van solos a los 5 segundos más 100 ms por carácter, la misma
 fórmula del cliente original.
 
-## 12. Interfaz
+## 12. La cuenta
+
+Opcional: un servidor arranca con `-accounts <archivo>` o sin él. Sin él es el de
+siempre — sos el nombre que escribiste y nada sobrevive al proceso.
+
+Con él, lo primero que ves no es el selector de personaje sino **nombre y
+contraseña**, con dos botones: entrar, o crear la cuenta. Son dos botones y no
+uno porque registrarse con un nombre ya tomado tiene que fallar *como registro*;
+si cayera a un intento de login, equivocarte de nombre te diría "contraseña
+incorrecta", que manda a buscar el problema al lado equivocado.
+
+Equivocarte no te echa. El servidor contesta y espera otro intento sobre la
+misma conexión: una contraseña mal tipeada es lo más común que va a pasar ahí, y
+hacerla costar una reconexión —con el mapa y el bitset de colisión bajando de
+nuevo— sería castigar al que se equivocó tipeando.
+
+Cuando entrás, la misma pantalla se convierte en **tu ficha**:
+
+| | |
+|---|---|
+| Partidas | cuántas terminaste |
+| Victorias | cuántas ganaste |
+| Bajas | el total de tu carrera |
+| Mejor | el puesto más alto que alcanzaste, o un guion si todavía no jugaste |
+| Tiempo | cuánto sobreviviste en total |
+| Últimas partidas | las seis más recientes: puesto, bajas, duración y en qué mundo |
+
+De ahí, el botón **Jugar** lleva al selector de personaje de siempre.
+
+**El nombre deja de ser algo que vos afirmás.** Con cuenta, el mensaje de entrada
+ya no puede renombrarte: el servidor usa el nombre que autenticó. Sin eso el
+contador de victorias no valdría nada, porque cualquiera escribe tu nombre y
+suma a tu ficha.
+
+**Se archiva una fila por partida y por jugador**: al eliminarte, que es cuando
+tu puesto ya es definitivo, y al que queda parado cuando la partida se decide.
+Cerrar el cliente sobre tu propio cadáver no te borra la partida.
+
+### Lo que la cuenta todavía no hace
+
+- **No hay forma de cambiar ni recuperar la contraseña.** Si la perdés, perdiste
+  la cuenta.
+- **No hay tabla de posiciones en pantalla.** El servidor sabe calcularla; nada
+  la muestra todavía.
+- **No hay matchmaking.** Tener cuenta no cambia a qué partida entrás: seguís
+  entrando a la que está corriendo.
+
+## 13. Interfaz
 
 Layout de Argentum, no un layout genérico de juego: consola arriba, minimapa al
 costado, viewport abajo, panel de personaje pegado al borde derecho.
@@ -539,7 +586,7 @@ encima. En una partida de minutos, la pregunta cada vez que levantás algo del
 piso es si le gana a lo que tenés puesto, así que el número vive a la vista.
 La barra se lleva media fila de tiles del viewport.
 
-## 13. Operación
+## 14. Operación
 
 **Correr el servidor:**
 
@@ -586,7 +633,7 @@ duerme cuando no hay nadie y despierta en un par de segundos. Medido: 67 ms de
 latencia sentida, contra 116 ms de un túnel casero y 25 ms en local; el detalle
 está en OPERACION §7.
 
-## 14. Cómo está armado por dentro
+## 15. Cómo está armado por dentro
 
 Una sola goroutine es dueña de todo el estado del mundo. **No hay un mutex en
 todo el repo.**
@@ -687,6 +734,6 @@ siguiendo al que te mató; las dos cosas esperan a que exista el lobby.
 | **Combate a distancia** | Arcos y flechas. Solo hay melee y hechizos. |
 | **Facciones** | Armada/Legión no están. |
 | **Hambre y sed que drenen** | Los vitals son estado real del servidor y el HUD los muestra en sus dos barras, pero nada los baja. Es una decisión de diseño pendiente: ¿un battle royale quiere upkeep? |
-| **Persistencia** | A propósito: nadie levelea, nada que guardar. |
+| **Persistencia del personaje** | A propósito: nadie levelea, no hay build que guardar. Lo que sí persiste desde ahora es la **carrera** — ver §12 — que es otra cosa: una frase sobre el pasado, no un progreso que arrastrás a la partida siguiente. |
 | **Salir al lobby al morir** | La partida ya se decide y se reinicia, pero el muerto se queda de fantasma en el mapa en vez de salir al lobby. El modo espectador siguiendo al que te mató tampoco existe. |
 | **Codec binario** | Ya está medido y ya molesta: el snapshot pesa 3,6 KB con la partida llena, 74 KB/s por jugador. Ver OPERACION §7. |

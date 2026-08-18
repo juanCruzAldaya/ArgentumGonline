@@ -8,7 +8,7 @@
 | **Arquitectura** | Servidor autoritativo headless en Go + cliente Godot 4 que solo renderiza. |
 | **Licencia** | AGPL-3.0 (los assets de Argentum los liberó Pablo Márquez bajo AGPL). |
 | **Tamaño** | ~11.500 líneas de Go, ~4.400 de GDScript. |
-| **Tests** | 137 tests en `internal/world`, todos verdes (`go test ./...`). |
+| **Tests** | 163 tests, todos verdes (`go test ./...`). |
 | **Carga medida** | 101 jugadores **contra Fly**: 76 ms de punta a punta, 20 Hz clavados, cero descartes. En local, 28% de un core y 31 MB. |
 | **Deploy** | Docker + Fly.io, región `gru`. La misma imagen sirve el cliente web. |
 
@@ -112,6 +112,12 @@ de NPC en el servidor. Es un sistema nuevo, no un port. *(grande)*
 
 ### 5. Que haya partidas de verdad
 
+5.0. **Cuentas.** Hecho: usuario y contraseña sobre un log de solo-append, con
+la carrera de cada uno — partidas, victorias, bajas, mejor puesto, tiempo — y la
+pantalla que la muestra antes de jugar. Es la base que 5.1 y 5.3 necesitaban
+igual: sin identidad, ni el matchmaking ni una tabla de posiciones significan
+nada. Falta cambiar/recuperar contraseña, y la tabla de posiciones existe en el
+servidor pero no se muestra.
 5.1. **Lobby y matchmaking.** Hoy se entra a un servidor corriendo. *(grande)*
 5.2. **Una máquina Fly por partida** vía Machines API. *(mediano)*
 5.3. **Caída inicial**: elegir dónde entrar al mundo, en vez de spawnear al azar.
