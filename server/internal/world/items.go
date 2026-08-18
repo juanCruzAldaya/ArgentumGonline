@@ -168,18 +168,31 @@ type startingKitKey struct {
 // Gear on the map is unchanged; only the arithmetic behind it now means
 // something on a map that isn't half open ground.
 //
-// groundPotionTiles is deliberately an order of magnitude denser: one stack of
-// groundPotionStack every four walkable tiles, which on Ullathorpe is ~1220
-// stacks and ~30.000 loose potions. Potions are not meant to be a find you
-// hunt for here — see the note on startingKit for why a battle royale treats
-// them as ammunition rather than as the gold sink Argentum metered them into.
+// Both numbers were an order of magnitude denser while the game was played on
+// one 100x100 map. Potions in particular sat at one stack of 25 every four
+// walkable tiles — deliberately, so they read as ammunition rather than as a
+// find. On Ullathorpe that was ~1220 stacks and felt right: the map is small
+// enough that sparse loot means walking past empty ground for the whole match.
+//
+// A composed world is 820x820 with ~330.000 walkable tiles, and the same
+// per-tile rate produced 79.483 stacks and 1,98 million loose potions. Nothing
+// broke — the density per tile is what it always was — but it stopped being a
+// battle royale: a refill was never more than a couple of steps away, so
+// running out was not a thing that could happen, and neither was choosing to
+// fight over a supply. Finding something has to be an event.
+//
+// The rates now: gear every 220 walkable tiles (~1.500 in a world), potions
+// every 110 (~3.000 stacks of 5, so ~15.000 potions). At Argentum's 5 tiles a
+// second that is a potion roughly every twenty seconds of walking and a piece
+// of gear every forty — often enough to reward exploring, rare enough that
+// what you are carrying is a decision.
 //
 // minGroundLoot is a floor for small maps, so a tiny arena still has gear.
 const (
-	groundLootTiles   = 30
+	groundLootTiles   = 220
 	minGroundLoot     = 30
-	groundPotionTiles = 4
-	groundPotionStack = 25
+	groundPotionTiles = 110
+	groundPotionStack = 5
 )
 
 // SetItems installs the item table and the starting kit for every class/race

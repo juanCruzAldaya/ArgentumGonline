@@ -7,7 +7,7 @@ extends RefCounted
 ## behind one call that answers "what rectangle do I draw right now".
 
 const BUNDLE_PATH := "res://assets/ao/bundle.json"
-const ATLAS_PATH := "res://assets/ao/atlas.png"
+const ATLAS_DIR := "res://assets/ao/"
 
 ## Heading order on the wire is north, east, south, west.
 ##
@@ -32,7 +32,19 @@ const BODY_FACING := [0, 1, 2, 3]
 ## top of the body's own head offset.
 const OFFSET_HEAD := -34
 
+## Page 0 of the atlas: everything that moves — bodies, heads, worn gear, spell
+## effects, item icons. Character drawing can use it directly because none of
+## that art ever lands on another page.
+##
+## World tiles live on their own page. One texture cannot exceed the GPU's
+## GL_MAX_TEXTURE_SIZE and Godot does not complain when it does, it just draws
+## every sprite in the game from the wrong pixels — so the atlas is split by
+## role rather than allowed to grow. Use texture_for() when the page is not
+## known in advance.
 var atlas: Texture2D
+
+var _pages: Array[Texture2D] = []
+var _page_by_grh: Dictionary = {}
 var _frames: Dictionary = {}
 var _anims: Dictionary = {}
 var _bodies: Dictionary = {}
@@ -57,10 +69,22 @@ func load_bundle() -> bool:
 		push_error("bundle.json ilegible")
 		return false
 
-	atlas = load(ATLAS_PATH) as Texture2D
-	if atlas == null:
-		push_error("no se pudo cargar %s" % ATLAS_PATH)
-		return false
+	# Older bundles named a single atlas; newer ones list every page. Both are
+	# read so a stale bundle still draws instead of failing at load.
+	var page_names: Array = parsed.get("pages", [])
+	if page_names.is_empty():
+		page_names = [parsed.get("atlas", "atlas.png")]
+
+	_pages.clear()
+	_page_by_grh.clear()
+	for name: String in page_names:
+		var path: String = ATLAS_DIR + name
+		var tex := load(path) as Texture2D
+		if tex == null:
+			push_error("no se pudo cargar %s" % path)
+			return false
+		_pages.append(tex)
+	atlas = _pages[0]
 
 	_frames = parsed.get("frames", {})
 	_anims = parsed.get("anims", {})
@@ -201,3 +225,36 @@ func _rect_of(grh: int) -> Rect2:
 	if f == null:
 		return Rect2()
 	return Rect2(float(f["x"]), float(f["y"]), float(f["w"]), float(f["h"]))
+
+
+## texture_for answers which atlas page a graphic was packed on.
+##
+## A Rect2 cannot carry the page, so anything drawing a grh whose page is not
+## known up front — map tiles, ground loot, inventory icons — has to ask.
+## Animated grhs resolve through their first frame: every frame of one
+## animation is collected together, so they always share a page.
+func texture_for(grh: int) -> Texture2D:
+	if _pages.is_empty():
+		return null
+
+	# Cached on an int key, because this is called once per visible tile per
+	# frame and the frame table is keyed by string: without the cache every
+	# tile drawn allocates a String just to find out which texture to use.
+	var cached: Variant = _page_by_grh.get(grh)
+	if cached != null:
+		return cached
+
+	var f: Variant = _frames.get(str(grh))
+	if f == null:
+		var anim: Variant = _anims.get(str(grh))
+		if anim != null:
+			var frames: Array = anim.get("frames", [])
+			if not frames.is_empty():
+				f = _frames.get(str(int(frames[0])))
+	var tex: Texture2D = _pages[0]
+	if f != null:
+		var page := int(f.get("p", 0))
+		if page >= 0 and page < _pages.size():
+			tex = _pages[page]
+	_page_by_grh[grh] = tex
+	return tex

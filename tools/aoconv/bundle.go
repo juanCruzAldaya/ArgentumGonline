@@ -24,12 +24,33 @@ import (
 // out wrong. 2048 keeps the height comfortably clear of that ceiling again.
 const atlasWidth = 2048
 
+// The atlas pages, by role. Page 0 is everything that moves — characters, the
+// gear they wear, spell effects, item icons — and page 1 is world tiles. They
+// split cleanly because nothing is on both, and separately they leave room the
+// single page did not.
+const (
+	pageChars = 0
+	pageTiles = 1
+)
+
+// pageFiles names each page's PNG. Index is Rect.P.
+var pageFiles = [...]string{"atlas.png", "atlas_tiles.png"}
+
+// maxTextureSize is GL_MAX_TEXTURE_SIZE on the overwhelming majority of
+// GPUs. Nothing enforces it for us: Godot imports an oversized texture
+// without complaint and then samples it wrong, so the check lives here.
+const maxTextureSize = 16384
+
 // Rect is where a static grh ended up inside the atlas.
+//
+// P is which atlas page it landed on, and is omitted for page 0 so the common
+// case stays out of the JSON — see Bundle.Pages.
 type Rect struct {
 	X int `json:"x"`
 	Y int `json:"y"`
 	W int `json:"w"`
 	H int `json:"h"`
+	P int `json:"p,omitempty"`
 }
 
 // Anim is an animated grh: the static grhs of its frames, plus AO's speed value.
@@ -70,7 +91,20 @@ type Gear struct {
 
 // Bundle is everything the client needs to draw Argentum characters.
 type Bundle struct {
+	// Atlas is page 0's filename, kept as its own field so a bundle stays
+	// readable by anything that only ever knew about one atlas.
 	Atlas string `json:"atlas"`
+
+	// Pages is every atlas image, indexed by Rect.P.
+	//
+	// The split exists because of a hard ceiling, not tidiness: one texture
+	// cannot exceed GL_MAX_TEXTURE_SIZE (16384 on most GPUs) and Godot does
+	// not error when it does — it silently samples the wrong pixels for every
+	// sprite in the game (see DIFICULTADES §12). Four composed worlds' tiles
+	// plus the characters come to 15296px on a single page, which works and
+	// leaves no room at all. Split by role, tiles land on their own page and
+	// both come in under 55%.
+	Pages []string `json:"pages"`
 
 	// Frames maps a static grh to its rectangle in the atlas.
 	Frames map[int]Rect `json:"frames"`
@@ -218,7 +252,7 @@ func loadBodySeeds(path string) ([]int, error) {
 
 // writeBundle packs every frame the given bodies and heads need into one atlas
 // and writes it alongside its JSON index.
-func writeBundle(grhs map[int]Grh, bodies map[int]BodyIndex, heads, weapons, shields, helmets map[int][4]int, assets string, wantBodies, wantHeads []int, outDir, overrideDir string, aoMap *AOMap, mapDisplayName string, items map[int]Item, fxs map[int]Fx) error {
+func writeBundle(grhs map[int]Grh, bodies map[int]BodyIndex, heads, weapons, shields, helmets map[int][4]int, assets string, wantBodies, wantHeads []int, outDir, overrideDir string, aoMap *AOMap, mapDisplayName string, tileGrhs map[int]bool, items map[int]Item, fxs map[int]Fx) error {
 	b := Bundle{
 		Atlas:   "atlas.png",
 		Frames:  map[int]Rect{},
@@ -231,17 +265,31 @@ func writeBundle(grhs map[int]Grh, bodies map[int]BodyIndex, heads, weapons, shi
 		Fxs:     map[int]Fx{},
 	}
 
-	// needed collects the static grhs to pack. Animations contribute their
-	// frames; several bodies can share one, hence the set.
+	// needed collects the static grhs to pack, and page records which atlas
+	// each one goes on. Animations contribute their frames; several bodies can
+	// share one, hence the set.
+	//
+	// A grh asked for by two different callers keeps the lower page number, so
+	// anything a character needs stays on page 0 even if a map floor happens to
+	// use the same graphic. Measured on the current content that never happens
+	// — the overlap between world tiles and character frames is exactly zero —
+	// but the rule costs nothing and makes the split independent of that.
 	needed := map[int]bool{}
+	page := map[int]int{}
 
-	collect := func(grhNum int) error {
+	collect := func(grhNum, onPage int) error {
 		g, ok := grhs[grhNum]
 		if !ok {
 			return fmt.Errorf("grh %d no existe", grhNum)
 		}
+		mark := func(frame int) {
+			needed[frame] = true
+			if p, seen := page[frame]; !seen || onPage < p {
+				page[frame] = onPage
+			}
+		}
 		if !g.Animated() {
-			needed[grhNum] = true
+			mark(grhNum)
 			return nil
 		}
 		anim := Anim{Frames: g.Anim, Speed: g.Speed}
@@ -250,7 +298,7 @@ func writeBundle(grhs map[int]Grh, bodies map[int]BodyIndex, heads, weapons, shi
 			if _, ok := grhs[frame]; !ok {
 				return fmt.Errorf("grh %d referencia el frame inexistente %d", grhNum, frame)
 			}
-			needed[frame] = true
+			mark(frame)
 		}
 		return nil
 	}
@@ -278,7 +326,7 @@ func writeBundle(grhs map[int]Grh, bodies map[int]BodyIndex, heads, weapons, shi
 				usable = false
 				break
 			}
-			if err := collect(grhNum); err != nil {
+			if err := collect(grhNum, pageChars); err != nil {
 				usable = false
 				break
 			}
@@ -312,7 +360,7 @@ func writeBundle(grhs map[int]Grh, bodies map[int]BodyIndex, heads, weapons, shi
 					usable = false
 					break
 				}
-				if err := collect(grhNum); err != nil {
+				if err := collect(grhNum, pageChars); err != nil {
 					usable = false
 					break
 				}
@@ -358,7 +406,7 @@ func writeBundle(grhs map[int]Grh, bodies map[int]BodyIndex, heads, weapons, shi
 			if grhNum == 0 {
 				return fmt.Errorf("cabeza %d tiene una dirección vacía", id)
 			}
-			if err := collect(grhNum); err != nil {
+			if err := collect(grhNum, pageChars); err != nil {
 				return fmt.Errorf("cabeza %d: %w", id, err)
 			}
 		}
@@ -371,7 +419,7 @@ func writeBundle(grhs map[int]Grh, bodies map[int]BodyIndex, heads, weapons, shi
 		// show the real thing instead of an empty square.
 		missing := 0
 		for _, item := range items {
-			if err := collect(item.Grh); err != nil {
+			if err := collect(item.Grh, pageChars); err != nil {
 				missing++
 			}
 		}
@@ -393,7 +441,7 @@ func writeBundle(grhs map[int]Grh, bodies map[int]BodyIndex, heads, weapons, shi
 				missing++
 				continue
 			}
-			if err := collect(fx.Grh); err != nil {
+			if err := collect(fx.Grh, pageChars); err != nil {
 				missing++
 				continue
 			}
@@ -406,16 +454,16 @@ func writeBundle(grhs map[int]Grh, bodies map[int]BodyIndex, heads, weapons, shi
 		fmt.Println()
 	}
 
-	if aoMap != nil {
+	if len(tileGrhs) > 0 {
 		// A tile referencing a graphic that is not in the index is a data bug in
 		// a twenty year old map, not a reason to refuse the whole conversion.
 		missing := 0
-		for grh := range aoMap.usedGrhs() {
-			if err := collect(grh); err != nil {
+		for grh := range tileGrhs {
+			if err := collect(grh, pageTiles); err != nil {
 				missing++
 			}
 		}
-		fmt.Printf("mapa %d: %d grh distintos", aoMap.Number, len(aoMap.usedGrhs()))
+		fmt.Printf("tiles: %d grh distintos", len(tileGrhs))
 		if missing > 0 {
 			fmt.Printf(", %d sin entrada en el índice (se omiten)", missing)
 		}
@@ -461,51 +509,78 @@ func writeBundle(grhs map[int]Grh, bodies map[int]BodyIndex, heads, weapons, shi
 		return order[i] < order[j]
 	})
 
-	x, y, shelfHeight := 0, 0, 0
-	for _, grhNum := range order {
-		g := grhs[grhNum]
-		if g.W <= 0 || g.H <= 0 {
-			return fmt.Errorf("grh %d tiene rectángulo vacío", grhNum)
+	// Pack and paint one page at a time. Each is an independent shelf pack, so
+	// a page's height depends only on what is on it.
+	atlases := make([]*image.NRGBA, len(pageFiles))
+	for pageNum := range pageFiles {
+		onPage := make([]int, 0, len(order))
+		for _, grhNum := range order {
+			if page[grhNum] == pageNum {
+				onPage = append(onPage, grhNum)
+			}
 		}
-		if x+g.W > atlasWidth {
-			x = 0
-			y += shelfHeight
-			shelfHeight = 0
-		}
-		b.Frames[grhNum] = Rect{X: x, Y: y, W: g.W, H: g.H}
-		x += g.W
-		if g.H > shelfHeight {
-			shelfHeight = g.H
-		}
-	}
-	atlasHeight := y + shelfHeight
-	if atlasHeight == 0 {
-		return fmt.Errorf("no hay nada que empaquetar")
-	}
-
-	atlas := image.NewNRGBA(image.Rect(0, 0, atlasWidth, atlasHeight))
-	for _, grhNum := range order {
-		g := grhs[grhNum]
-		src := sheets[g.File]
-
-		srcRect := image.Rect(g.X, g.Y, g.X+g.W, g.Y+g.H)
-		if !srcRect.In(src.Bounds()) {
-			// An index entry pointing outside its own sheet is another piece of
-			// twenty year old data rot. Drop the frame instead of the build.
-			delete(b.Frames, grhNum)
+		if len(onPage) == 0 {
 			continue
 		}
-		dst := b.Frames[grhNum]
-		draw.Draw(atlas, image.Rect(dst.X, dst.Y, dst.X+dst.W, dst.Y+dst.H), src, srcRect.Min, draw.Src)
+
+		x, y, shelfHeight := 0, 0, 0
+		for _, grhNum := range onPage {
+			g := grhs[grhNum]
+			if g.W <= 0 || g.H <= 0 {
+				return fmt.Errorf("grh %d tiene rectángulo vacío", grhNum)
+			}
+			if x+g.W > atlasWidth {
+				x = 0
+				y += shelfHeight
+				shelfHeight = 0
+			}
+			b.Frames[grhNum] = Rect{X: x, Y: y, W: g.W, H: g.H, P: pageNum}
+			x += g.W
+			if g.H > shelfHeight {
+				shelfHeight = g.H
+			}
+		}
+		height := y + shelfHeight
+
+		// Godot does not error above GL_MAX_TEXTURE_SIZE, it just samples the
+		// wrong pixels for every sprite at once. Refusing here turns a silent
+		// visual catastrophe into a build failure that names the cause.
+		if height > maxTextureSize {
+			return fmt.Errorf("la página %d (%s) quedó en %dpx de alto, por encima del límite de %d de la GPU — hay que dividirla",
+				pageNum, pageFiles[pageNum], height, maxTextureSize)
+		}
+
+		atlas := image.NewNRGBA(image.Rect(0, 0, atlasWidth, height))
+		for _, grhNum := range onPage {
+			g := grhs[grhNum]
+			src := sheets[g.File]
+			srcRect := image.Rect(g.X, g.Y, g.X+g.W, g.Y+g.H)
+			if !srcRect.In(src.Bounds()) {
+				// An index entry pointing outside its own sheet is another piece
+				// of twenty year old data rot. Drop the frame, not the build.
+				delete(b.Frames, grhNum)
+				continue
+			}
+			dst := b.Frames[grhNum]
+			draw.Draw(atlas, image.Rect(dst.X, dst.Y, dst.X+dst.W, dst.Y+dst.H), src, srcRect.Min, draw.Src)
+		}
+		atlases[pageNum] = atlas
 	}
 
-	keyBlackToTransparent(atlas)
+	for _, atlas := range atlases {
+		if atlas != nil {
+			keyBlackToTransparent(atlas)
+		}
+	}
 
 	// After the colour key, not before: the replacement art already carries a
 	// real alpha channel, and running Argentum's black-is-transparent rule over
 	// it would punch holes in whatever it draws in near-black.
-	if err := applyOverrides(atlas, &b, overrideDir); err != nil {
-		return err
+	// Overrides are character and effect art, so they land on page 0.
+	if atlases[pageChars] != nil {
+		if err := applyOverrides(atlases[pageChars], &b, overrideDir); err != nil {
+			return err
+		}
 	}
 
 	// Head alignment used to be measured here, by finding the topmost opaque
@@ -518,16 +593,21 @@ func writeBundle(grhs map[int]Grh, bodies map[int]BodyIndex, heads, weapons, shi
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		return err
 	}
-	atlasPath := filepath.Join(outDir, "atlas.png")
-	f, err := os.Create(atlasPath)
-	if err != nil {
-		return err
-	}
-	if err := png.Encode(f, atlas); err != nil {
+	for pageNum, atlas := range atlases {
+		if atlas == nil {
+			continue
+		}
+		b.Pages = append(b.Pages, pageFiles[pageNum])
+		f, err := os.Create(filepath.Join(outDir, pageFiles[pageNum]))
+		if err != nil {
+			return err
+		}
+		if err := png.Encode(f, atlas); err != nil {
+			f.Close()
+			return err
+		}
 		f.Close()
-		return err
 	}
-	f.Close()
 
 	jsonPath := filepath.Join(outDir, "bundle.json")
 	data, err := json.MarshalIndent(b, "", "  ")
@@ -538,8 +618,23 @@ func writeBundle(grhs map[int]Grh, bodies map[int]BodyIndex, heads, weapons, shi
 		return err
 	}
 
-	info, _ := os.Stat(atlasPath)
-	fmt.Printf("\natlas.png   %dx%d, %d KB, %d frames\n", atlasWidth, atlasHeight, info.Size()/1024, len(b.Frames))
+	fmt.Println()
+	for pageNum, atlas := range atlases {
+		if atlas == nil {
+			continue
+		}
+		name := pageFiles[pageNum]
+		info, _ := os.Stat(filepath.Join(outDir, name))
+		frames := 0
+		for _, r := range b.Frames {
+			if r.P == pageNum {
+				frames++
+			}
+		}
+		h := atlas.Bounds().Dy()
+		fmt.Printf("%-16s %dx%d (%d%% del límite), %d KB, %d frames\n",
+			name, atlasWidth, h, 100*h/maxTextureSize, info.Size()/1024, frames)
+	}
 	fmt.Printf("bundle.json %d cuerpos, %d cabezas, %d animaciones, %d fx\n", len(b.Bodies), len(b.Heads), len(b.Anims), len(b.Fxs))
 
 	if aoMap != nil {

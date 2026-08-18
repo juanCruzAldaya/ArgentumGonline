@@ -23,9 +23,20 @@ const (
 	// of snapshots — well past the point where the client is unplayable anyway.
 	sendQueueDepth = 64
 
-	// readLimitBytes caps a single inbound frame. Client commands are tiny;
-	// anything near this is a bug or an attack.
+	// readLimitBytes caps a single inbound frame on the server. Client commands
+	// are tiny; anything near this is a bug or an attack.
 	readLimitBytes = 32 * 1024
+
+	// clientReadLimitBytes caps a single inbound frame on a client, and is far
+	// larger because the traffic is not symmetric: the biggest thing a client
+	// ever sends is a move, while the first thing it receives is the Welcome,
+	// which carries the whole collision bitset. That grows with the map — one
+	// bit per tile, base64'd — so Ullathorpe's 10.000 tiles cost 1,7 KB and a
+	// composed 820x820 world costs 112 KB. Sharing the server's 32 KB limit
+	// meant every client was disconnected mid-handshake the moment maps got
+	// big, with an error ("use of closed network connection") that named the
+	// symptom and not the cause.
+	clientReadLimitBytes = 1024 * 1024
 
 	writeTimeout    = 5 * time.Second
 	shutdownTimeout = 5 * time.Second
@@ -270,7 +281,7 @@ func DialWS(ctx context.Context, url string) (Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	c.SetReadLimit(readLimitBytes)
+	c.SetReadLimit(clientReadLimitBytes)
 
 	connCtx, cancel := context.WithCancel(context.Background())
 	conn := &wsConn{

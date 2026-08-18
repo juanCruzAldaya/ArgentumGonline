@@ -73,6 +73,10 @@ func main() {
 		mundosDir = flag.String("mundos", "", "directory holding Mapa*.map (default <assets>/Mundos)")
 		serverOut = flag.String("server-out", "", "directory to write the server's data into")
 		datDir    = flag.String("dat", "", "directory holding obj.dat and Hechizos.dat (default <assets>/Dat)")
+
+		worlds    = flag.Bool("worlds", false, "build the composed worlds in worlds/layout.json")
+		worldsDir = flag.String("worlds-dir", "worlds", "directory holding layout.json and water.json")
+		tiledOut  = flag.String("tiled", "", "export the composed worlds as Tiled maps into this directory, for editing")
 	)
 	flag.Parse()
 
@@ -206,6 +210,45 @@ func main() {
 		}
 	}
 
+	// tileGrhs is every graphic the world geometry needs, from whichever source
+	// was asked for. It goes to the atlas as its own page: tiles are the half of
+	// the content that grows with the map, and keeping them off the character
+	// page is what lets four worlds fit at all.
+	tileGrhs := map[int]bool{}
+	if aoMap != nil {
+		tileGrhs = aoMap.usedGrhs()
+	}
+
+	if *worlds {
+		dir := *mundosDir
+		if dir == "" {
+			dir = filepath.Join(*assets, "Mundos")
+		}
+		used, err := writeWorlds(dir,
+			filepath.Join(*worldsDir, "layout.json"),
+			filepath.Join(*worldsDir, "water.json"),
+			*bundleDir, *serverOut, newTilePalette(*assets, grhs))
+		if err != nil {
+			fatal("%v", err)
+		}
+		for grh := range used {
+			tileGrhs[grh] = true
+		}
+	}
+
+	if *tiledOut != "" {
+		dir := *mundosDir
+		if dir == "" {
+			dir = filepath.Join(*assets, "Mundos")
+		}
+		if err := writeTiled(dir,
+			filepath.Join(*worldsDir, "layout.json"),
+			filepath.Join(*worldsDir, "water.json"),
+			*assets, *tiledOut, grhs); err != nil {
+			fatal("%v", err)
+		}
+	}
+
 	if *bundleDir != "" {
 		// Which bodies to pack is not a list anyone should be maintaining by
 		// hand any more. Equipping armour *is* changing your body in Argentum
@@ -233,7 +276,7 @@ func main() {
 
 		if err := writeBundle(grhs, bodies, heads, weaponAnims, shieldAnims, helmetAnims,
 			*assets, bodyIDs, parseList(*headList), *bundleDir, *overrides,
-			aoMap, displayName, items, fxs); err != nil {
+			aoMap, displayName, tileGrhs, items, fxs); err != nil {
 			fatal("%v", err)
 		}
 

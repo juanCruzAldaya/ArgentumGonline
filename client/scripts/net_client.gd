@@ -28,6 +28,14 @@ func connect_to_server(url: String, player_name: String, class_id: int, race_id:
 	_player_name = player_name
 	_class_id = class_id
 	_race_id = race_id
+
+	# Godot's default inbound buffer is 64 KB, and the Welcome is the one
+	# message that can beat it: it carries the collision bitset, one bit per
+	# tile, which is 1,7 KB for Ullathorpe but 112 KB for a composed 820x820
+	# world. Over the default the packet is dropped and the client sits at a
+	# black screen having connected successfully and received nothing.
+	_socket.inbound_buffer_size = 1 << 20
+
 	var err := _socket.connect_to_url(url)
 	if err != OK:
 		push_error("connect_to_url(%s) failed: %d" % [url, err])

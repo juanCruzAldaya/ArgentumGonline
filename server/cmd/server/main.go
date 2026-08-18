@@ -9,11 +9,14 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"math/rand"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strings"
 	"syscall"
+	"time"
 
 	"juegito/server/internal/protocol"
 	"juegito/server/internal/transport"
@@ -30,6 +33,12 @@ const (
 	defaultMapFile    = "maps/map1.json"
 	defaultItemsFile  = "maps/items.json"
 	defaultSpellsFile = "maps/spells.json"
+
+	// defaultWorlds is the pattern the composed worlds are written under by
+	// tools/aoconv -worlds. A match runs on one of them, drawn at startup, so
+	// that two servers started from the same image do not always play the same
+	// world. It takes precedence over -map-file when any file matches.
+	defaultWorlds = "maps/map1[0-9][0-9][0-9].json"
 )
 
 func main() {
@@ -45,6 +54,8 @@ func main() {
 		itemsFile  = flag.String("items-file", defaultItemsFile, "converted obj.dat; -items-file=\"\" leaves every weapon and armour unknown")
 		spellsFile = flag.String("spells-file", defaultSpellsFile, "converted Hechizos.dat; -spells-file=\"\" leaves nothing castable")
 		respawn    = flag.Int("respawn", 5, "seconds a dead player stays a ghost before coming back in the middle of the map; 0 is the genre's own rule, elimination")
+		worlds     = flag.String("worlds", defaultWorlds, "glob of composed worlds to draw this match's map from; -worlds=\"\" falls back to -map-file")
+		worldSeed  = flag.Int64("world-seed", 0, "pick the world deterministically; 0 draws from the clock")
 	)
 	flag.Parse()
 
@@ -69,8 +80,32 @@ func main() {
 
 	grid := world.GenerateDemoMap(*mapW, *mapH, *seed)
 	mapNumber, mapName := 0, ""
-	if *mapFile != "" {
-		loaded, number, name, err := world.LoadMap(dataFile(log, "-map-file", *mapFile))
+
+	// A match plays one world. Which one is drawn here, once, before anybody
+	// connects: the simulation only ever knows about a single grid, so the
+	// choice has to be made before it exists.
+	chosen := *mapFile
+	chosenFlag := "-map-file"
+	if *worlds != "" {
+		matches, err := filepath.Glob(*worlds)
+		if err != nil {
+			log.Error("patrón de mundos inválido", "worlds", *worlds, "err", err)
+			os.Exit(1)
+		}
+		if len(matches) > 0 {
+			sort.Strings(matches)
+			seed := *worldSeed
+			if seed == 0 {
+				seed = time.Now().UnixNano()
+			}
+			chosen = matches[rand.New(rand.NewSource(seed)).Intn(len(matches))]
+			chosenFlag = "-worlds"
+			log.Info("mundo sorteado", "de", len(matches), "archivo", filepath.Base(chosen))
+		}
+	}
+
+	if chosen != "" {
+		loaded, number, name, err := world.LoadMap(dataFile(log, chosenFlag, chosen))
 		if err != nil {
 			log.Error("no se pudo cargar el mapa", "err", err)
 			os.Exit(1)

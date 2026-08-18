@@ -732,7 +732,7 @@ func _draw_layer(layer: Variant, first: Vector2i, shift: Vector2, dense: bool) -
 			# placed by its bottom centre rather than its top left corner.
 			var at := shift + Vector2(vx * TILE_SIZE, vy * TILE_SIZE)
 			at += Vector2((TILE_SIZE - src.size.x) * 0.5, TILE_SIZE - src.size.y)
-			draw_texture_rect_region(_sprites.atlas, Rect2(at, src.size), src)
+			draw_texture_rect_region(_sprites.texture_for(grh), Rect2(at, src.size), src)
 
 
 ## Ground loot draws between the floor and the characters — the same order
@@ -750,11 +750,12 @@ func _draw_ground(origin: Vector2) -> void:
 		if item.is_empty():
 			continue
 
-		var rect: Rect2 = _sprites.grh_rect(int(item.get("grh", 0)), _world_time)
+		var grh := int(item.get("grh", 0))
+		var rect: Rect2 = _sprites.grh_rect(grh, _world_time)
 		if rect.size.x <= 0.0:
 			continue
 		var at := (tile - origin) * TILE_SIZE + Vector2((TILE_SIZE - rect.size.x) * 0.5, TILE_SIZE - rect.size.y)
-		draw_texture_rect_region(_sprites.atlas, Rect2(at, rect.size), rect)
+		draw_texture_rect_region(_sprites.texture_for(grh), Rect2(at, rect.size), rect)
 		# No count is painted on the tile. Argentum does not label the floor
 		# either, and with potions now lying on a quarter of the map the labels
 		# were the densest thing on screen — a field of "x25" over the actual

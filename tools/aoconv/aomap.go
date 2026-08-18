@@ -29,15 +29,19 @@ type Tile struct {
 	Trigger int
 }
 
-// AOMap is a parsed .map file.
+// AOMap is a parsed .map file, or several of them merged into one world.
+//
+// W and H are carried per map rather than taken from the MapWidth/MapHeight
+// constants because a composed world is not 100x100 — see world.go.
 type AOMap struct {
 	Number  int
 	Version int
 	Desc    string
-	Tiles   []Tile // row major, MapWidth*MapHeight
+	W, H    int
+	Tiles   []Tile // row major, W*H
 }
 
-func (m *AOMap) at(x, y int) *Tile { return &m.Tiles[y*MapWidth+x] }
+func (m *AOMap) at(x, y int) *Tile { return &m.Tiles[y*m.W+x] }
 
 // ClientMap is what the renderer needs: the four graphic layers.
 //
@@ -96,6 +100,8 @@ func readAOMap(path string, number int) (*AOMap, error) {
 		Number:  number,
 		Version: int(int16(binary.LittleEndian.Uint16(raw[0:2]))),
 		Desc:    strings.TrimRight(decodeCP1252(raw[2:257]), "\x00 "),
+		W:       MapWidth,
+		H:       MapHeight,
 		Tiles:   make([]Tile, MapWidth*MapHeight),
 	}
 
@@ -189,8 +195,8 @@ func (m *AOMap) clientMap(name string) ClientMap {
 	c := ClientMap{
 		Number: m.Number,
 		Name:   name,
-		Width:  MapWidth,
-		Height: MapHeight,
+		Width:  m.W,
+		Height: m.H,
 		Layer1: make([]int, len(m.Tiles)),
 		Layer2: map[int]int{},
 		Layer3: map[int]int{},
@@ -225,8 +231,8 @@ func (m *AOMap) serverMap(name string) ServerMap {
 	return ServerMap{
 		Number:  m.Number,
 		Name:    name,
-		Width:   MapWidth,
-		Height:  MapHeight,
+		Width:   m.W,
+		Height:  m.H,
 		Blocked: base64.StdEncoding.EncodeToString(bits),
 	}
 }

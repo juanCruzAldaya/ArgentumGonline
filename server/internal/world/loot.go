@@ -172,15 +172,27 @@ func stackAmountFor(item Item) int {
 // groundItemsInView is Ground for one player's snapshot — same viewport
 // window as viewportOf, so loot obeys the same interest-management rule
 // entities do.
+//
+// It walks the viewport and looks each tile up, rather than walking the ground
+// map and discarding what falls outside. Both are correct; only one has a cost
+// that does not depend on how much loot the world holds. That stopped being an
+// academic distinction when maps went from Ullathorpe's 10.000 tiles to a
+// composed world's 672.400: the same loot density that put ~1.400 stacks on
+// the ground now puts ~90.000, and scanning all of them for every player on
+// every tick is 90 million map reads a second with a full match connected.
+// The viewport is 221 tiles no matter how big the world gets.
 func (w *World) groundItemsInView(p *Player) []protocol.GroundItem {
 	const halfW, halfH = ViewportW / 2, ViewportH / 2
 	var out []protocol.GroundItem
-	for key, stack := range w.ground {
-		dx, dy := key.X-p.X, key.Y-p.Y
-		if dx < -halfW || dx > halfW || dy < -halfH || dy > halfH {
-			continue
+	for dy := -halfH; dy <= halfH; dy++ {
+		for dx := -halfW; dx <= halfW; dx++ {
+			key := tileKey{p.X + dx, p.Y + dy}
+			stack, ok := w.ground[key]
+			if !ok {
+				continue
+			}
+			out = append(out, protocol.GroundItem{X: key.X, Y: key.Y, ItemID: stack.ItemID, Amount: stack.Amount})
 		}
-		out = append(out, protocol.GroundItem{X: key.X, Y: key.Y, ItemID: stack.ItemID, Amount: stack.Amount})
 	}
 	return out
 }

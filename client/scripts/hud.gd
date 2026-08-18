@@ -400,10 +400,11 @@ func _fill_slot(slot: Panel, item: Dictionary, amount: int, server_slot: int, eq
 	slot.set_meta(&"item_type", int(item.get("type", -1)))
 	slot.set_meta(&"equipped", equipped)
 	_restyle_slot(slot)
-	var rect: Rect2 = _sprites.grh_rect(int(item.get("grh", 0)), 0.0)
+	var item_grh := int(item.get("grh", 0))
+	var rect: Rect2 = _sprites.grh_rect(item_grh, 0.0)
 	if rect.size.x > 0.0:
 		var atlas := AtlasTexture.new()
-		atlas.atlas = _sprites.atlas
+		atlas.atlas = _sprites.texture_for(item_grh)
 		atlas.region = rect
 
 		var icon := TextureRect.new()
