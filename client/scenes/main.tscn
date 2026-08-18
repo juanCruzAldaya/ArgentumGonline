@@ -29,6 +29,7 @@
 [ext_resource type="Script" path="res://scripts/world_view.gd" id="3_view"]
 [ext_resource type="Script" path="res://scripts/hud.gd" id="4_hud"]
 [ext_resource type="Script" path="res://scripts/minimap.gd" id="5_minimap"]
+[ext_resource type="Script" path="res://scripts/map_overlay.gd" id="9_mapoverlay"]
 [ext_resource type="Script" path="res://scripts/chat_input.gd" id="10_chatinput"]
 [ext_resource type="Texture2D" path="res://assets/ao/ui/panel_bg.png" id="6_panelbg"]
 [ext_resource type="Texture2D" path="res://assets/ao/ui/footer_bg.png" id="7_footerbg"]
@@ -85,13 +86,6 @@ script = ExtResource("5_minimap")
 offset_top = 130.0
 offset_right = 1088.0
 offset_bottom = 164.0
-mouse_filter = 2
-
-[node name="Alive" type="Label" parent="UI/Screen/TopBar"]
-offset_left = 14.0
-offset_top = 6.0
-offset_right = 500.0
-offset_bottom = 28.0
 mouse_filter = 2
 
 [node name="Zone" type="Label" parent="UI/Screen/TopBar"]
@@ -308,6 +302,14 @@ offset_bottom = 33.0
 horizontal_alignment = 1
 vertical_alignment = 1
 mouse_filter = 2
+
+[node name="MapOverlay" type="Control" parent="UI/Screen"]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("9_mapoverlay")
 
 [node name="ChatInput" type="LineEdit" parent="UI/Screen"]
 offset_left = 8.0

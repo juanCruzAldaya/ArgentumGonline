@@ -19,6 +19,7 @@ const INPUT_INTERVAL := 0.0
 @onready var _view: Node2D = $WorldView
 @onready var _hud: Control = $UI/Screen
 @onready var _minimap: Control = $UI/Screen/MinimapFrame/Minimap
+@onready var _map_overlay: Control = $UI/Screen/MapOverlay
 @onready var _chat: LineEdit = $UI/Screen/ChatInput
 
 var _url := DEFAULT_URL
@@ -88,6 +89,7 @@ func _ready() -> void:
 	_hud.spell_swap_requested.connect(_net.send_swap_spell)
 	_hud.drop_requested.connect(_net.send_drop)
 	_hud.quit_requested.connect(_on_quit_requested)
+	_hud.map_requested.connect(_map_overlay.toggle)
 	_chat.said.connect(_net.send_talk)
 
 	# The world and the HUD have nothing to show until a character exists, so
@@ -414,6 +416,16 @@ func _unhandled_input(event: InputEvent) -> void:
 				get_viewport().set_input_as_handled()
 			return
 
+	# The map is a modal read of something you already have: while it is open it
+	# eats Escape and M so neither leaks into targeting or movement, and every
+	# other key still works, because closing the map should never be the price
+	# of drinking a potion.
+	if _map_overlay.visible and event is InputEventKey and event.pressed and not event.echo:
+		if event.keycode == KEY_ESCAPE or event.keycode == KEY_M:
+			_map_overlay.close()
+			get_viewport().set_input_as_handled()
+			return
+
 	if _connected and event is InputEventKey and event.pressed and not event.echo:
 		match event.keycode:
 			KEY_O:
@@ -447,6 +459,12 @@ func _unhandled_input(event: InputEvent) -> void:
 					_net.send_drop(drop_slot)
 			KEY_F6:
 				_net.send_meditate()
+			KEY_M:
+				# The world map. Not a key the original binds — it has no world
+				# map to bind, since a map there is 100x100 and the minimap
+				# shows all of it. A composed world is 820x820, where the
+				# corner minimap gives about a sixth of a pixel per tile.
+				_map_overlay.toggle()
 
 	if _targeting_spell == 0:
 		_handle_inspect_click(event)
@@ -607,6 +625,7 @@ func _on_welcomed(welcome: Dictionary) -> void:
 	_local_id = int(welcome.get("id", 0))
 	_view.configure(welcome)
 	_minimap.configure(welcome)
+	_map_overlay.configure(welcome, _minimap.terrain_texture())
 	_hud.set_spell_slots(int(welcome.get("spellSlots", 0)))
 
 	_map_name = str(welcome.get("mapName", ""))
@@ -633,8 +652,10 @@ func _on_snapshot(snapshot: Dictionary) -> void:
 	_view.set_entities(entities, int(snapshot.get("ack", 0)), int(snapshot.get("tick", 0)))
 	_view.set_ground(snapshot.get("g", []))
 	_view.set_zone(snapshot.get("z", {}))
+	_map_overlay.set_zone(snapshot.get("z", {}))
 	_announce_zone(snapshot.get("z", {}))
 	_minimap.set_entities(entities)
+	_map_overlay.set_entities(entities)
 	_hud.set_alive(int(snapshot.get("alive", 0)))
 
 	var vitals: Variant = snapshot.get("self")

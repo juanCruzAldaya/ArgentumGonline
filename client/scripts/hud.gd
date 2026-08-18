@@ -106,8 +106,11 @@ signal quit_requested
 ## own mnuTirar sends, just reached without needing to stand and press a key.
 signal drop_requested(server_slot: int)
 
-## The side panel buttons Argentum shows. None are wired yet; they are here so
-## the panel can be judged at its real density. Trimmed to what a single BR
+## Raised by the "Mapa" plate: open the world map at full size.
+signal map_requested
+
+## The side panel buttons Argentum shows. Only Mapa does anything so far; the
+## rest are here so the panel can be judged at its real density. Trimmed to what a single BR
 ## match without persistence could ever actually use — Amigos/Grupo/Clanes/
 ## Quests all presuppose state that outlives a match (a friends list, a
 ## guild, a quest log), which the genre-fork decision already ruled out.
@@ -160,7 +163,6 @@ const ACTION_W := 126
 const ACTION_H := 26
 const ACTION_YS := [723, 756, 788, 821, 854, 887]
 
-@onready var _alive: Label = $TopBar/Alive
 @onready var _zone: Label = $TopBar/Zone
 @onready var _log: RichTextLabel = $Console/Log
 @onready var _char_name: Label = $SidePanel/CharName
@@ -521,8 +523,12 @@ func set_vitals(vitals: Dictionary) -> void:
 ## The count lives in the bar over the viewport and nowhere else. It had a
 ## second home in the panel's top inset for a while and that was one readout
 ## too many: the same number twice on one screen reads as two numbers.
-func set_alive(count: int) -> void:
-	_alive.text = "◈  VIVOS  %d" % count
+## The alive count is not drawn anywhere at the moment: the label under the
+## console was the only one and it was in the way. Kept as the seam it always
+## was, so putting the counter somewhere else is a matter of pointing this at a
+## node rather than re-threading it from the snapshot.
+func set_alive(_count: int) -> void:
+	pass
 
 
 ## Own kills, read from the local player's own entity in the snapshot — the
@@ -1191,7 +1197,12 @@ func _build_buttons() -> void:
 		button.position = Vector2(ACTION_X, ACTION_YS[i])
 		button.size = Vector2(ACTION_W, ACTION_H)
 		button.text = PANEL_BUTTONS[i] if i < PANEL_BUTTONS.size() else ""
-		button.disabled = true
+		# Mapa is the one plate with something behind it. The rest stay visibly
+		# disabled rather than hidden: the plates are painted into the panel
+		# artwork and cannot be removed anyway.
+		button.disabled = button.text != "Mapa"
+		if not button.disabled:
+			button.pressed.connect(func() -> void: map_requested.emit())
 		_style_over_art(button)
 		button.add_theme_font_size_override("font_size", 11)
 		container.add_child(button)
@@ -1244,8 +1255,6 @@ func _style_panels() -> void:
 func _style_top_bar() -> void:
 	$TopBar.add_theme_stylebox_override("panel", _flat(COLOR_OVERLAY, Color(0, 0, 0, 0), 0, 0))
 
-	_alive.add_theme_color_override("font_color", COLOR_ACCENT)
-	_alive.add_theme_font_size_override("font_size", 15)
 	_zone.add_theme_color_override("font_color", COLOR_TEXT_DIM)
 	_zone.add_theme_font_size_override("font_size", 15)
 

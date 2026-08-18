@@ -92,6 +92,12 @@ func _bake_terrain() -> Texture2D:
 	return ImageTexture.create_from_image(image)
 
 
+## The baked terrain, so the full-size map can draw the same pixels instead of
+## painting its own copy of a 672.400-tile world.
+func terrain_texture() -> Texture2D:
+	return _terrain
+
+
 func set_entities(entities: Array) -> void:
 	_entities = entities
 	queue_redraw()
