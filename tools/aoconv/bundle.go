@@ -218,7 +218,7 @@ func loadBodySeeds(path string) ([]int, error) {
 
 // writeBundle packs every frame the given bodies and heads need into one atlas
 // and writes it alongside its JSON index.
-func writeBundle(grhs map[int]Grh, bodies map[int]BodyIndex, heads, weapons, shields, helmets map[int][4]int, assets string, wantBodies, wantHeads []int, outDir string, aoMap *AOMap, mapDisplayName string, items map[int]Item, fxs map[int]Fx) error {
+func writeBundle(grhs map[int]Grh, bodies map[int]BodyIndex, heads, weapons, shields, helmets map[int][4]int, assets string, wantBodies, wantHeads []int, outDir, overrideDir string, aoMap *AOMap, mapDisplayName string, items map[int]Item, fxs map[int]Fx) error {
 	b := Bundle{
 		Atlas:   "atlas.png",
 		Frames:  map[int]Rect{},
@@ -500,6 +500,13 @@ func writeBundle(grhs map[int]Grh, bodies map[int]BodyIndex, heads, weapons, shi
 	}
 
 	keyBlackToTransparent(atlas)
+
+	// After the colour key, not before: the replacement art already carries a
+	// real alpha channel, and running Argentum's black-is-transparent rule over
+	// it would punch holes in whatever it draws in near-black.
+	if err := applyOverrides(atlas, &b, overrideDir); err != nil {
+		return err
+	}
 
 	// Head alignment used to be measured here, by finding the topmost opaque
 	// row of a body and the bottommost of a head. That was a workaround for

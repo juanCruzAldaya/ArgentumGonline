@@ -163,6 +163,35 @@ La lista de cuerpos ya no se pasa a mano: se deriva de las armaduras de
 cuerpos, 79 armas, 9 escudos y 18 cascos, más las 50 animaciones de `Fxs.ini`
 (efectos de hechizo y de meditar) — ver "Gráficos de hechizos" más abajo.
 
+### Reemplazar un gráfico de AO por otro
+
+El atlas es un artefacto de build: se regenera desde los datos originales de
+Argentum, así que **cualquier cosa editada a mano sobre `atlas.png` desaparece
+la próxima vez que corre `aoconv`**. Para el arte que viene de AO eso está
+bien; para el que no viene de ahí no sirve, porque no hay archivo original que
+leer. Ese arte vive en `tools/aoconv/overrides/` y se pinta encima del atlas ya
+empaquetado, después del color key — si se aplicara antes, la regla de AO
+(negro puro = transparente) le abriría agujeros a lo que el reemplazo dibuje en
+casi-negro.
+
+- `anim<N>.png` es una tira horizontal que reemplaza la animación del grh N: se
+  parte en tantas celdas iguales como frames tenga esa animación.
+- `grh<N>.png` reemplaza un solo grh estático.
+
+Los tamaños tienen que dar exactos. `aoconv` no tiene dependencias de imágenes
+y meter un resampler para tapar una tira que no encaja escondería la causa más
+probable: arte recortado contra un `bundle.json` viejo, cuyos frames se movieron
+cuando el atlas se re-empaquetó. Se apaga con `-overrides ""`.
+
+Hoy hay uno solo: **`anim259.png`, el Apocalipsis** — el grh que `Fxs.ini` le da
+al FX 13, que es el que `Hechizos.dat` le pone a ese hechizo. 21 frames de
+145×145. `overrides/apocalipsis.py` es de dónde salió, y no corre en el build:
+`aoconv` lee el PNG ya hecho. Está guardado porque sin él el recorte no se puede
+rehacer — la hoja de origen tiene las divisorias *dibujadas* en vez de
+calculadas (pasos de 347, 347, 349, 343, después un salto de 1154), las filas no
+miden lo mismo, y viene de un JPG cuyo ruido de compresión hace que el color key
+exacto del resto del pipeline deje un recuadro sucio alrededor de cada frame.
+
 **El ancho del atlas está a propósito en 2048, no en 1024.** Subir un ancho
 angosto hace que el empaquetador (shelf-packer, apila por altura) tire una
 imagen más alta de lo que cualquier GPU soporta como textura 2D — pasó al
@@ -991,6 +1020,7 @@ client/
                    character_picker, ao_data, ao_sprites, inventory_slot
   scenes/main.tscn estructura y posiciones; lo cosmético vive en hud.gd
 tools/aoconv/      lee los índices de AO y arma el atlas y los .json
+  overrides/       arte que reemplaza gráficos de AO, pintado sobre el atlas
 ```
 
 ---
@@ -1006,4 +1036,5 @@ tools/aoconv/      lee los índices de AO y arma el atlas y los .json
 | **Combate a distancia** | Arcos y flechas. Solo hay melee y hechizos. |
 | **Codec binario** | Cuando el JSON moleste, medido. |
 | **Recortar el atlas** | Hoy empaqueta las 309 armaduras del juego entero; un BR podría spawnear solo un subconjunto. |
+| **Descarga Eléctrica con arte nuevo** | Quedó a mitad de camino: va en `overrides/anim221.png`, 15 frames de 128×128 (fx 11 → grh 221), contiguos en el atlas igual que el Apocalipsis. Falta la hoja de origen **sobre negro sólido** — la que se probó traía el damero de transparencia horneado y es irrecuperable, ver DIFICULTADES §15. |
 | **Link al fuente en el cliente** | Se sacó del login. Requisito del AGPL §13 antes de que el deploy web sea público — ver §5. |

@@ -502,6 +502,70 @@ camino corto es dejar de usar ese widget.
 
 ---
 
+## 15. Arte generado por IA: la hoja miente sobre su propia grilla
+
+Reemplazar el Apocalipsis de Argentum por un hongo nuclear generado con Gemini
+parecía "recortar 21 cuadraditos". El recorte fue lo de menos: lo que costó fue
+que **una hoja de sprites generada no es una hoja de sprites**. Se parece a
+una, y ahí está la trampa.
+
+**La grilla está dibujada, no calculada.** Las divisorias entre celdas existen
+como píxeles grises, pero los pasos miden 347, 347, 349, 343, después un salto
+de 1154, después 357, 333. No hay período que ajustar. Peor: algunas celdas
+traen *dos* frames adentro (los chicos, la chispa entrando) y otras uno solo
+(los hongos grandes), y en la fila de abajo los frames **se tocan**, porque el
+fuego de la base cubre el piso de lado a lado y no queda hueco por donde
+cortar. El corte terminó siendo por huecos negros para una fila y por celda
+para la otra, cada una con su criterio.
+
+**Las filas no miden lo mismo.** La banda de arriba tiene 299 px de alto y la
+de abajo 346, y el hongo llena su banda en las dos. Recortar ambas con la misma
+ventana le mete un salto de tamaño justo en la costura — un crecimiento que es
+del layout y no de la animación. La ventana pasó a ser un cuadrado del alto de
+*su propia* banda, apoyado en el piso.
+
+**El anclaje no es el centro del sprite.** Cada frame se centra por donde la
+explosión toca el piso, no por el centro de su contenido: el sombrero del hongo
+se bambolea entre frames y la columna de fuego no. Anclando por el bounding box
+entero, la animación tiembla.
+
+### La segunda hoja no se pudo usar
+
+El intento siguiente —reemplazar Descarga Eléctrica— se frenó en algo peor. La
+hoja vino sobre el **damero gris de transparencia**, y como es un JPG, ese
+damero quedó horneado. No detrás del sprite: **adentro**. El generador dibujó
+el efecto como semitransparente sobre el fondo, así que los cuadraditos
+atraviesan el arte. Se confirma midiendo los escalones de gris de una línea
+horizontal: en el fondo limpio caen cada ~41 px, y *dentro* de la cabeza del
+efecto caen en las mismas posiciones de grilla.
+
+Se intentaron tres salidas, en orden de sofisticación:
+
+1. **Color key contra el gris.** Deja el damero impreso en el alfa: los
+   cuadrados claros y los oscuros cruzan el umbral en distinto momento.
+2. **Estimar el fondo local y desmultiplicar.** El fondo se estima donde se ve
+   y se propaga al vecino más cercano, lo que arregla el borde — y no toca el
+   interior, que es donde está el problema.
+3. **Matting de dos fondos**, que es la solución correcta: dos cuadrados
+   vecinos son el mismo arte sobre dos grises distintos, y de ahí sale el alfa
+   exacto. Necesita la fase de la grilla, y la grilla **también** está dibujada
+   a mano alzada: el período deriva 26 px de una punta a la otra de la hoja. No
+   hay grilla que ajustar.
+
+La salida barata no era técnica: volver a pedir la imagen **sobre negro
+sólido**, que es la convención que Argentum ya usa y que el pipeline ya sabe
+leer. La primera hoja salió a la primera justamente porque venía así.
+
+**Lección:** con arte generado, el formato de entrega se negocia *antes*, no se
+recupera después. Un fondo de damero es información destruida —el arte y el
+fondo quedaron mezclados en el mismo píxel— y ninguna cantidad de procesamiento
+la trae de vuelta. Y una hoja que *parece* tener grilla merece que se le mida
+el paso antes de confiar en él: las tres cosas que costaron acá (celdas
+irregulares, filas de distinta altura, damero horneado) son todas invisibles a
+ojo y las tres rompen el recorte.
+
+---
+
 ## Lo que quedó aprendido, en una línea cada uno
 
 1. Si el objetivo es "igual a esta imagen", usá la imagen.
@@ -540,3 +604,9 @@ camino corto es dejar de usar ese widget.
 16. `Control.size` se clampea contra el mínimo del widget. Si un control sale
     más grande de lo que pediste, el problema es su mínimo — y si ese mínimo es
     del widget, cambiá de widget.
+17. Con arte generado, el formato de entrega se negocia antes. Un fondo de
+    damero de transparencia sobre un JPG es información destruida: el arte y el
+    fondo quedaron en el mismo píxel y no hay proceso que los separe.
+18. Una hoja de sprites generada *parece* tener grilla. Medile el paso antes de
+    creerle: celdas irregulares, filas de distinta altura y frames que se tocan
+    son invisibles a ojo y las tres rompen el recorte.

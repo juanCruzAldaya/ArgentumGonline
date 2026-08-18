@@ -65,6 +65,7 @@ func main() {
 		info   = flag.Bool("info", false, "print the parsed record for anything dumped")
 
 		bundleDir = flag.String("bundle", "", "directory to write atlas.png and bundle.json into")
+		overrides = flag.String("overrides", "overrides", "directory of replacement art painted over the packed atlas")
 		bodyList  = flag.String("bodies", "1,2,3,4,5,6,7,8", "comma separated body ids to bundle")
 		headList  = flag.String("heads", "1,2,3,4,5,6,7,8", "comma separated head ids to bundle")
 
@@ -231,7 +232,7 @@ func main() {
 		sort.Ints(bodyIDs)
 
 		if err := writeBundle(grhs, bodies, heads, weaponAnims, shieldAnims, helmetAnims,
-			*assets, bodyIDs, parseList(*headList), *bundleDir,
+			*assets, bodyIDs, parseList(*headList), *bundleDir, *overrides,
 			aoMap, displayName, items, fxs); err != nil {
 			fatal("%v", err)
 		}

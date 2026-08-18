@@ -167,6 +167,12 @@ de `spells.json`/`bundle.json` y resuelve ahí el grh y el offset. Las 50
 animaciones de efectos vienen empaquetadas en el mismo atlas que cuerpos e
 ítems.
 
+La excepción es **Apocalipsis**, que usa un hongo nuclear dibujado aparte en vez
+del efecto original. Es puro reemplazo de arte: el hechizo sigue resolviéndose
+por el mismo camino (FX 13 de `Fxs.ini` → grh 259), y lo único que cambia son
+los píxeles de esos 21 frames dentro del atlas — ver "Reemplazar un gráfico de
+AO por otro" en OPERACION §3.
+
 ## 7. Ocultarse
 
 **O** intenta ocultarse (Ocultarse). Cooldown de 3 s, que es lo único que lo
