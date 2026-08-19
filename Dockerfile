@@ -30,6 +30,11 @@ EXPOSE 8080
 # -accounts points at the mounted volume, so a deploy does not take everybody's
 # account with it: the rootfs is replaced on every one of them.
 #
+# -lobby-min 2 is what makes the lobby mean anything here. The default is 1,
+# which starts a match for whoever shows up first and leaves the camp on screen
+# for half a second; two is the smallest number for which waiting is real, and
+# still small enough that two people can arrange a match between themselves.
+#
 # This comment sits above the instruction rather than inside it because a '#'
 # after a line continuation is not a comment to Docker — it becomes another
 # element of the JSON array, and the server starts with an argument that is an
@@ -39,4 +44,6 @@ ENTRYPOINT ["/server", \
     "-map-file", "/maps/map1.json", \
     "-items-file", "/maps/items.json", \
     "-spells-file", "/maps/spells.json", \
-    "-accounts", "/data/cuentas.log"]
+    "-accounts", "/data/cuentas.log", \
+    "-lobby-min", "2", \
+    "-lobby-wait", "20"]

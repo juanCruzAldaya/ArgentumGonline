@@ -198,6 +198,7 @@ type World struct {
 	rng   *rand.Rand
 	zone  zone
 	match match
+	lobby lobby
 
 	// accounts is nil on a server without them; see accounts.go.
 	accounts Accounts
@@ -254,6 +255,14 @@ type World struct {
 	cmdCh   chan command
 	done    chan struct{}
 
+	// The lobby's own mailbox. Separate channels rather than one command
+	// channel because a seat is not an entity: cmdCh is keyed by EntityID, and
+	// a connection that is still waiting does not have one yet.
+	seatCh   chan seatReq
+	charCh   chan charReq
+	unseatCh chan seatID
+	queueCh  chan queueReq
+
 	nextID uint32
 	// pending buffers commands that arrived between ticks so they are applied
 	// in a defined order rather than racing the simulation.
@@ -275,6 +284,14 @@ func New(grid *Grid, codec protocol.Codec, tickRate int, log *slog.Logger) *Worl
 		leaveCh:  make(chan EntityID),
 		cmdCh:    make(chan command, 1024),
 		done:     make(chan struct{}),
+		seatCh:   make(chan seatReq),
+		charCh:   make(chan charReq),
+		unseatCh: make(chan seatID),
+		queueCh:  make(chan queueReq, 64),
+		lobby: lobby{
+			seats:      make(map[seatID]*seat),
+			minPlayers: lobbyDefaultMin,
+		},
 	}
 }
 
@@ -306,6 +323,14 @@ func (w *World) Run(ctx context.Context) {
 			w.removePlayer(id)
 		case cmd := <-w.cmdCh:
 			w.pending = append(w.pending, cmd)
+		case req := <-w.seatCh:
+			req.resp <- w.addSeat(req)
+		case req := <-w.charCh:
+			req.resp <- w.seatCharacter(req)
+		case id := <-w.unseatCh:
+			w.removeSeat(id)
+		case req := <-w.queueCh:
+			w.setQueued(req)
 		case <-ticker.C:
 			w.step()
 		}
@@ -364,6 +389,7 @@ func (w *World) step() {
 	w.zoneTick()
 	w.respawnDue()
 	w.matchTick()
+	w.lobbyTick()
 	w.broadcast()
 }
 
@@ -758,6 +784,10 @@ func (w *World) removePlayer(id EntityID) {
 	delete(w.occupied, tileKey{p.X, p.Y})
 	w.removeCorpse(p)
 	delete(w.players, id)
+	// The entity id is not reused, but a seat gets a fresh one every match, so
+	// leaving these behind would grow the index by one entry per player per
+	// match for as long as the process lives.
+	w.accountNames.Delete(id)
 	// The account name goes with them, or a long-running server accumulates one
 	// entry per connection it has ever had.
 	w.accountNames.Delete(id)

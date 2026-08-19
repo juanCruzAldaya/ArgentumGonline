@@ -61,6 +61,8 @@ func main() {
 		zoneSpeed  = flag.Float64("zone-speed", 1, "multiplier on every zone duration; 10 runs a whole match of contractions in about a minute")
 		accounts   = flag.String("accounts", "", "archivo de cuentas; vacio deja el servidor sin cuentas y confia en el nombre del join")
 		restart    = flag.Int("match-restart", 20, "seconds between a match being decided and the next one starting; 0 leaves the finished match standing")
+		lobbyMin   = flag.Int("lobby-min", 1, "cuantos en la cola hacen falta para empezar una partida; 1, el default, arranca apenas entra alguien, que es como se comportaba el servidor antes de que existiera el lobby")
+		lobbyWait  = flag.Int("lobby-wait", 0, "segundos de cuenta regresiva una vez que la cola llego al minimo; 0 arranca en el acto")
 	)
 	flag.Parse()
 
@@ -125,6 +127,7 @@ func main() {
 		w.ArmZone(*zoneSpeed)
 	}
 	w.SetMatchRestart(*restart)
+	w.SetLobby(*lobbyMin, *lobbyWait)
 
 	// Accounts are opt-in. Without the flag this is the server it always was:
 	// you are whatever name you typed, and nothing outlives the process. With

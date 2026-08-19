@@ -20,9 +20,11 @@ import (
 type matchPhase int
 
 const (
-	// matchIdle is a world nobody has joined yet: the zone is armed but
-	// stopped, and there is nothing to win.
-	matchIdle matchPhase = iota
+	// matchLobby is a world with no match under way: the zone is armed but
+	// stopped, and whoever is connected is waiting in the queue rather than
+	// standing on the map. It is the phase a server boots into and the one it
+	// comes back to after every match.
+	matchLobby matchPhase = iota
 	matchRunning
 	matchOver
 )
@@ -77,7 +79,7 @@ func (w *World) SetMatchRestart(seconds int) {
 // it — the same rule the zone follows, and for the same reason: a server that
 // booted an hour before anyone connected should not have run an hour of match.
 func (w *World) startMatchIfIdle() {
-	if w.match.phase != matchIdle {
+	if w.match.phase != matchLobby {
 		return
 	}
 	w.match.phase = matchRunning
@@ -108,6 +110,17 @@ func (w *World) matchTick() {
 		w.endMatch(w.lastAlive())
 	case matchOver:
 		if w.match.restartTicks == 0 || w.tick < w.match.restartAt {
+			return
+		}
+		// Anybody who arrived through a seat goes back to the lobby and has to
+		// queue again for the next match. Whoever is left after that came in
+		// through a direct Join — the load bot, and every test in this package
+		// — and gets the in-place restart that predates the lobby, because
+		// there is no waiting room for them to be sent back to.
+		w.returnToLobby()
+		if len(w.players) == 0 {
+			w.match.phase = matchLobby
+			w.lobbyCheck()
 			return
 		}
 		w.resetMatch()

@@ -34,6 +34,11 @@ const (
 	TypeLogin     MsgType = "login"
 	TypeTalk      MsgType = "talk"
 	TypePing      MsgType = "ping"
+	// TypeQueue steps in or out of the queue for the next match. Naming a
+	// character with a Join is what takes the place in the line to begin with,
+	// so this only ever has to carry the stepping-out case and the
+	// stepping-back-in after it.
+	TypeQueue MsgType = "queue"
 
 	// Server -> client.
 	TypeWelcome   MsgType = "welcome"
@@ -46,6 +51,7 @@ const (
 	TypeOutcome   MsgType = "outcome"
 	TypeAccount   MsgType = "account"
 	TypeHello     MsgType = "hello"
+	TypeLobby     MsgType = "lobby"
 	TypePong      MsgType = "pong"
 	TypeError     MsgType = "error"
 )
@@ -465,6 +471,44 @@ type Login struct {
 	// taken rather than falling through to a sign-in attempt, so a typo in an
 	// existing name never silently becomes "wrong password".
 	Register bool `json:"new,omitempty"`
+}
+
+// Queue steps in or out of the line for the next match.
+type Queue struct {
+	// Join is true to take a place in the queue, false to give it up.
+	Join bool `json:"join"`
+}
+
+// LobbyState is the waiting room, sent to everybody sitting in it.
+//
+// It is only ever sent to somebody who is *not* playing: once the match starts
+// the world's own snapshot takes over and says everything there is to say. A
+// client that stops receiving these and starts receiving a Welcome has been let
+// in, and one that starts receiving them again has been sent back — which is
+// the whole of both transitions, with no message of their own needed.
+type LobbyState struct {
+	// Queued is how many are waiting, and Needed is how many it takes to
+	// start. Both are whole-lobby numbers rather than viewport-scoped ones:
+	// nobody has a position yet, so there is nothing here to leak.
+	Queued int `json:"q"`
+	Needed int `json:"need"`
+	// Mine is whether this particular recipient is one of the queued.
+	Mine bool `json:"mine,omitempty"`
+	// Seconds is the countdown to the match starting. It only runs once the
+	// queue is deep enough, and it is cancelled if somebody leaves and takes
+	// it back under — so a client showing it has to be ready for it to stop.
+	Seconds float64 `json:"t,omitempty"`
+	// Counting says the countdown above is live, which a zero Seconds cannot:
+	// the last tick before the match starts is legitimately zero.
+	Counting bool `json:"c,omitempty"`
+	// Running says a match is already under way, so this queue is for the next
+	// one. Waiting out a match in progress is the normal case on a busy
+	// server, and a lobby that only ever said "faltan 3" would be lying about
+	// what it is waiting for.
+	Running bool `json:"run,omitempty"`
+	// Playing is how many are in the match currently under way, so the lobby
+	// can say what it is waiting on rather than only that it is waiting.
+	Playing int `json:"play,omitempty"`
 }
 
 // MatchRow is one finished match in a career.

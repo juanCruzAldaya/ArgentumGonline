@@ -21,54 +21,117 @@ func (w *World) HandleConn(conn transport.Conn) {
 	// in before it draws anything.
 	w.sendHello(conn)
 
-	name, ok := w.signIn(conn)
+	account, ok := w.signIn(conn)
 	if !ok {
 		return
 	}
 
-	join, ok := w.awaitJoin(conn)
-	if !ok {
-		return
-	}
-	// With accounts on, the name is the one the server authenticated, never the
-	// one in the join — otherwise the record is of whoever the client felt like
-	// claiming to be that match.
-	if name == "" {
-		name = sanitizeName(join.Name)
-	}
-
-	id, err := w.Join(name, Class(join.Class), Race(join.Race), conn)
+	// The lobby is what you land on the moment you are through the door, before
+	// there is a character to play — signing in and arriving at the camp are the
+	// same step. The seat exists from here on, and the Join that names a
+	// character comes later, from the lobby screen, on the way into the queue.
+	s, err := w.EnterLobby(account, account, conn)
 	if err != nil {
 		return
 	}
-	w.setAccount(id, name)
-	defer w.Leave(id)
+	var id EntityID
+	defer w.LeaveLobby(s.id)
+	defer func() {
+		if id != 0 {
+			w.Leave(id)
+		}
+	}()
+
+	// Reading moves to its own goroutine so this one can wait on two things at
+	// once: the next frame, and the match starting. A connection sitting in the
+	// queue still has to be able to say it is leaving, and a blocking Recv
+	// cannot hear the world at the same time.
+	frames := w.readFrames(conn)
 
 	for {
-		frame, err := conn.Recv()
-		if err != nil {
+		select {
+		case <-w.done:
 			return
-		}
-		typ, payload, err := w.codec.DecodeEnvelope(frame)
-		if err != nil {
-			continue
-		}
 
-		switch typ {
-		case protocol.TypePing:
-			// Answered right here rather than queued: a pong needs no world
-			// state, so making it wait for a tick would only add jitter to the
-			// latency number the client is trying to measure.
-			var ping protocol.Ping
-			if w.codec.DecodePayload(payload, &ping) == nil {
-				if pong, err := w.codec.Encode(protocol.TypePong, protocol.Pong{T: ping.T}); err == nil {
-					_ = conn.Send(pong)
+		case started, ok := <-s.started:
+			if !ok {
+				return
+			}
+			// A new match, and with it a new entity: the seat is the thing that
+			// persists across matches, the player is not.
+			id = started
+
+		case frame, ok := <-frames:
+			if !ok {
+				return
+			}
+			typ, payload, err := w.codec.DecodeEnvelope(frame)
+			if err != nil {
+				continue
+			}
+
+			switch typ {
+			case protocol.TypePing:
+				// Answered right here rather than queued: a pong needs no world
+				// state, so making it wait for a tick would only add jitter to
+				// the latency number the client is trying to measure.
+				var ping protocol.Ping
+				if w.codec.DecodePayload(payload, &ping) == nil {
+					if pong, err := w.codec.Encode(protocol.TypePong, protocol.Pong{T: ping.T}); err == nil {
+						_ = conn.Send(pong)
+					}
+				}
+			case protocol.TypeJoin:
+				// Picking a character is what commits you to the queue. With
+				// accounts on, the name in it is ignored: the record has to be
+				// of who signed in, not of whoever the client felt like
+				// claiming to be this match.
+				var join protocol.Join
+				if w.codec.DecodePayload(payload, &join) != nil {
+					continue
+				}
+				if entity := w.SeatCharacter(
+					s.id, sanitizeName(join.Name), Class(join.Class), Race(join.Race),
+				); entity != 0 {
+					id = entity
+				}
+			case protocol.TypeQueue:
+				var q protocol.Queue
+				if w.codec.DecodePayload(payload, &q) == nil {
+					w.SetQueued(s.id, q.Join)
+				}
+			default:
+				// Dropped while waiting rather than buffered: a command aimed
+				// at a player who does not exist yet has no tick to be applied
+				// on, and holding it would apply it to whoever this seat
+				// becomes two matches later.
+				if id != 0 {
+					w.Submit(id, typ, payload)
 				}
 			}
-		default:
-			w.Submit(id, typ, payload)
 		}
 	}
+}
+
+// readFrames pumps one connection into a channel, so a caller can select on it
+// alongside anything else. The channel closes when the peer goes away.
+func (w *World) readFrames(conn transport.Conn) <-chan []byte {
+	frames := make(chan []byte, 32)
+	go func() {
+		defer close(frames)
+		for {
+			frame, err := conn.Recv()
+			if err != nil {
+				return
+			}
+			select {
+			case frames <- frame:
+			case <-w.done:
+				return
+			}
+		}
+	}()
+	return frames
 }
 
 // sendHello announces what this server wants. Best effort: a client that never
@@ -146,27 +209,6 @@ func (w *World) authenticate(login protocol.Login) (string, error) {
 		}
 	}
 	return w.accounts.Authenticate(login.Name, login.Password)
-}
-
-// awaitJoin waits for the join that says which character to play.
-func (w *World) awaitJoin(conn transport.Conn) (protocol.Join, bool) {
-	for {
-		frame, err := conn.Recv()
-		if err != nil {
-			return protocol.Join{}, false
-		}
-		typ, payload, err := w.codec.DecodeEnvelope(frame)
-		if err != nil || typ != protocol.TypeJoin {
-			w.sendError(conn, "falta el join con clase y raza")
-			continue
-		}
-		var join protocol.Join
-		if err := w.codec.DecodePayload(payload, &join); err != nil {
-			w.sendError(conn, "join ilegible")
-			continue
-		}
-		return join, true
-	}
 }
 
 func (w *World) sendError(conn transport.Conn, reason string) {
