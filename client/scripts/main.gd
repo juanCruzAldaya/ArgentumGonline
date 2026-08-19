@@ -71,7 +71,26 @@ var _zone_safe := true
 var _welcomed := false
 
 ## The account screen while it exists, and null once the player is past it.
-var _account_screen: Control = null
+## El campamento, mientras se espera una partida. Vive aparte de _login_screen
+## porque no es parte del flujo de cuenta: se llega después de elegir personaje,
+## y se vuelve a él cada vez que termina una partida.
+var _lobby_screen: Control = null
+## Si ya se eligió personaje en esta conexión. El servidor lo recuerda por
+## asiento, así que después de una partida no hay que volver a elegirlo para
+## encolarse de nuevo.
+var _character_chosen := false
+## La última ficha que mandó el servidor, guardada para poder dársela al
+## campamento, que la dibuja en su columna derecha.
+var _account: Dictionary = {}
+
+## La pantalla del flujo de cuenta que esté arriba en este momento: inicio,
+## entrar, registro o la ficha. Es una sola variable porque son excluyentes —
+## nunca hay dos al mismo tiempo — y tenerlas en cuatro variables convertía cada
+## transición en cuatro chequeos de nulo.
+var _login_screen: Control = null
+## El hello del servidor, guardado porque cada pantalla del flujo se configura
+## con él y se crean de a una, a medida que hacen falta.
+var _hello: Dictionary = {}
 
 
 func _ready() -> void:
@@ -89,6 +108,7 @@ func _ready() -> void:
 	_net.speech_received.connect(_on_speech)
 	_net.outcome_received.connect(_on_outcome)
 	_net.hello_received.connect(_on_hello)
+	_net.lobby_received.connect(_on_lobby)
 	_net.account_received.connect(_on_account)
 	_net.login_failed.connect(_on_login_failed)
 	_net.use_result_received.connect(_on_use_result)
@@ -120,32 +140,82 @@ func _ready() -> void:
 
 ## The server said what it wants. Everything the player sees starts here.
 func _on_hello(hello: Dictionary) -> void:
-	if not bool(hello.get("accounts", false)):
-		_show_picker()
-		return
-
-	_account_screen = preload("res://scripts/account_screen.gd").new()
-	_account_screen.configure(hello)
-	$UI.add_child(_account_screen)
-	_account_screen.login_submitted.connect(_net.send_login)
-	_account_screen.play_requested.connect(_on_play_requested)
+	_hello = hello
+	if bool(hello.get("accounts", false)):
+		_show_start()
+	# Sin cuentas no hay nada que preguntar: el servidor ya sentó esta conexión
+	# en el lobby, y el primer estado que mande trae el campamento a la
+	# pantalla. Esperarlo en vez de adivinar es lo que evita dibujar un
+	# campamento antes de saber si el servidor tiene uno.
 
 
+## _swap_login_screen deja una sola pantalla del flujo de cuenta viva y la
+## configura con el hello. Todas se construyen igual — nacen, se les pasa el
+## hello, se enchufan sus señales — así que la parte común vive acá y cada
+## _show_* solo dice qué conectar.
+func _swap_login_screen(script_path: String) -> Control:
+	if _login_screen != null:
+		_login_screen.queue_free()
+	var screen: Control = load(script_path).new()
+	_login_screen = screen
+	$UI.add_child(screen)
+	screen.configure(_hello)
+	return screen
+
+
+func _show_start() -> void:
+	var screen := _swap_login_screen("res://scripts/start_screen.gd")
+	screen.sign_in_requested.connect(_show_sign_in)
+	screen.register_requested.connect(_show_register)
+	screen.quit_requested.connect(_on_quit_requested)
+
+
+func _show_sign_in() -> void:
+	var screen := _swap_login_screen("res://scripts/sign_in_screen.gd")
+	screen.sign_in_submitted.connect(
+		func(account: String, password: String) -> void:
+			_net.send_login(account, password, false)
+	)
+	screen.back_requested.connect(_show_start)
+
+
+func _show_register() -> void:
+	var screen := _swap_login_screen("res://scripts/register_screen.gd")
+	screen.register_submitted.connect(
+		func(account: String, email: String, password: String) -> void:
+			_net.send_login(account, password, true, email)
+	)
+	screen.back_requested.connect(_show_start)
+
+
+## La ficha llegó, así que el login salió bien — se haya entrado o registrado.
+##
+## Si el que estaba arriba era el registro hay que cambiarlo por la pantalla de
+## cuenta, que es la única que sabe dibujar una carrera. Recién registrado la
+## carrera está vacía, y eso es exactamente lo que tiene que mostrar: cero
+## partidas y "todavía no jugaste ninguna".
+## La ficha llegó, así que el login salió bien — se haya entrado o registrado.
+## Y entrar a tu cuenta es llegar al campamento: no hay una pantalla de ficha en
+## el medio, porque la carrera vive en la columna derecha del lobby.
 func _on_account(account: Dictionary) -> void:
-	if _account_screen != null:
-		_account_screen.show_account(account)
+	_account = account
+	if _login_screen != null:
+		_login_screen.queue_free()
+		_login_screen = null
+	_show_lobby()
+	_lobby_screen.set_account(account)
 
 
 func _on_login_failed(reason: String) -> void:
-	if _account_screen != null:
-		_account_screen.rejected(reason)
+	if _login_screen != null and _login_screen.has_method("rejected"):
+		_login_screen.rejected(reason)
 
 
 ## The career has been read and the player wants in.
 func _on_play_requested() -> void:
-	if _account_screen != null:
-		_account_screen.queue_free()
-		_account_screen = null
+	if _login_screen != null:
+		_login_screen.queue_free()
+		_login_screen = null
 	_show_picker()
 
 
@@ -156,16 +226,54 @@ func _show_picker() -> void:
 	picker.confirmed.connect(_on_character_confirmed.bind(picker))
 
 
+## El personaje está elegido. El join ya no entra al mundo: toma asiento en el
+## campamento, y de ahí se decide cuándo jugar.
 func _on_character_confirmed(player_name: String, class_id: int, race_id: int, picker: Control) -> void:
 	picker.queue_free()
-	_view.visible = true
-	_hud.visible = true
 
 	_player_name = player_name
+	_character_chosen = true
 	_hud.set_character(_player_name)
 	_hud.set_identity(class_id, race_id)
-	_hud.log_line("entrando a la partida ...", _hud.COLOR_TEXT_DIM)
+	# El join nombra el personaje y, con eso, toma el lugar en la cola.
 	_net.send_join(_player_name, class_id, race_id)
+	_show_lobby()
+
+
+## _show_lobby abre el campamento, o lo trae de vuelta al terminar una partida.
+func _show_lobby() -> void:
+	_view.visible = false
+	_hud.visible = false
+	if _lobby_screen != null:
+		return
+	var screen: Control = preload("res://scripts/lobby_screen.gd").new()
+	_lobby_screen = screen
+	$UI.add_child(screen)
+	screen.set_account(_account)
+	screen.queue_toggled.connect(_on_queue_toggled)
+	screen.quit_requested.connect(_on_quit_requested)
+
+
+## UNIRSE A LA COLA. La primera vez hay que elegir personaje, porque el join es
+## justamente lo que nombra el personaje y toma el lugar en la fila; después ya
+## está elegido y encolarse es un mensaje suelto.
+func _on_queue_toggled(join: bool) -> void:
+	if not join:
+		_net.send_queue(false)
+		return
+	if _character_chosen:
+		_net.send_queue(true)
+		return
+	_show_picker()
+
+
+## El estado de la cola. Que llegue uno de estos es, por sí solo, la señal de
+## que no se está jugando: el servidor deja de mandarlos al entrar al mundo y
+## los vuelve a mandar al terminar la partida, así que esto también es cómo el
+## cliente se entera de que volvió al campamento.
+func _on_lobby(state: Dictionary) -> void:
+	_show_lobby()
+	_lobby_screen.set_lobby(state)
 
 
 func _process(delta: float) -> void:
@@ -706,6 +814,16 @@ func _on_quit_requested() -> void:
 
 
 func _on_welcomed(welcome: Dictionary) -> void:
+	# El Welcome es el momento exacto en que la espera terminó: el campamento se
+	# va y aparecen el mundo y el HUD. Se destruye en vez de esconderse porque
+	# la carrera que dibuja quedó vieja apenas empieza la partida, y el próximo
+	# estado de lobby lo va a crear de nuevo con la ficha al día.
+	if _lobby_screen != null:
+		_lobby_screen.queue_free()
+		_lobby_screen = null
+	_view.visible = true
+	_hud.visible = true
+
 	_local_id = int(welcome.get("id", 0))
 	_view.configure(welcome)
 	_minimap.configure(welcome)

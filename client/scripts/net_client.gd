@@ -21,6 +21,9 @@ signal speech_received(speech: Dictionary)
 signal outcome_received(outcome: Dictionary)
 ## What the server wants before letting us in. Arrives on connect, unasked.
 signal hello_received(hello: Dictionary)
+## El estado de la cola, una vez por tick mientras se espera. Deja de llegar al
+## entrar a la partida y vuelve al terminar, que es la transición entera.
+signal lobby_received(state: Dictionary)
 ## Our career, after a login that worked.
 signal account_received(account: Dictionary)
 ## A login that did not, with the server's own wording.
@@ -137,8 +140,15 @@ func send_talk(text: String) -> void:
 
 
 ## Signs in, or signs up when new is true.
-func send_login(account: String, password: String, new: bool) -> void:
-	_send("login", {"name": account, "pass": password, "new": new})
+##
+## The email only travels on a sign-up: the server ignores it on a sign-in, and
+## sending it anyway would put an address on the wire every time somebody comes
+## back to play.
+func send_login(account: String, password: String, new: bool, email: String = "") -> void:
+	var login := {"name": account, "pass": password, "new": new}
+	if new and email != "":
+		login["email"] = email
+	_send("login", login)
 
 
 ## Enters the world with a character. On a server with accounts the name is
@@ -150,6 +160,11 @@ func send_join(player_name: String, class_id: int, race_id: int) -> void:
 	_race_id = race_id
 	_joined = true
 	_send("join", {"name": player_name, "class": class_id, "race": race_id})
+
+
+## Entra o sale de la cola para la próxima partida.
+func send_queue(join: bool) -> void:
+	_send("queue", {"join": join})
 
 
 func send_ping() -> void:
@@ -207,6 +222,8 @@ func _handle_frame(text: String) -> void:
 			use_result_received.emit(data)
 		"hello":
 			hello_received.emit(data)
+		"lobby":
+			lobby_received.emit(data)
 		"account":
 			account_received.emit(data)
 		"error":
