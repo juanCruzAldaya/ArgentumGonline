@@ -730,7 +730,7 @@ siguiendo al que te mató; las dos cosas esperan a que exista el lobby.
 
 | Falta | Nota |
 |---|---|
-| **Lobby / matchmaking** | Hoy se entra a un servidor corriendo; no hay partida con principio y fin. Plan: una máquina Fly por partida vía Machines API. |
+| **Matchmaking** | La cola existe (ver §12) pero es una sola y por orden de llegada: no hay nada parecido a emparejar por nivel, por región ni por nada. Plan: una máquina Fly por partida vía Machines API. |
 | **Combate a distancia** | Arcos y flechas. Solo hay melee y hechizos. |
 | **Facciones** | Armada/Legión no están. |
 | **Hambre y sed que drenen** | Los vitals son estado real del servidor y el HUD los muestra en sus dos barras, pero nada los baja. Es una decisión de diseño pendiente: ¿un battle royale quiere upkeep? |

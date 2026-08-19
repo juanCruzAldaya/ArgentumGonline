@@ -44,13 +44,19 @@ Andando hoy:
 - Chat con Enter, dibujado sobre el personaje igual que los hechizos
 - Objetos, inventario y loot en el piso, con densidad de battle royale
 - Mapa grande con **M**, dibujado con el color real del terreno
-- **Cuentas con carrera**: usuario y contraseña, y una ficha con partidas,
-  victorias, bajas, mejor puesto y las últimas seis partidas. Opcional: sin
+- **Cuentas con carrera**: usuario, correo y contraseña, y una ficha con
+  partidas, victorias, bajas, mejor puesto y las últimas seis. Opcional: sin
   `-accounts` el servidor es el de siempre.
+- **Lobby con cola**: se entra a la cuenta y se cae en el campamento, no en el
+  mundo. La partida arranca cuando hay suficientes en la cola, con cuenta
+  regresiva, y al terminar todos vuelven ahí. `-lobby-min 1`, el default,
+  reproduce el servidor de antes: entrás y jugás.
+- **Cuatro pantallas con arte**: inicio, registro, ingreso y campamento, cada
+  una con los controles cayendo en los agujeros que el arte ya dibuja
 - Export web: el mismo proceso Go sirve el cliente HTML5 y el protocolo
 - Bots headless: **101 jugadores simultáneos con el 2,6% de un core**
 
-Todavía **no**: lobby, matchmaking, NPCs, combate a distancia, facciones,
+Todavía **no**: una máquina por partida, NPCs, combate a distancia, facciones,
 sonido. El roadmap completo y numerado está en
 [RESUMEN-EJECUTIVO](RESUMEN-EJECUTIVO.md).
 
@@ -108,6 +114,8 @@ hablar. El resto — agarrar, tirar, equipar, ocultarse, meditar — en
 [RESUMEN-FUNCIONAL](RESUMEN-FUNCIONAL.md).
 
 Flags del servidor: `-addr`, `-tick`, `-seed`, `-debug`,
+`-lobby-min` (cuántos en la cola hacen falta para empezar; 1 arranca en el acto)
+y `-lobby-wait` (segundos de cuenta regresiva una vez alcanzado el mínimo),
 `-worlds` (de cuáles sortear el mapa), `-world-seed` (fijar cuál),
 `-zone` y `-zone-speed` (apagar la zona, o acelerarla para verla cerrar sin
 esperar trece minutos), `-match-restart` (segundos entre una partida decidida y
@@ -151,6 +159,11 @@ servidor — así que lo que se rompe con bots se hubiera roto con jugadores.
 cd server
 go run ./cmd/bot -url ws://127.0.0.1:8080/ws -n 40
 ```
+
+Contra un servidor con `-accounts` hay que darles con qué entrar: `-pass` los
+registra y los hace entrar, uno por bot. Sin eso el servidor los rechaza antes
+del join, que es lo que pasaba — la configuración de producción era la única que
+no se podía probar con carga.
 
 ### Tests
 

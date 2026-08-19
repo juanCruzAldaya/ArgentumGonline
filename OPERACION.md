@@ -1604,5 +1604,6 @@ El roadmap vive en [RESUMEN-EJECUTIVO](RESUMEN-EJECUTIVO.md), numerado y
 ordenado por impacto, para que haya una sola lista y no dos que se contradigan.
 
 Lo más urgente de ahí, en una línea: el codec binario (el snapshot mide 3,6 KB
-con la partida llena, ver §7), el paso de caminata a 100% para sacar el tirón de
-la interpolación, y salir al lobby al morir en vez de quedar de fantasma.
+con la partida llena, ver §7), comprimir el Welcome, y salir al lobby al morir en
+vez de quedar de fantasma — el lobby ya existe, así que eso último dejó de ser
+una pantalla que hay que inventar y pasó a ser a dónde mandar al muerto.
