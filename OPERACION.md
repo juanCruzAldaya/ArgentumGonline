@@ -998,6 +998,66 @@ pasó de 1,7 KB en Ullathorpe a **96 KB** en un mundo compuesto. Va una sola vez
 por conexión, pero es lo que obligó a subir los límites de lectura de los dos
 lados — ver §18 de [DIFICULTADES](DIFICULTADES.md).
 
+### La latencia de cada jugador, en el log
+
+Todo lo de arriba se mide desde afuera, con `cmd/probe`, y por eso solo dice lo
+que siente **la máquina desde la que lo corrés**. Para saber cómo le va al que
+está jugando en otra ciudad, el servidor la mide solo:
+
+```
+latencia cuenta=AgusZepp p50_ms=63 p95_ms=88 max_ms=140 muestras=14 sin_respuesta=0
+```
+
+Una línea por jugador cada 30 segundos, más una última cuando se desconecta —
+el que se va porque le iba mal es justo el que interesa. Para leerlas:
+
+```powershell
+& $fly logs -a juegito --no-tail | Select-String latencia
+```
+
+**El servidor es el que pinguea, no el cliente.** Es al revés de como estaba
+pensado el protocolo — `session.go` ya contestaba pings desde el primer día, y
+el cliente tiene un `send_ping()` que ningún camino de código llama. Dado
+vuelta, el número queda del lado que ya escribe el log, y así **uno puede ver la
+latencia del otro**: con el cliente midiéndose a sí mismo, el número le queda en
+la pantalla al que juega, que es precisamente quien no lo necesita.
+
+El ping sale cada 2 s desde la goroutine de la conexión, nunca desde el loop del
+mundo: encolado detrás de un tick estaría midiendo el tick además de la red.
+
+**Ese número incluye un cuadro del cliente.** Godot pollea el socket en
+`_process`, así que el eco espera al próximo frame. Contra un servidor local,
+donde la red es cero:
+
+| cliente | p50 |
+|---|---|
+| `cmd/bot` (Go, contesta en el acto) | **0 ms** |
+| Godot | **15 ms** |
+
+Esos 15 ms son el cuadro, y no hay que restarlos para "corregir" el número: el
+input del jugador espera exactamente el mismo cuadro. Pero sí explican por qué
+dos personas con la misma conexión miden distinto si una corre a 30 fps y la
+otra a 60. Para ver la red sola, `cmd/probe`, que contesta sin dibujar nada.
+
+`sin_respuesta` cuenta los pings que no volvieron —`Send` descarta frames antes
+que bloquear cuando un cliente no drena— sin contar el que todavía está en
+vuelo cuando cierra la ventana. Ese descuento no es cosmético: sin él toda
+ventana reportaba uno perdido de quince, o sea un 7% de pérdida en una conexión
+que no perdía nada.
+
+#### Medir sin un segundo humano
+
+En Fly el servidor corre con `-lobby-min 2`, así que entrando solo te quedás en
+el campamento para siempre. Un bot completa la cola, y desde que contesta los
+pings también sale medido:
+
+```powershell
+go run -C server ./cmd/bot -url wss://juegito.fly.dev/ws -n 1 -pass loquesea
+```
+
+`-pass` es obligatorio contra un servidor con `-accounts`: registra al bot y lo
+hace entrar. Ojo con eso, que le deja una cuenta al archivo del volumen.
+
 ### Qué consume el servidor
 
 Medido en un desktop, mirando el proceso que tiene el puerto 8080 y sacando la

@@ -139,9 +139,29 @@ func runBot(ctx context.Context, url, name, password string, interval time.Durat
 			if err != nil {
 				return
 			}
-			if typ, _, err := codec.DecodeEnvelope(frame); err == nil {
-				log.Debug("bot received", "name", name, "type", typ)
+			typ, payload, err := codec.DecodeEnvelope(frame)
+			if err != nil {
+				continue
 			}
+			// The server measures latency by pinging and timing the echo, so a
+			// bot that stayed quiet would look like a connection that never
+			// answers: filling a lobby with bots would fill the log with
+			// phantom packet loss, and the one configuration that most needs
+			// measuring — a match under load — would be the one that could
+			// not be.
+			//
+			// Answering from the read goroutine is safe because Send only
+			// queues onto the channel that writePump owns.
+			if typ == protocol.TypePing {
+				var ping protocol.Ping
+				if codec.DecodePayload(payload, &ping) == nil {
+					if pong, err := codec.Encode(protocol.TypePong, protocol.Pong{T: ping.T}); err == nil {
+						_ = conn.Send(pong)
+					}
+				}
+				continue
+			}
+			log.Debug("bot received", "name", name, "type", typ)
 		}
 	}()
 

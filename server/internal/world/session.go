@@ -2,6 +2,7 @@ package world
 
 import (
 	"strings"
+	"time"
 	"unicode"
 
 	"juegito/server/internal/protocol"
@@ -9,6 +10,20 @@ import (
 )
 
 const maxNameLen = 16
+
+const (
+	// pingEvery is the gap between the server's own pings. Two seconds is
+	// cheap — a ping is a couple of dozen bytes against the 16 KB/s a player
+	// already costs in snapshots — and still fills a reporting window with
+	// enough samples for a p95 to mean something.
+	pingEvery = 2 * time.Second
+
+	// latencyEvery is how often the summary reaches the log. Per sample would
+	// be one line every two seconds per player, which buries every other line
+	// in the log; per window it is one line a player a half minute, and the
+	// shape of a connection going bad still shows up in the next one.
+	latencyEvery = 30 * time.Second
+)
 
 // HandleConn drives one client connection for its whole lifetime: it performs
 // the join handshake, then pumps inbound frames into the world until the peer
@@ -48,10 +63,60 @@ func (w *World) HandleConn(conn transport.Conn) {
 	// cannot hear the world at the same time.
 	frames := w.readFrames(conn)
 
+	// Latency is measured from here, on the connection's own goroutine, rather
+	// than from the world loop: a ping that queued behind a tick would be
+	// timing the tick as much as the network. See latency.go for why the
+	// server pings the client and not the other way round.
+	pings := time.NewTicker(pingEvery)
+	defer pings.Stop()
+	reports := time.NewTicker(latencyEvery)
+	defer reports.Stop()
+
+	var lat latencyTracker
+	who := account
+	if who == "" {
+		// No accounts on this server, so there is no name to file this under
+		// until a character exists. The address is what tells two anonymous
+		// connections apart.
+		who = conn.RemoteAddr()
+	}
+	logLatency := func() {
+		p50, p95, max, got, lost := lat.summary(time.Now())
+		if got == 0 {
+			return
+		}
+		w.log.Info("latencia", "cuenta", who,
+			"p50_ms", p50, "p95_ms", p95, "max_ms", max,
+			"muestras", got, "sin_respuesta", lost)
+	}
+	// Reported on the way out too, so a connection that drops before its first
+	// window still leaves its numbers behind. A player who quits because it
+	// played badly is exactly the one whose latency is worth having.
+	defer logLatency()
+
 	for {
 		select {
 		case <-w.done:
 			return
+
+		case <-pings.C:
+			// A timestamp rather than a sequence number, so this side keeps no
+			// state at all: it travels to the client, comes back untouched,
+			// and the subtraction happens against the clock that wrote it.
+			//
+			// Send drops the frame instead of blocking when a client is not
+			// draining, which is why the summary counts what came back against
+			// what went out — a lost ping is not a fast one.
+			now := time.Now()
+			if frame, err := w.codec.Encode(protocol.TypePing, protocol.Ping{
+				T: now.UnixMilli(),
+			}); err == nil {
+				_ = conn.Send(frame)
+				lat.ping(now)
+			}
+
+		case <-reports.C:
+			logLatency()
 
 		case started, ok := <-s.started:
 			if !ok {
@@ -81,6 +146,20 @@ func (w *World) HandleConn(conn transport.Conn) {
 						_ = conn.Send(pong)
 					}
 				}
+			case protocol.TypePong:
+				// The other direction of the same exchange, and the two do not
+				// collide: a client measuring itself sends ping and reads pong,
+				// this server sends ping and reads pong, and each side only
+				// ever subtracts a timestamp it wrote.
+				//
+				// An old client never sends this, so it simply never appears in
+				// the log — there is nothing to fall back to and nothing that
+				// breaks.
+				var pong protocol.Pong
+				if w.codec.DecodePayload(payload, &pong) == nil {
+					lat.sample(time.Now().UnixMilli() - pong.T)
+				}
+
 			case protocol.TypeJoin:
 				// Picking a character is what commits you to the queue. With
 				// accounts on, the name in it is ignored: the record has to be

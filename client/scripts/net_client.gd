@@ -204,6 +204,18 @@ func _handle_frame(text: String) -> void:
 
 	var data: Dictionary = frame.get("d", {})
 	match frame.get("t", ""):
+		"ping":
+			# El servidor nos mide a nosotros: manda su propio reloj y espera
+			# que se lo devolvamos tal cual. No lo interpretamos ni lo
+			# comparamos con el nuestro — la resta la hace el que lo escribió,
+			# así no hay dos relojes que sincronizar.
+			#
+			# El int() no es decorativo: JSON.parse_string devuelve todo número
+			# como float, y stringify lo escribiría de vuelta con coma decimal,
+			# que del otro lado es un int64 y no decodifica. Los milisegundos
+			# de época entran exactos en un float, así que la vuelta por int no
+			# pierde nada.
+			_send("pong", {"t": int(data.get("t", 0))})
 		"welcome":
 			welcomed.emit(data)
 		"snapshot":
