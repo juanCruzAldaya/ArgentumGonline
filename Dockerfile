@@ -35,12 +35,19 @@ EXPOSE 8080
 # for half a second; two is the smallest number for which waiting is real, and
 # still small enough that two people can arrange a match between themselves.
 #
+# -worlds has to be absolute here for the same reason the three data files are:
+# its default pattern is relative to server/, and this binary runs from /. The
+# glob matched nothing, so every match silently fell back to -map-file — a
+# 100x100 city instead of the four composed 760x760 worlds, on the deploy where
+# people actually play.
+#
 # This comment sits above the instruction rather than inside it because a '#'
 # after a line continuation is not a comment to Docker — it becomes another
 # element of the JSON array, and the server starts with an argument that is an
 # English sentence.
 ENTRYPOINT ["/server", \
     "-web-dir", "/web", \
+    "-worlds", "/maps/map1[0-9][0-9][0-9].json", \
     "-map-file", "/maps/map1.json", \
     "-items-file", "/maps/items.json", \
     "-spells-file", "/maps/spells.json", \
