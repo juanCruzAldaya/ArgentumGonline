@@ -56,6 +56,22 @@ if ($null -ne $exit -and $exit -ne 0) {
     throw "El export fallo (exit $exit). Si dice 'No export template found', instalalos desde Editor > Manage Export Templates."
 }
 
+# Y esperar a que el archivo aparezca, en vez de mirarlo una sola vez.
+#
+# Godot vuelve antes de que el export este visible desde este proceso: corriendo
+# el script en un host no interactivo, Test-Path da $false apenas termina y un
+# segundo despues el index.html esta ahi, escrito durante el export y no
+# despues. Chequear una sola vez convertia un export perfecto en un error, y
+# encima uno destructivo: los archivos viejos ya se habian borrado arriba.
+#
+# El sondeo no afloja el chequeo — las dos condiciones que se piden son las
+# mismas de abajo, existir y ser de recien — solo le da tiempo a cumplirse.
+$deadline = (Get-Date).AddSeconds(120)
+while ((Get-Date) -lt $deadline) {
+    if ((Test-Path $outFile) -and (Get-Item $outFile).LastWriteTime -ge $startedAt) { break }
+    Start-Sleep -Milliseconds 250
+}
+
 if (-not (Test-Path $outFile)) {
     throw "El export termino OK pero no aparecio $outFile"
 }
