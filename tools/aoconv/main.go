@@ -77,6 +77,10 @@ func main() {
 		worlds    = flag.Bool("worlds", false, "build the composed worlds in worlds/layout.json")
 		worldsDir = flag.String("worlds-dir", "worlds", "directory holding layout.json and water.json")
 		tiledOut  = flag.String("tiled", "", "export the composed worlds as Tiled maps into this directory, for editing")
+
+		audioDir  = flag.String("audio", "", "directory holding the original's WAV files and its MP3/ subdirectory (default <assets>/AUDIO)")
+		soundsOut = flag.String("sounds", "", "directory to write the converted sound effects into")
+		musicOut  = flag.String("music", "", "directory to copy the two music tracks into; the server serves them from there")
 	)
 	flag.Parse()
 
@@ -177,6 +181,26 @@ func main() {
 		len(items), inShops)
 	fmt.Printf("Hechizos.dat: %d hechizos\n", len(spells))
 	fmt.Printf("Fxs.ini:      %d efectos\n", len(fxs))
+
+	// Sonido. Independiente de todo lo demás — no toca el atlas ni los mapas —
+	// así que corre acá, apenas los hechizos están leídos, que es lo único que
+	// hace falta para saber qué convertir. Ver sounds.go.
+	if *soundsOut != "" || *musicOut != "" {
+		audio := *audioDir
+		if audio == "" {
+			audio = filepath.Join(*assets, "AUDIO")
+		}
+		if *soundsOut != "" {
+			if err := convertSounds(audio, *soundsOut, spells); err != nil {
+				fatal("%v", err)
+			}
+		}
+		if *musicOut != "" {
+			if err := copyMusic(audio, *musicOut); err != nil {
+				fatal("%v", err)
+			}
+		}
+	}
 
 	var aoMap *AOMap
 	var displayName string

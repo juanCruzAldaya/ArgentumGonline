@@ -322,3 +322,106 @@ func TestStartingKitPrefersTheClassSpecificWeapon(t *testing.T) {
 		t.Error("did not pick the staff, the weapon built for the fewest classes Mago is in")
 	}
 }
+
+// drink adelanta el reloj lo justo para saltear IntervaloPermiteGolpeUsar y
+// toma del slot 0. Los tragos seguidos son justamente el punto de estos tests,
+// y sin esto el segundo se lo come el cooldown de 0,3 s.
+func drink(w *World, p *Player) {
+	w.tick += useCooldownTicks
+	w.useItem(p, 0, protocol.UseAuto)
+}
+
+// Las pociones de agilidad y fuerza se acumulan hasta el doble del atributo
+// base, como en InvUsuario.bas. Compartir el camino de los hechizos —que
+// sobreescriben— hacia que la segunda poción tirara a la basura la primera, y
+// el techo real quedaba una tirada arriba de la base: 26 de agilidad para un
+// humano en vez de los 42 que permite la regla.
+func TestAgilityPotionsAccumulateToDoubleTheBase(t *testing.T) {
+	w := itemWorld(t)
+	p, _ := place(t, w, "wachin", 5, 5)
+	p.Attributes.Agilidad = 21 // humano: 20 de dados + 1 de raza
+	p.Inventory = []protocol.InventorySlot{{Slot: 0, ItemID: 12, Amount: 10}}
+
+	// La poción amarilla de itemWorld da 5 fijo, asi que la cuenta es
+	// 5, 10, 15, 20 y despues el tope.
+	for _, want := range []int{26, 31, 36, 41, 42, 42} {
+		drink(w, p)
+		if got := w.effectiveAttributes(p).Agilidad; got != want {
+			t.Fatalf("agilidad efectiva %d, esperaba %d", got, want)
+		}
+	}
+}
+
+func TestStrengthPotionsAccumulateToo(t *testing.T) {
+	w := itemWorld(t)
+	p, _ := place(t, w, "wachin", 5, 5)
+	p.Attributes.Fuerza = 21
+	p.Inventory = []protocol.InventorySlot{{Slot: 0, ItemID: 13, Amount: 10}}
+
+	drink(w, p)
+	drink(w, p)
+	if got := w.effectiveAttributes(p).Fuerza; got != 31 {
+		t.Fatalf("fuerza efectiva %d despues de dos verdes, esperaba 31", got)
+	}
+}
+
+// Un buff que ya se vencio arranca de cero. Si no, se podria juntar hasta el
+// techo, dejarlo caer, y volver arriba de un solo trago.
+func TestAnExpiredBuffDoesNotStackOnTopOfItself(t *testing.T) {
+	w := itemWorld(t)
+	p, _ := place(t, w, "wachin", 5, 5)
+	p.Attributes.Agilidad = 21
+	p.Inventory = []protocol.InventorySlot{{Slot: 0, ItemID: 12, Amount: 10}}
+
+	drink(w, p)
+	drink(w, p)
+	if p.AgilityDelta != 10 {
+		t.Fatalf("delta %d antes de vencerse, esperaba 10", p.AgilityDelta)
+	}
+
+	w.tick = p.AgilityUntil + 1
+	w.useItem(p, 0, protocol.UseAuto)
+	if p.AgilityDelta != 5 {
+		t.Fatalf("delta %d despues de vencerse, esperaba que arranque de cero", p.AgilityDelta)
+	}
+}
+
+// El efecto que devuelve el servidor es cuanto subio ESTE trago, no el total
+// acumulado: es lo que el cliente muestra al lado del personaje.
+func TestPotionReportsWhatThisSipAdded(t *testing.T) {
+	w := itemWorld(t)
+	p, conn := place(t, w, "wachin", 5, 5)
+	p.Attributes.Agilidad = 21
+	p.AgilityDelta, p.AgilityUntil = 19, w.tick+100 // ya casi en el tope de 21
+
+	p.Inventory = []protocol.InventorySlot{{Slot: 0, ItemID: 12, Amount: 10}}
+	w.useItem(p, 0, protocol.UseAuto)
+
+	var result protocol.UseResult
+	if err := w.codec.DecodePayload(conn.lastOfType(t, protocol.TypeUseResult), &result); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if result.AgilityDelta != 2 {
+		t.Errorf("informo +%d, esperaba +2 (de 19 al tope de 21)", result.AgilityDelta)
+	}
+}
+
+// Tomar algo dice que se consumió. El campo estaba en el protocolo desde
+// siempre y nadie lo llenaba, porque hasta que hubo sonido no había nada del
+// otro lado que lo mirara: la poción se tomaba en silencio.
+func TestDrinkingReportsItWasConsumed(t *testing.T) {
+	w := itemWorld(t)
+	p, conn := place(t, w, "wachin", 10, 10)
+	p.Vitals.HP = 1
+	p.Inventory = []protocol.InventorySlot{{Slot: 0, ItemID: 10, Amount: 2}}
+
+	w.useItem(p, 0, protocol.UseUseUp)
+
+	var result protocol.UseResult
+	if err := w.codec.DecodePayload(conn.lastOfType(t, protocol.TypeUseResult), &result); err != nil {
+		t.Fatalf("decode useResult: %v", err)
+	}
+	if !result.Consumed {
+		t.Errorf("la poción no vino marcada como consumida: %+v", result)
+	}
+}

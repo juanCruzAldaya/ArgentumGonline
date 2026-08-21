@@ -228,6 +228,11 @@ type World struct {
 	// permadeath. See SetRespawnDelay in respawn.go.
 	respawnDelayTicks uint64
 
+	// deathExitTicks is how long an eliminated player stays a ghost before
+	// being taken back to the camp, 0 to leave them on the map. See
+	// SetDeathExit in deathexit.go.
+	deathExitTicks uint64
+
 	tickRate int
 	tick     uint64
 
@@ -389,6 +394,9 @@ func (w *World) step() {
 	w.zoneTick()
 	w.respawnDue()
 	w.matchTick()
+	// After the match has had its say and before the lobby has its own: see
+	// exitDue for why it sits exactly between those two.
+	w.exitDue()
 	w.lobbyTick()
 	w.broadcast()
 }
@@ -415,6 +423,12 @@ func (w *World) apply(cmd command) {
 		w.movePlayer(p, m.Dir)
 	case protocol.TypeAttack:
 		w.attack(p)
+	case protocol.TypeShoot:
+		var s protocol.Shoot
+		if err := w.codec.DecodePayload(cmd.payload, &s); err != nil {
+			return
+		}
+		w.shoot(p, EntityID(s.Target))
 	case protocol.TypeCast:
 		var c protocol.Cast
 		if err := w.codec.DecodePayload(cmd.payload, &c); err != nil {

@@ -176,6 +176,13 @@ type Spell struct {
 	FXGrh int `json:"fx,omitempty"`
 	Loops int `json:"loops,omitempty"`
 
+	// Wav is the sound this spell makes, as a number into AUDIO/ — the same
+	// numbering the client's own PlayWave uses. It is one of the two halves
+	// of a cast that were always in the data and never read: the FX was
+	// picked up when spells were drawn, this one waited for there to be
+	// sound at all. See tools/aoconv -sounds and the client's audio.gd.
+	Wav int `json:"wav,omitempty"`
+
 	AffectsHP int `json:"affectsHp,omitempty"` // 1 heals, 2 damages
 	MinHP     int `json:"minHp,omitempty"`
 	MaxHP     int `json:"maxHp,omitempty"`
@@ -435,6 +442,7 @@ func loadSpells(path string) (map[int]Spell, error) {
 			Stamina:          sectionInt(section, "StaRequerido"),
 			FXGrh:            sectionInt(section, "FXgrh"),
 			Loops:            sectionInt(section, "Loops"),
+			Wav:              sectionInt(section, "WAV"),
 			AffectsHP:        sectionInt(section, "SubeHP"),
 			MinHP:            sectionInt(section, "MinHP"),
 			MaxHP:            sectionInt(section, "MaxHP"),

@@ -21,7 +21,12 @@ const INPUT_INTERVAL := 0.0
 @onready var _minimap: Control = $UI/Screen/MinimapFrame/Minimap
 @onready var _map_overlay: Control = $UI/Screen/MapOverlay
 @onready var _chat: LineEdit = $UI/Screen/ChatInput
-@onready var _outcome: Control = $UI/Screen/OutcomePanel
+## Cuelga de $UI y no del HUD como el resto de la pantalla de juego: desde que
+## morir te devuelve al campamento, la tarjeta tiene que sobrevivir a que el HUD
+## se esconda, y dibujarse encima del campamento que se abre atrás.
+@onready var _outcome: Control = $UI/OutcomePanel
+## Se arma en _ready, no en la escena. Ver ahí.
+var _keys_panel: Control
 
 var _url := DEFAULT_URL
 var _player_name := ""
@@ -35,6 +40,14 @@ var _connected := false
 ## Spell awaiting a target. Argentum casts in two steps — pick the spell, then
 ## pick who it lands on — and the second click is what this holds open.
 var _targeting_spell := 0
+## Si la mira está puesta para tirar una flecha. Es el mismo gesto de dos pasos
+## que un hechizo, y es el del original: ahí apretar la habilidad de
+## proyectiles cambia el cursor por una mira y el próximo clic dispara.
+##
+## Vive aparte de _targeting_spell y no como "hechizo 0" porque son dos cosas
+## distintas que se cancelan igual: mezclarlas haría que un clic tuviera que
+## preguntar cuál de las dos estaba armada antes de saber qué mandar.
+var _targeting_shot := false
 ## Entities seen in the previous snapshot, so the console can report who walked
 ## into and out of view. Diffing here keeps the server free of an event stream
 ## it does not need yet.
@@ -106,6 +119,7 @@ func _ready() -> void:
 	_net.combat_received.connect(_on_combat)
 	_net.spell_received.connect(_on_spell)
 	_net.speech_received.connect(_on_speech)
+	_net.projectile_received.connect(_view.play_projectile)
 	_net.outcome_received.connect(_on_outcome)
 	_net.hello_received.connect(_on_hello)
 	_net.lobby_received.connect(_on_lobby)
@@ -125,6 +139,13 @@ func _ready() -> void:
 	_hud.map_requested.connect(_map_overlay.toggle)
 	_chat.said.connect(_net.send_talk)
 
+	# Built here rather than placed in main.tscn: every control in that scene
+	# sits at a measured offset over the painted panel, and this one is a modal
+	# that owns the whole screen and belongs to no plate in the artwork.
+	_keys_panel = preload("res://scripts/key_config_panel.gd").new()
+	_keys_panel.name = "KeyConfigPanel"
+	_hud.add_child(_keys_panel)
+
 	# The world and the HUD have nothing to show until a character exists, so
 	# they stay hidden — and the server stays untouched — until the picker
 	# confirms a class and race.
@@ -135,6 +156,10 @@ func _ready() -> void:
 	# it wants an account, and that decides which screen gets drawn — asking
 	# before knowing would mean either a login form on a server that has no
 	# accounts, or a character picker on one that refuses to let it in.
+	# La música la sirve el mismo servidor del juego por HTTP, así que de acá
+	# sale su dirección — ver audio.gd.
+	GameAudio.set_server(_url)
+
 	_net.connect_to_server(_url, _player_name, 0, 0)
 
 
@@ -252,6 +277,12 @@ func _show_lobby() -> void:
 	screen.set_account(_account)
 	screen.queue_toggled.connect(_on_queue_toggled)
 	screen.quit_requested.connect(_on_quit_requested)
+	# El campamento acaba de nacer, así que es el último hijo y quedó arriba de
+	# todo. La tarjeta del resultado, si está, va encima: es lo último que pasó
+	# y lo primero que el jugador quiere leer.
+	if _outcome.visible:
+		_outcome.move_to_front()
+	GameAudio.play_music("lobby")
 
 
 ## UNIRSE A LA COLA. La primera vez hay que elegir personaje, porque el join es
@@ -285,12 +316,19 @@ func _process(delta: float) -> void:
 	# events, so an open chat box cannot swallow them the way it swallows
 	# everything else — it has to be checked here explicitly, or typing a word
 	# with a "w" in it walks you north.
-	if _chat.is_open():
+	#
+	# The key panel needs the same guard for the same reason, and worse: there,
+	# the key you press is the one being assigned, so without this you walk and
+	# swing while rebinding.
+	if _chat.is_open() or _keys_panel.visible:
 		return
 
 	# Ctrl swings, as in Argentum. Immobilize roots the feet, not the arms —
 	# only paralysis stops a swing, matching the server's canAct.
-	if Input.is_key_pressed(KEY_CTRL):
+	#
+	# Y golpea siempre, tengas un arco o una espada: apuntar no es una tecla,
+	# es **usar el arco**. Ver _arm_shot.
+	if Input.is_action_pressed(&"atacar"):
 		_time_since_input = 0.0
 		if _paralyzed:
 			_tell_blocked("No podés atacar, estás paralizado.")
@@ -336,25 +374,43 @@ func _on_combat(event: Dictionary) -> void:
 	var attacker := str(event.get("an", "alguien"))
 	var victim := str(event.get("vn", "alguien"))
 	var damage := int(event.get("dmg", 0))
+	var ranged: bool = bool(event.get("rng", false))
+
+	# El tiro que nunca salió: sin arco, sin flechas, o demasiado lejos. Solo
+	# le llega al que intentó, y solo existe para los disparos — un golpe al
+	# aire se explica solo, un carcaj vacío no se ve desde donde está sentado
+	# el jugador.
+	var failed := str(event.get("failed", ""))
+	if failed != "":
+		_hud.log_line(failed, _hud.COLOR_TEXT_DIM)
+		return
 
 	if not bool(event.get("hit", false)):
+		GameAudio.play(GameAudio.SND_ESCUDO if bool(event.get("blocked", false)) else GameAudio.SND_SWING)
 		if bool(event.get("blocked", false)):
 			if mine:
 				_hud.log_line("%s rechazó tu ataque con su escudo." % victim, _hud.COLOR_TEXT_DIM)
 			else:
 				_hud.log_line("Rechazaste el ataque de %s con tu escudo." % attacker, _hud.COLOR_MANA)
 		elif mine:
-			_hud.log_line("¡Has fallado el golpe!", _hud.COLOR_TEXT_DIM)
+			_hud.log_line(
+				"¡Has errado el tiro!" if ranged else "¡Has fallado el golpe!", _hud.COLOR_TEXT_DIM
+			)
 		else:
-			_hud.log_line("¡%s ha fallado el golpe!" % attacker, _hud.COLOR_TEXT_DIM)
+			_hud.log_line(
+				("¡%s ha errado el tiro!" if ranged else "¡%s ha fallado el golpe!") % attacker,
+				_hud.COLOR_TEXT_DIM
+			)
 		return
 
+	GameAudio.play(GameAudio.SND_IMPACTO)
 	if mine:
 		_hud.log_line("Le has quitado %d puntos de vida a %s." % [damage, victim], _hud.COLOR_HP)
 	else:
 		_hud.log_line("%s te ha quitado %d puntos de vida." % [attacker, damage], _hud.COLOR_EXP)
 
 	if bool(event.get("killed", false)):
+		GameAudio.play(GameAudio.SND_MUERTE)
 		if mine:
 			_hud.log_line("¡Has matado a %s!" % victim, _hud.COLOR_ACCENT)
 		else:
@@ -398,6 +454,9 @@ func _announce_zone(zone: Variant) -> void:
 ## one line that is worth keeping in the log after the card is dismissed.
 func _on_outcome(outcome: Dictionary) -> void:
 	_outcome.show_outcome(outcome)
+	# Al frente de lo que haya: si el campamento ya volvió —el eliminado sale
+	# del mundo unos segundos después de morir— la tarjeta se dibuja encima.
+	_outcome.move_to_front()
 
 	var place := int(outcome.get("place", 0))
 	var players := int(outcome.get("of", 0))
@@ -522,6 +581,32 @@ func _on_use_result(result: Dictionary) -> void:
 
 	var item_name := str(result.get("item", "el objeto"))
 
+	# Usar un arco equipado no lo consume ni lo saca: pide puntería. Es el
+	# WorkRequestTarget del original y es lo que levanta la mira — ver
+	# _arm_shot.
+	if bool(result.get("aim", false)):
+		_arm_shot()
+		_hud.log_line(
+			"Elegí a quién dispararle. Click derecho o Esc para cancelar.", _hud.COLOR_ACCENT
+		)
+		return
+
+	# Tomar algo suena, sea poción, comida o agua: es el SND_BEBER que el
+	# original manda para las tres.
+	if bool(result.get("consumed", false)):
+		GameAudio.play(GameAudio.SND_BEBER)
+
+	# El cofre: ni se consume ni se equipa, se convierte en equipo en el piso.
+	# Se dice cuántas piezas porque alguna cae fuera de la pantalla y si no el
+	# jugador se va con la que tiene a los pies creyendo que era la única.
+	if bool(result.get("opened", false)):
+		var pieces := int(result.get("dropped", 0))
+		_hud.log_line(
+			"Abrís el cofre: %d piezas para tu clase se desparraman alrededor." % pieces,
+			_hud.COLOR_ACCENT
+		)
+		return
+
 	if bool(result.get("equipped", false)):
 		_hud.log_line("Te has equipado: %s." % item_name, _hud.COLOR_ACCENT)
 		return
@@ -570,13 +655,96 @@ func _on_cast_requested(spell_id: int) -> void:
 	_hud.log_line("Elegí un objetivo. Click derecho o Esc para cancelar.", _hud.COLOR_ACCENT)
 
 
+## Pone la mira para tirar una flecha.
+##
+## **La pide el servidor**, no la decide el cliente: usar un arco equipado —U, o
+## doble clic sobre él— hace que el servidor conteste "elegí a quién", que es su
+## `WorkRequestTarget(Proyectiles)`. Apuntar no es una tecla de atacar; en el
+## original tampoco lo es, y por eso el arco se "usa" como se usa una poción,
+## solo que lo que hace al usarse es levantar la mira.
+##
+## Que la decisión sea del servidor también es lo que hace que un arco sin
+## equipar conteste "antes de usar el arco deberías equipártelo" en vez de no
+## hacer nada.
+func _arm_shot() -> void:
+	_targeting_shot = true
+	_view.targeting = true
+	Input.set_default_cursor_shape(Input.CURSOR_CROSS)
+
+
+## El clic que gasta la mira. Igual que con un hechizo, errar cuesta el intento
+## y hay que volver a armarla: el original limpia UsingSkill después de
+## cualquier clic izquierdo, acierte o no.
+func _handle_shot_input(event: InputEvent) -> void:
+	var cancel: bool = event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE
+	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_RIGHT:
+		cancel = true
+	if cancel:
+		_stop_targeting()
+		return
+
+	if not (event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT):
+		return
+
+	var target: int = _view.entity_at(_view.to_local(event.position))
+	if target == 0:
+		_hud.log_line("No hay nadie ahí.", _hud.COLOR_TEXT_DIM)
+		_stop_targeting()
+		return
+
+	_net.send_shoot(target)
+	_stop_targeting()
+
+
 func _stop_targeting() -> void:
 	_targeting_spell = 0
+	_targeting_shot = false
 	_view.targeting = false
 	Input.set_default_cursor_shape(Input.CURSOR_ARROW)
 
 
 func _unhandled_input(event: InputEvent) -> void:
+	# El panel de teclas antes que nada: mientras está abierto se queda con el
+	# teclado entero, porque cualquier tecla puede ser la que se está asignando.
+	if event is InputEventKey and event.pressed and not event.echo:
+		if _keys_panel.visible:
+			if event.keycode == KEY_ESCAPE:
+				_keys_panel.close()
+				get_viewport().set_input_as_handled()
+			return
+		# F1 lo abre. El original usa Ctrl+0 y lo aceptamos también, pero solo
+		# fuera del browser: ahí Ctrl+0 es el zoom de la página y Chrome no
+		# deja interceptarlo.
+		var classic_shortcut: bool = (
+			event.keycode == KEY_0 and event.ctrl_pressed and not OS.has_feature("web")
+		)
+		if event.keycode == KEY_F1 or classic_shortcut:
+			_keys_panel.open()
+			get_viewport().set_input_as_handled()
+			return
+
+		# Sonido y música, en teclas fijas y no en el panel de F1.
+		#
+		# El original les da M y S (clsCustomKeys), que acá ya son el mapa y
+		# caminar al sur, así que la tecla del original no está disponible. Y no
+		# entran al panel porque su arte está horneado con trece casilleros —
+		# agregar dos filas es regenerar el PNG y volver a medir, no editar una
+		# tabla. Queda anotado como pendiente.
+		if event.keycode == KEY_F2:
+			_hud.log_line(
+				"Sonido: %s." % ("activado" if GameAudio.toggle_sfx() else "desactivado"),
+				_hud.COLOR_TEXT_DIM
+			)
+			get_viewport().set_input_as_handled()
+			return
+		if event.keycode == KEY_F3:
+			_hud.log_line(
+				"Música: %s." % ("activada" if GameAudio.toggle_music() else "desactivada"),
+				_hud.COLOR_TEXT_DIM
+			)
+			get_viewport().set_input_as_handled()
+			return
+
 	# Ocultarse (O), Agarrar (A) and Usar/Equipar (U/E): Argentum's own hotkeys
 	# for these, each a discrete "try once" trigger on the key edge rather than
 	# the held-and-repeated polling _process() uses for movement/attack —
@@ -588,7 +756,7 @@ func _unhandled_input(event: InputEvent) -> void:
 	# Enter opens the chat box, and the box takes it from there — it has focus
 	# while open, so its own submit and cancel never reach this function.
 	if not _chat.is_open() and event is InputEventKey and event.pressed and not event.echo:
-		if event.keycode == KEY_ENTER or event.keycode == KEY_KP_ENTER:
+		if event.is_action_pressed(&"hablar"):
 			if _connected:
 				_chat.open()
 				get_viewport().set_input_as_handled()
@@ -607,51 +775,59 @@ func _unhandled_input(event: InputEvent) -> void:
 	# eats Escape and M so neither leaks into targeting or movement, and every
 	# other key still works, because closing the map should never be the price
 	# of drinking a potion.
+	# La tecla del mapa se consulta por acción, no por keycode: si el jugador la
+	# remapea, la que abre y la que cierra tienen que seguir siendo la misma.
 	if _map_overlay.visible and event is InputEventKey and event.pressed and not event.echo:
-		if event.keycode == KEY_ESCAPE or event.keycode == KEY_M:
+		if event.keycode == KEY_ESCAPE or event.is_action_pressed(&"mapa"):
 			_map_overlay.close()
 			get_viewport().set_input_as_handled()
 			return
 
+	# Una cadena de if y no un match: las teclas salen del InputMap, que el
+	# jugador puede cambiar, y un match necesita constantes.
 	if _connected and event is InputEventKey and event.pressed and not event.echo:
-		match event.keycode:
-			KEY_O:
-				if _paralyzed:
-					_tell_blocked("No podés ocultarte, estás paralizado.")
-				else:
-					_net.send_hide()
-			KEY_A:
-				_net.send_pickup()
-			KEY_U, KEY_E:
-				var slot: int = _hud.selected_slot()
-				if slot < 0:
-					_hud.log_line("Primero seleccioná un objeto del inventario.", _hud.COLOR_TEXT_DIM)
-				else:
-					# E equips and only equips; U consumes and only consumes.
-					# They used to send the identical message and let the item
-					# type decide, which meant pressing E on a potion drank it.
-					# The double-click is U's gesture, so E is the only way to
-					# put something on from the keyboard.
-					var action := "equip" if event.keycode == KEY_E else "use"
-					_net.send_use_action(slot, action)
-			KEY_T:
-				# Tirar: drops the whole selected slot on the spot. The original
-				# opens a quantity dialog for a stack over 1 (frmCantidad); this
-				# game has no partial-stack UI anywhere else either, so T always
-				# drops the entire stack, same as dropping from the context menu.
-				var drop_slot: int = _hud.selected_slot()
-				if drop_slot < 0:
-					_hud.log_line("Primero seleccioná un objeto del inventario.", _hud.COLOR_TEXT_DIM)
-				else:
-					_net.send_drop(drop_slot)
-			KEY_F6:
-				_net.send_meditate()
-			KEY_M:
-				# The world map. Not a key the original binds — it has no world
-				# map to bind, since a map there is 100x100 and the minimap
-				# shows all of it. A composed world is 820x820, where the
-				# corner minimap gives about a sixth of a pixel per tile.
-				_map_overlay.toggle()
+		if event.is_action_pressed(&"ocultarse"):
+			if _paralyzed:
+				_tell_blocked("No podés ocultarte, estás paralizado.")
+			else:
+				_net.send_hide()
+		elif event.is_action_pressed(&"agarrar"):
+			_net.send_pickup()
+		elif event.is_action_pressed(&"usar") or event.is_action_pressed(&"equipar"):
+			var slot: int = _hud.selected_slot()
+			if slot < 0:
+				_hud.log_line("Primero seleccioná un objeto del inventario.", _hud.COLOR_TEXT_DIM)
+			else:
+				# E equips and only equips; U consumes and only consumes.
+				# They used to send the identical message and let the item
+				# type decide, which meant pressing E on a potion drank it.
+				# The double-click is U's gesture, so E is the only way to
+				# put something on from the keyboard.
+				var action := "equip" if event.is_action_pressed(&"equipar") else "use"
+				_net.send_use_action(slot, action)
+		elif event.is_action_pressed(&"tirar"):
+			# Tirar: drops the whole selected slot on the spot. The original
+			# opens a quantity dialog for a stack over 1 (frmCantidad); this
+			# game has no partial-stack UI anywhere else either, so T always
+			# drops the entire stack, same as dropping from the context menu.
+			var drop_slot: int = _hud.selected_slot()
+			if drop_slot < 0:
+				_hud.log_line("Primero seleccioná un objeto del inventario.", _hud.COLOR_TEXT_DIM)
+			else:
+				_net.send_drop(drop_slot)
+		elif event.is_action_pressed(&"meditar"):
+			_net.send_meditate()
+		elif event.is_action_pressed(&"mapa"):
+			# The world map. Not a key the original binds — it has no world
+			# map to bind, since a map there is 100x100 and the minimap
+			# shows all of it. A composed world is 820x820, where the
+			# corner minimap gives about a sixth of a pixel per tile.
+			_map_overlay.toggle()
+
+	# Con la mira puesta el próximo clic es el tiro, no una consulta.
+	if _targeting_shot:
+		_handle_shot_input(event)
+		return
 
 	if _targeting_spell == 0:
 		_handle_inspect_click(event)
@@ -732,21 +908,22 @@ func _log_ground(stack: Dictionary) -> void:
 	_hud.log_line("En el piso: %s (%d)." % [label, int(stack["amount"])], _hud.COLOR_TEXT_DIM)
 
 
-## Raw key checks rather than input actions, so the project needs no input map
-## and the controls read the same as the server's heading constants.
+## Input actions rather than raw key checks, so the player can rebind them —
+## key_bindings.gd owns the catalogue and the defaults. The order of the
+## returned numbers still matches the server's heading constants.
 ##
-## West drops the WASD alt (KEY_A) that the other three directions keep: A is
-## Agarrar, Argentum's own pickup hotkey, and holding it to walk west would
-## fire a pickup attempt on every step. Classic AO only ever used the arrow
-## keys for movement anyway — this just stops being wrong about it on one side.
+## West ships without the WASD alt the other three keep: A is Agarrar,
+## Argentum's own pickup hotkey, and holding it to walk west would fire a
+## pickup attempt on every step. That is a default, not a rule — whoever wants
+## A for west now goes and says so in the panel.
 func _pressed_direction() -> int:
-	if Input.is_key_pressed(KEY_UP) or Input.is_key_pressed(KEY_W):
+	if Input.is_action_pressed(&"mover_norte"):
 		return 0  # north
-	if Input.is_key_pressed(KEY_RIGHT) or Input.is_key_pressed(KEY_D):
+	if Input.is_action_pressed(&"mover_este"):
 		return 1  # east
-	if Input.is_key_pressed(KEY_DOWN) or Input.is_key_pressed(KEY_S):
+	if Input.is_action_pressed(&"mover_sur"):
 		return 2  # south
-	if Input.is_key_pressed(KEY_LEFT):
+	if Input.is_action_pressed(&"mover_oeste"):
 		return 3  # west
 	return -1
 
@@ -823,6 +1000,7 @@ func _on_welcomed(welcome: Dictionary) -> void:
 		_lobby_screen = null
 	_view.visible = true
 	_hud.visible = true
+	GameAudio.play_music("match")
 
 	_local_id = int(welcome.get("id", 0))
 	_view.configure(welcome)

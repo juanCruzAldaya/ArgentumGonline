@@ -233,8 +233,21 @@ var _data := AOData.new()
 var _spell_ids: Array[int] = []
 var _cast_button: Button
 var _info_button: Button
-## The server slot number currently selected in the inventory, or -1 for none.
-## Single click sets this; double click acts on it. See _on_slot_gui_input.
+## El último bolso que mandó el servidor, tal cual vino.
+##
+## Guardado porque hay preguntas que se contestan mirando lo equipado y no
+## dibujando nada: si lo que tengo en la mano dispara, y cuántas flechas quedan.
+## Ver ranged_weapon() y ammo_left().
+var _inventory: Array = []
+
+## The server slot number currently selected in the inventory, or -1 before
+## anything has been picked. Single click sets this; double click acts on it.
+##
+## Once something is selected the selection never empties again: only a click on
+## a different item moves it. Nothing the player does to an item — drinking it,
+## dropping it, equipping it from the menu — counts as no longer having chosen
+## it, because the next thing they want is almost always the same slot again.
+## See _on_slot_gui_input.
 var _selected_slot := -1
 
 ## The spell slot the player last picked, remembered across refills.
@@ -281,9 +294,10 @@ func _ready() -> void:
 ## set_loadout fills the bag and the spell list from what the server says the
 ## player is carrying and knows.
 func set_loadout(loadout: Dictionary) -> void:
-	_fill_inventory(loadout.get("inv", []))
+	_inventory = loadout.get("inv", [])
+	_fill_inventory(_inventory)
 	_fill_spells(loadout.get("spells", []))
-	_update_gear_readout(loadout.get("inv", []))
+	_update_gear_readout(_inventory)
 
 
 ## The bar across the bottom of the world view: what you are actually wearing,
@@ -323,8 +337,43 @@ func _update_gear_readout(slots: Array) -> void:
 		else:
 			text[type] = _stat_range(item, "minDef", "maxDef")
 
+	# Con un arco equipado, al lado de su daño va cuántas flechas quedan. Es el
+	# único número del equipo que se gasta mientras se juega, y no tenerlo a la
+	# vista es enterarse de que el carcaj está vacío recién cuando la tecla deja
+	# de hacer algo.
+	var bow := ranged_weapon()
+	if not bow.is_empty() and bool(bow.get("needsAmmo", false)):
+		text[AOData.TYPE_WEAPON] = "%s  x%d" % [text.get(AOData.TYPE_WEAPON, ""), ammo_left()]
+
 	for type: int in _gear_boxes:
 		_gear_boxes[type].text = str(text.get(type, ""))
+
+
+## El arma de proyectiles que esté equipada, o vacío si lo que hay en la mano
+## no dispara.
+##
+## Sale del mismo bolso que dibuja el inventario: obj.dat viaja con el cliente,
+## así que "esto es un arco" es una consulta local y no un mensaje nuevo.
+func ranged_weapon() -> Dictionary:
+	for entry in _inventory:
+		if not bool(entry.get("e", false)):
+			continue
+		var item := _data.item(int(entry.get("i", 0)))
+		if int(item.get("type", -1)) == AOData.TYPE_WEAPON and bool(item.get("projectile", false)):
+			return item
+	return {}
+
+
+## Cuántas flechas hay en el carcaj equipado. Cero es tanto "no tengo" como
+## "no tengo puesto", que para disparar son lo mismo.
+func ammo_left() -> int:
+	for entry in _inventory:
+		if not bool(entry.get("e", false)):
+			continue
+		var item := _data.item(int(entry.get("i", 0)))
+		if int(item.get("type", -1)) == AOData.TYPE_ARROW:
+			return int(entry.get("n", 0))
+	return 0
 
 
 ## "5-10", or "10" when the range is a single number.
@@ -723,10 +772,19 @@ func _on_slot_gui_input(event: InputEvent, slot: Panel) -> void:
 			_select_slot(server_slot)
 			return
 		item_used.emit(server_slot)
-		_select_slot(-1)
+		# La selección se queda donde está en vez de limpiarse: tomar una poción
+		# no es dejar de tener elegida esa poción, y soltarla obligaba a volver
+		# a buscar el slot para el segundo trago.
+		_select_slot(server_slot)
 		return
 
-	_select_slot(server_slot)
+	# Un clic elige, nunca desestá: repetirlo sobre el mismo casillero lo deja
+	# elegido, y sólo un clic sobre OTRO objeto mueve la selección. Un casillero
+	# vacío no la mueve tampoco — server_slot es -1 ahí, y pasárselo a
+	# _select_slot era la otra forma de quedarse sin nada elegido sin haberlo
+	# pedido.
+	if server_slot >= 0:
+		_select_slot(server_slot)
 
 
 ## Argentum's own object menu is three lines: whichever of Usar/Equipar or
@@ -767,7 +825,9 @@ func _on_context_menu_id_pressed(id: int) -> void:
 				item_used.emit(_context_slot)
 		1:
 			drop_requested.emit(_context_slot)
-	_select_slot(-1)
+	# Elegido queda el casillero sobre el que se abrió el menú, igual que con un
+	# clic. Actuar sobre algo no es dejar de tenerlo elegido.
+	_select_slot(_context_slot)
 
 
 ## The server slot currently selected in the bag, or -1 for none — what the

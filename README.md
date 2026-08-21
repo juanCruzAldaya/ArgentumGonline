@@ -11,16 +11,19 @@ manda input, no simula nada.
 
 **Documentación:** [OPERACION.md](OPERACION.md) es el manual — todos los
 comandos para levantar, buildear, publicar y deployar, más cómo funciona el
-sistema por dentro. Los otros tres:
+sistema por dentro. Los otros cuatro:
 [RESUMEN-EJECUTIVO](RESUMEN-EJECUTIVO.md) para decidir,
-[RESUMEN-FUNCIONAL](RESUMEN-FUNCIONAL.md) para saber qué hace el juego, y
-[DIFICULTADES](DIFICULTADES.md) para lo que costó y por qué.
+[RESUMEN-FUNCIONAL](RESUMEN-FUNCIONAL.md) para saber qué hace el juego,
+[DIFICULTADES](DIFICULTADES.md) para lo que costó y por qué, y
+[SESION-2026-08-20](SESION-2026-08-20.md) para el camino de la última tanda.
 
 ## Documentos
 
 - [RESUMEN-EJECUTIVO.md](RESUMEN-EJECUTIVO.md) — qué es, qué se logró, qué falta
 - [RESUMEN-FUNCIONAL.md](RESUMEN-FUNCIONAL.md) — todo lo que hace el juego hoy, en detalle
 - [DIFICULTADES.md](DIFICULTADES.md) — lo que costó y por qué
+- [SESION-2026-08-20.md](SESION-2026-08-20.md) — el deploy con los mundos, la
+  latencia por jugador, cinco bugs, el panel de teclas y los cofres
 
 ## Estado
 
@@ -35,14 +38,32 @@ Andando hoy:
 - **La partida termina**: el último en pie gana, cada eliminado ve su puesto,
   sus bajas y cuánto sobrevivió, y la siguiente partida arranca sola sobre el
   mismo mundo sin que nadie se reconecte.
+- **Morir te saca al campamento**: el cuerpo queda unos segundos en el mapa y
+  después volvés al lobby, con la tarjeta del resultado encima y tu carrera ya
+  actualizada. Lo que dejaste tirado se queda ahí.
 - Mundo autoritativo sobre grilla de tiles, tick a 20 Hz, con predicción del
   movimiento y reconciliación por número de secuencia
 - Combate cuerpo a cuerpo y 50 hechizos, con las fórmulas y los cuatro
   intervalos del original
+- **Combate a distancia**: el arco se equipa y después se **usa** —la misma U o
+  el mismo doble clic que una poción— y eso pone la mira; el clic elige a quién. La flecha se gasta, suma su propia tirada al daño y **la ve
+  pasar todo el que la tenga en pantalla** — así se sabe de dónde salió el tiro.
+  Las cuchillas arrojadizas gastan el arma en vez de una flecha.
+- **Suena**: los golpes, los escudos, las pociones, los pasos y el WAV que cada
+  hechizo trae en `Hechizos.dat`, con los números del Argentum original. **F2**
+  apaga el sonido, **F3** la música. La música la sirve el servidor aparte y se
+  baja a pedido, así que sumar audio costó 0,3 MB de descarga y no 227
 - **Lanzar te delata**: las palabras mágicas aparecen sobre la cabeza del que
   lanza, para todos los del área, incluso si es invisible
 - Chat con Enter, dibujado sobre el personaje igual que los hechizos
 - Objetos, inventario y loot en el piso, con densidad de battle royale
+- **Cofres**: se abren con la misma tecla de agarrar y largan tres piezas que
+  **tu clase puede usar**, al piso y no a la mochila — el loot suelto es lo que
+  hay, un cofre es lo que te sirve
+- **Panel de configurar teclas** con **F1**, el `frmCustomKeys` del original con
+  su arte, y lo elegido sobrevive a cerrar el juego
+- **Latencia por jugador en el log**: la mide el servidor, así que se ve la de
+  todos y no sólo la propia
 - Mapa grande con **M**, dibujado con el color real del terreno
 - **Cuentas con carrera**: usuario, correo y contraseña, y una ficha con
   partidas, victorias, bajas, mejor puesto y las últimas seis. Opcional: sin
@@ -56,8 +77,8 @@ Andando hoy:
 - Export web: el mismo proceso Go sirve el cliente HTML5 y el protocolo
 - Bots headless: **101 jugadores simultáneos con el 2,6% de un core**
 
-Todavía **no**: una máquina por partida, NPCs, combate a distancia, facciones,
-sonido. El roadmap completo y numerado está en
+Todavía **no**: una máquina por partida, NPCs, facciones, modo espectador. El
+roadmap completo y numerado está en
 [RESUMEN-EJECUTIVO](RESUMEN-EJECUTIVO.md).
 
 ## Por qué esta arquitectura
@@ -109,11 +130,17 @@ go run ./cmd/server                 # escucha en :8080
 godot --path client -- --server=ws://127.0.0.1:8080/ws --name=wachin
 ```
 
-Controles: WASD o flechas, Ctrl para golpear, **M** para el mapa, **Enter** para
-hablar. El resto — agarrar, tirar, equipar, ocultarse, meditar — en
-[RESUMEN-FUNCIONAL](RESUMEN-FUNCIONAL.md).
+Controles: WASD o flechas, Ctrl para golpear, **U** (o doble clic en el ítem)
+para usar lo que tengas a mano —una poción, o el arco, que pone la mira—,
+**M** para el mapa, **Enter** para hablar, **F2** y **F3**
+para el sonido y la música. El resto — agarrar, tirar, equipar, ocultarse, meditar — en
+[RESUMEN-FUNCIONAL](RESUMEN-FUNCIONAL.md). **Todas se pueden cambiar con F1**,
+en el panel de teclas del original, y lo que elijas se guarda.
 
 Flags del servidor: `-addr`, `-tick`, `-seed`, `-debug`,
+`-death-exit` (segundos que un eliminado se queda de fantasma antes de volver al
+campamento; 0 lo deja en el mapa),
+`-music-dir` (de dónde salen las dos pistas que el cliente baja a pedido),
 `-lobby-min` (cuántos en la cola hacen falta para empezar; 1 arranca en el acto)
 y `-lobby-wait` (segundos de cuenta regresiva una vez alcanzado el mínimo),
 `-worlds` (de cuáles sortear el mapa), `-world-seed` (fijar cuál),
@@ -215,8 +242,10 @@ server/
     protocol/      mensajes de wire + codec (JSON hoy, binario después)
     transport/     frames opacos; implementación WebSocket
     world/         simulación autoritativa, tick loop, sesiones
+server/music/      las dos pistas, servidas por HTTP y fuera del cliente web
 client/
-  scripts/         net_client.gd, world_view.gd, hud.gd, minimap.gd, main.gd
+  scripts/         net_client.gd, world_view.gd, hud.gd, minimap.gd, main.gd,
+                   audio.gd, key_bindings.gd
   scenes/main.tscn estructura y posiciones; lo cosmético vive en hud.gd
   export_presets.cfg
 tools/aoconv/      lee los indices de AO (grh, cuerpos, cabezas) y extrae sprites
@@ -273,9 +302,8 @@ battle royale.
 
 ## Próximos pasos
 
-1. Combate: stats, ataque con cooldown, hechizos con cast time, muerte y drop
-2. Zona que se achica sobre la grilla
-3. Loot en el piso e inventario
-4. Clases y razas (tablas del código VB6)
-5. Lobby/matchmaking + una máquina Fly por partida vía Machines API
-6. Codec binario cuando el JSON moleste, medido — no antes
+1. Codec binario cuando el JSON moleste, medido — el snapshot ya pesa 3,6 KB
+2. Una máquina Fly por partida vía Machines API
+3. Caída inicial: elegir dónde entrar al mundo en vez de spawnear al azar
+4. NPCs, que es un sistema nuevo y no un port
+5. Modo espectador siguiendo al que te mató

@@ -43,28 +43,35 @@ type classMods struct {
 	Evasion         float64
 	AtaqueArmas     float64
 	AtaqueWrestling float64
-	DanoArmas       float64
-	DanoWrestling   float64
-	Escudo          float64
-	Vida            float64
+	// AtaqueProyectiles and DanoProyectiles are the bow's own two columns,
+	// [MODATAQUEPROYECTILES] and [MODDANOPROYECTILES]. They are what makes the
+	// Cazador an archer rather than a warrior with a stick: it is the only
+	// class that shoots at 1.0 and hits for 1.1, and the only one whose
+	// projectile numbers beat its own melee ones.
+	AtaqueProyectiles float64
+	DanoProyectiles   float64
+	DanoArmas         float64
+	DanoWrestling     float64
+	Escudo            float64
+	Vida              float64
 }
 
 // classModifiers is Balance.dat's [MOD*] sections, transposed so one class is
 // one row. A mage evades at 0.4 and a pirate at 1.25 — that spread is the
 // character of the game and none of it is arbitrary.
 var classModifiers = map[Class]classMods{
-	Guerrero:   {Evasion: 1.00, AtaqueArmas: 1.00, AtaqueWrestling: 0.60, DanoArmas: 1.100, DanoWrestling: 0.40, Escudo: 1.00, Vida: 10.0},
-	Cazador:    {Evasion: 0.90, AtaqueArmas: 0.80, AtaqueWrestling: 0.50, DanoArmas: 0.900, DanoWrestling: 0.40, Escudo: 0.80, Vida: 9.5},
-	Paladin:    {Evasion: 0.90, AtaqueArmas: 0.95, AtaqueWrestling: 0.40, DanoArmas: 0.925, DanoWrestling: 0.40, Escudo: 1.00, Vida: 9.5},
-	Bandido:    {Evasion: 0.70, AtaqueArmas: 0.85, AtaqueWrestling: 0.95, DanoArmas: 0.850, DanoWrestling: 1.05, Escudo: 2.00, Vida: 9.5},
-	Asesino:    {Evasion: 1.10, AtaqueArmas: 0.90, AtaqueWrestling: 0.40, DanoArmas: 0.900, DanoWrestling: 0.40, Escudo: 0.80, Vida: 8.5},
-	Pirata:     {Evasion: 1.25, AtaqueArmas: 0.90, AtaqueWrestling: 0.50, DanoArmas: 0.950, DanoWrestling: 0.40, Escudo: 0.60, Vida: 9.5},
-	Ladron:     {Evasion: 1.10, AtaqueArmas: 0.80, AtaqueWrestling: 0.80, DanoArmas: 0.750, DanoWrestling: 1.05, Escudo: 0.70, Vida: 10.0},
-	Clerigo:    {Evasion: 0.80, AtaqueArmas: 0.85, AtaqueWrestling: 0.40, DanoArmas: 0.800, DanoWrestling: 0.40, Escudo: 0.85, Vida: 8.5},
-	Bardo:      {Evasion: 1.075, AtaqueArmas: 0.70, AtaqueWrestling: 0.40, DanoArmas: 0.750, DanoWrestling: 0.40, Escudo: 0.80, Vida: 8.5},
-	Mago:       {Evasion: 0.40, AtaqueArmas: 0.50, AtaqueWrestling: 0.30, DanoArmas: 0.500, DanoWrestling: 0.40, Escudo: 0.60, Vida: 7.5},
-	Druida:     {Evasion: 0.75, AtaqueArmas: 0.65, AtaqueWrestling: 0.40, DanoArmas: 0.700, DanoWrestling: 0.40, Escudo: 0.75, Vida: 8.5},
-	Trabajador: {Evasion: 0.80, AtaqueArmas: 0.80, AtaqueWrestling: 0.50, DanoArmas: 0.800, DanoWrestling: 0.40, Escudo: 0.70, Vida: 9.5},
+	Guerrero:   {Evasion: 1.00, AtaqueArmas: 1.00, AtaqueWrestling: 0.60, AtaqueProyectiles: 0.80, DanoProyectiles: 0.90, DanoArmas: 1.100, DanoWrestling: 0.40, Escudo: 1.00, Vida: 10.0},
+	Cazador:    {Evasion: 0.90, AtaqueArmas: 0.80, AtaqueWrestling: 0.50, AtaqueProyectiles: 1.00, DanoProyectiles: 1.10, DanoArmas: 0.900, DanoWrestling: 0.40, Escudo: 0.80, Vida: 9.5},
+	Paladin:    {Evasion: 0.90, AtaqueArmas: 0.95, AtaqueWrestling: 0.40, AtaqueProyectiles: 0.75, DanoProyectiles: 0.80, DanoArmas: 0.925, DanoWrestling: 0.40, Escudo: 1.00, Vida: 9.5},
+	Bandido:    {Evasion: 0.70, AtaqueArmas: 0.85, AtaqueWrestling: 0.95, AtaqueProyectiles: 0.80, DanoProyectiles: 0.70, DanoArmas: 0.850, DanoWrestling: 1.05, Escudo: 2.00, Vida: 9.5},
+	Asesino:    {Evasion: 1.10, AtaqueArmas: 0.90, AtaqueWrestling: 0.40, AtaqueProyectiles: 0.75, DanoProyectiles: 0.80, DanoArmas: 0.900, DanoWrestling: 0.40, Escudo: 0.80, Vida: 8.5},
+	Pirata:     {Evasion: 1.25, AtaqueArmas: 0.90, AtaqueWrestling: 0.50, AtaqueProyectiles: 0.90, DanoProyectiles: 0.80, DanoArmas: 0.950, DanoWrestling: 0.40, Escudo: 0.60, Vida: 9.5},
+	Ladron:     {Evasion: 1.10, AtaqueArmas: 0.80, AtaqueWrestling: 0.80, AtaqueProyectiles: 0.85, DanoProyectiles: 0.85, DanoArmas: 0.750, DanoWrestling: 1.05, Escudo: 0.70, Vida: 10.0},
+	Clerigo:    {Evasion: 0.80, AtaqueArmas: 0.85, AtaqueWrestling: 0.40, AtaqueProyectiles: 0.70, DanoProyectiles: 0.70, DanoArmas: 0.800, DanoWrestling: 0.40, Escudo: 0.85, Vida: 8.5},
+	Bardo:      {Evasion: 1.075, AtaqueArmas: 0.70, AtaqueWrestling: 0.40, AtaqueProyectiles: 0.70, DanoProyectiles: 0.70, DanoArmas: 0.750, DanoWrestling: 0.40, Escudo: 0.80, Vida: 8.5},
+	Mago:       {Evasion: 0.40, AtaqueArmas: 0.50, AtaqueWrestling: 0.30, AtaqueProyectiles: 0.50, DanoProyectiles: 0.50, DanoArmas: 0.500, DanoWrestling: 0.40, Escudo: 0.60, Vida: 7.5},
+	Druida:     {Evasion: 0.75, AtaqueArmas: 0.65, AtaqueWrestling: 0.40, AtaqueProyectiles: 0.75, DanoProyectiles: 0.75, DanoArmas: 0.700, DanoWrestling: 0.40, Escudo: 0.75, Vida: 8.5},
+	Trabajador: {Evasion: 0.80, AtaqueArmas: 0.80, AtaqueWrestling: 0.50, AtaqueProyectiles: 0.70, DanoProyectiles: 0.70, DanoArmas: 0.800, DanoWrestling: 0.40, Escudo: 0.70, Vida: 9.5},
 }
 
 // Race is an Argentum character race.
@@ -108,8 +115,12 @@ var raceModifiers = map[Race]Attributes{
 type Skills struct {
 	Armas     int
 	Wrestling int
-	Tacticas  int
-	Defensa   int
+	// Proyectiles is the bow's own skill, separate from Armas the same way the
+	// source keeps them separate: PoderAtaqueProyectil reads this one, and a
+	// character good with a sword is not thereby good with an arrow.
+	Proyectiles int
+	Tacticas    int
+	Defensa     int
 	// Magia gates casting: PuedeLanzar in the source refuses a spell whose
 	// MinSkill exceeds it. It's a separate skill from Armas/Wrestling on
 	// purpose — a fighter build and a caster build cost different points in
@@ -165,7 +176,7 @@ func rolledAttributes(race Race) Attributes {
 // startingSkills gives everyone the maximum in every skill combat and casting
 // read. Argentum's own scale tops out at 100, and the 31/61/91 breakpoints in
 // poderAtaque assume a character can actually reach the top band.
-var startingSkills = Skills{Armas: 100, Wrestling: 100, Tacticas: 100, Defensa: 100, Magia: 100}
+var startingSkills = Skills{Armas: 100, Wrestling: 100, Proyectiles: 100, Tacticas: 100, Defensa: 100, Magia: 100}
 
 // statMaxMana is STAT_MAXMAN from Declares.bas — the source's hard ceiling on
 // mana, applied on every level-up. Nothing here reaches it (the richest build

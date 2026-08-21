@@ -17,9 +17,13 @@ type MsgType string
 
 const (
 	// Client -> server.
-	TypeJoin     MsgType = "join"
-	TypeMove     MsgType = "move"
-	TypeAttack   MsgType = "attack"
+	TypeJoin   MsgType = "join"
+	TypeMove   MsgType = "move"
+	TypeAttack MsgType = "attack"
+	// TypeShoot is the ranged half of TypeAttack. Separate because the two
+	// answer different questions: melee hits the tile you face and needs no
+	// target, an arrow crosses the screen and must name one.
+	TypeShoot    MsgType = "shoot"
 	TypeCast     MsgType = "cast"
 	TypeUse      MsgType = "use"
 	TypeHide     MsgType = "hide"
@@ -48,12 +52,15 @@ const (
 	TypeSpell     MsgType = "spell"
 	TypeUseResult MsgType = "useResult"
 	TypeSpeech    MsgType = "speech"
-	TypeOutcome   MsgType = "outcome"
-	TypeAccount   MsgType = "account"
-	TypeHello     MsgType = "hello"
-	TypeLobby     MsgType = "lobby"
-	TypePong      MsgType = "pong"
-	TypeError     MsgType = "error"
+	// TypeProjectile is an arrow or a thrown blade in flight, sent to everyone
+	// who can see it — not only to the two people it concerns.
+	TypeProjectile MsgType = "projectile"
+	TypeOutcome    MsgType = "outcome"
+	TypeAccount    MsgType = "account"
+	TypeHello      MsgType = "hello"
+	TypeLobby      MsgType = "lobby"
+	TypePong       MsgType = "pong"
+	TypeError      MsgType = "error"
 )
 
 // Heading is a facing direction on the tile grid. Classic Argentum Online only
@@ -317,6 +324,45 @@ type Loadout struct {
 // you, so a client cannot name someone across the map as its victim.
 type Attack struct{}
 
+// Shoot fires the equipped bow, or throws the equipped blade, at somebody.
+//
+// Unlike Attack this names a target, for the same reason Cast does: the shot
+// crosses the screen, so the tile in front of the shooter says nothing about
+// who it is aimed at. The server re-checks that there is a projectile weapon
+// equipped, that there is ammunition behind it, and that the target is close
+// enough to be seen — the same viewport bound every other reach in this
+// protocol is held to.
+type Shoot struct {
+	Target uint32 `json:"target"`
+}
+
+// Projectile is one arrow or thrown blade crossing the ground between two
+// tiles, for anybody whose viewport it passes through.
+//
+// It is its own message rather than a flag on CombatEvent because the two have
+// different audiences, which is the whole point: the damage is between the two
+// people involved, and the arrow is a thing anybody nearby can watch happen.
+// Seeing where a shot came from is how a ranged fight tells everyone else
+// there is a fight — the same logic as the magic words over a caster's head.
+//
+// Tiles rather than entity ids alone, because the shooter is not always in the
+// receiver's snapshot: the arrow has to be drawn along the ground it actually
+// crossed. The ids ride along so a client that does have both entities can
+// anchor the line to where it is drawing them right now, mid-step, instead of
+// to the tile they were standing on when the server resolved the shot.
+type Projectile struct {
+	FromID uint32 `json:"a"`
+	ToID   uint32 `json:"v"`
+	FromX  int    `json:"x"`
+	FromY  int    `json:"y"`
+	ToX    int    `json:"tx"`
+	ToY    int    `json:"ty"`
+	// ItemID is what is flying — the arrow, or the blade itself when it is a
+	// thrown weapon. The client already ships obj.dat, so only the number
+	// travels and it draws the real sprite.
+	ItemID int `json:"i"`
+}
+
 // Meditate toggles meditation on or off — F6 in the original, one key with no
 // payload either way. What it does is server state (Vitals.Meditating and
 // EntityState.Meditating carry that out on every snapshot); this message is
@@ -413,6 +459,15 @@ type CombatEvent struct {
 	// player, so the client can say "the zone is killing you" instead of
 	// naming an attacker that does not exist.
 	Zone bool `json:"zone,omitempty"`
+	// Ranged says an arrow or a thrown blade did this rather than a swing, so
+	// the console can word it as a shot. The arrow itself is a Projectile,
+	// which goes to a wider audience — see there.
+	Ranged bool `json:"rng,omitempty"`
+	// Failed is why the shot never happened: no bow, no arrows, out of range.
+	// Only ever sent to whoever tried, and only for ranged attacks — a melee
+	// swing at an empty tile is its own answer, while an archer whose quiver
+	// ran out is owed a sentence rather than a key that stopped working.
+	Failed string `json:"failed,omitempty"`
 }
 
 // Zone is the shrinking circle of safe ground.
@@ -638,6 +693,22 @@ type UseResult struct {
 	// Died is the Poción Negra joke item: a coin-flip's worth of "why would
 	// anyone drink this" that classic AO players did anyway.
 	Died bool `json:"died,omitempty"`
+
+	// Aim is the answer to using an equipped projectile weapon: it is not
+	// consumed and it is not equipped, it asks the player who to shoot at.
+	//
+	// This is WriteWorkRequestTarget(Proyectiles) in the source, and using the
+	// bow really is how Argentum arms a shot — UsarInvItem's otWeapon branch
+	// checks Proyectil and answers with it, which is why the crosshair belongs
+	// to the inventory gesture and not to the attack key.
+	Aim bool `json:"aim,omitempty"`
+
+	// Opened and Dropped are a chest: it is not consumed and it is not
+	// equipped, it turns into gear on the floor. Dropped says how many pieces,
+	// because some of them land outside the viewport and the player would
+	// otherwise only ever see the ones at their feet.
+	Opened  bool `json:"opened,omitempty"`
+	Dropped int  `json:"dropped,omitempty"`
 
 	Failed string `json:"failed,omitempty"`
 }

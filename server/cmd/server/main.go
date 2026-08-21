@@ -51,6 +51,7 @@ func main() {
 		seed       = flag.Int64("seed", 1, "generated arena seed; only used with -map-file=\"\"")
 		debug      = flag.Bool("debug", false, "enable debug logging")
 		webDir     = flag.String("web-dir", "", "directory holding the exported web client; empty disables it")
+		musicDir   = flag.String("music-dir", "music", "directorio con lobby.mp3 y match.mp3, que el cliente baja a pedido; vacío deja el juego sin música")
 		mapFile    = flag.String("map-file", defaultMapFile, "converted Argentum map to play on; -map-file=\"\" plays the generated demo arena instead")
 		itemsFile  = flag.String("items-file", defaultItemsFile, "converted obj.dat; -items-file=\"\" leaves every weapon and armour unknown")
 		spellsFile = flag.String("spells-file", defaultSpellsFile, "converted Hechizos.dat; -spells-file=\"\" leaves nothing castable")
@@ -63,6 +64,7 @@ func main() {
 		restart    = flag.Int("match-restart", 20, "seconds between a match being decided and the next one starting; 0 leaves the finished match standing")
 		lobbyMin   = flag.Int("lobby-min", 1, "cuantos en la cola hacen falta para empezar una partida; 1, el default, arranca apenas entra alguien, que es como se comportaba el servidor antes de que existiera el lobby")
 		lobbyWait  = flag.Int("lobby-wait", 0, "segundos de cuenta regresiva una vez que la cola llego al minimo; 0 arranca en el acto")
+		deathExit  = flag.Int("death-exit", 5, "segundos que un eliminado se queda de fantasma antes de volver al campamento; 0 lo deja en el mapa hasta que termine la partida")
 	)
 	flag.Parse()
 
@@ -128,6 +130,7 @@ func main() {
 	}
 	w.SetMatchRestart(*restart)
 	w.SetLobby(*lobbyMin, *lobbyWait)
+	w.SetDeathExit(*deathExit)
 
 	// Accounts are opt-in. Without the flag this is the server it always was:
 	// you are whatever name you typed, and nothing outlives the process. With
@@ -196,6 +199,7 @@ func main() {
 		Handler:   w.HandleConn,
 		Logger:    log,
 		StaticDir: *webDir,
+		MusicDir:  *musicDir,
 		Health:    func() string { return status },
 	}
 	if err := srv.ListenAndServe(ctx); err != nil {

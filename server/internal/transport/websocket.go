@@ -53,6 +53,14 @@ type WSServer struct {
 	// browser client needs no configuration: its own origin is the server.
 	StaticDir string
 
+	// MusicDir, when set, serves the game's music at /music/. It is deliberately
+	// separate from StaticDir: the music is the one asset that must NOT be
+	// inside the exported client, because the pack is downloaded in full before
+	// anybody sees a tile and two tracks are 4,8 MB against a 37 MB client.
+	// Served from here they are fetched only by a player who wants music, once,
+	// and cached by the browser afterwards. See the client's audio.gd.
+	MusicDir string
+
 	// Health, when set, supplies the body of /healthz. A bare "ok" answers
 	// "the process is up", which is the one question that never distinguished
 	// a real server from one running on an empty generated arena with no items
@@ -78,6 +86,15 @@ func (s *WSServer) ListenAndServe(ctx context.Context) error {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(body))
 	})
+
+	if s.MusicDir != "" {
+		// Its own prefix rather than a subdirectory of the web client, so it
+		// works exactly the same on a server that serves no client at all —
+		// which is every local run, where the native client asks the same URL.
+		mux.Handle("/music/", http.StripPrefix("/music/",
+			http.FileServer(http.Dir(s.MusicDir))))
+		s.Logger.Info("sirviendo música", "dir", s.MusicDir)
+	}
 
 	if s.StaticDir != "" {
 		// Windows registry entries routinely override the built-in MIME table

@@ -7,8 +7,8 @@
 | **Estado** | Prototipo jugable con el loop del género cerrado de punta a punta: mundo, combate, objetos, **zona que se achica** y **partida que termina y se reinicia sola**. |
 | **Arquitectura** | Servidor autoritativo headless en Go + cliente Godot 4 que solo renderiza. |
 | **Licencia** | AGPL-3.0 (los assets de Argentum los liberó Pablo Márquez bajo AGPL). |
-| **Tamaño** | ~12.500 líneas de Go, ~5.800 de GDScript. |
-| **Tests** | 175 tests, todos verdes (`go test ./...`). |
+| **Tamaño** | ~18.000 líneas de Go, ~6.900 de GDScript. |
+| **Tests** | 215 tests, todos verdes (`go test ./...`). |
 | **Carga medida** | 101 jugadores **contra Fly**: 76 ms de punta a punta, 20 Hz clavados, cero descartes. En local, 28% de un core y 31 MB. |
 | **Deploy** | Docker + Fly.io, región `gru`. La misma imagen sirve el cliente web. |
 
@@ -36,7 +36,16 @@
    convierte el sigilo en una decisión.
 7. **La partida termina.** Último en pie gana; cada eliminado ve su puesto, sus
    bajas y cuánto sobrevivió; y la siguiente arranca sola sobre el mismo mundo
-   sin que nadie se reconecte. El puesto se fija al morir, no al final.
+   sin que nadie se reconecte. El puesto se fija al morir, no al final. Y morir
+   te devuelve al campamento: la muerte descalifica, no te deja mirando tu
+   propio cadáver.
+8. **Se pelea de lejos.** Arcos, flechas que se gastan y cuchillas arrojadizas,
+   con las columnas de proyectiles de `Balance.dat` — que son las que hacen del
+   Cazador un arquero y no un guerrero con un palo. La flecha la ve pasar
+   cualquiera que la tenga en pantalla, no solo los dos que se pelean.
+9. **El juego suena**, con los WAV del original y el que cada hechizo trae en
+   `Hechizos.dat`. La música se sirve aparte del cliente web, así que sumar
+   sonido costó 0,3 MB de descarga y no 227.
 
 ## Las cuatro decisiones que definieron el proyecto
 
@@ -69,10 +78,12 @@ Hecho.
 que además reemplaza a `-respawn` como comodidad de testeo, así que el default
 de respawn volvió a 0 — la regla del género.
 
-Lo que abre, y que es la próxima decisión de diseño: **hoy el muerto se queda
-de fantasma en el mapa**. La intención es que la muerte descalifique y te saque
-al lobby, con modo espectador opcional siguiendo al que te mató. El lobby es
-5.1 y el espectador no está en el roadmap todavía.
+1.4. **Salir al campamento al morir.** Hecho. El eliminado se queda de fantasma
+unos segundos —la tarjeta recién apareció y el que lo mató está al lado— y
+después vuelve al lobby con su carrera al día. Lo que dejó tirado se queda en el
+mapa, y cuando la partida se define le llega la misma tarjeta con el ganador
+escrito, ya desde el campamento. Falta el modo espectador siguiendo al que te
+mató, que no está en el roadmap todavía.
 
 ### 2. Sacar los cuellos de botella medidos
 
@@ -105,8 +116,12 @@ RESUMEN-FUNCIONAL §10 y §11.
 
 4.1. **Mapas de Tiled.** El exportador ya manda nuestros mundos con las cinco
 capas acordadas; falta el importador para cuando vuelvan con detalle. *(mediano)*
-4.2. **Sonido.** El original trae 223 WAV y 72 MP3 que ya tenemos y no usamos. El
-juego es mudo. *(mediano)*
+4.2. **Sonido.** Hecho. Golpes, escudos, muertes, pociones, pasos y el WAV que
+cada hechizo trae en `Hechizos.dat`, con los números del original. La decisión
+que lo define es de tamaño: el audio de Argentum pesa 227 MB contra los 37 del
+cliente web entero, así que se convierten **22 archivos** (0,3 MB dentro del
+juego) y la música —dos pistas, 4,8 MB— **no entra al paquete**: la sirve el
+servidor por HTTP y la baja el que la quiere. F2 y F3 los apagan.
 4.3. **NPCs.** `NPCs.dat` está entero y sin tocar; no existe una línea de código
 de NPC en el servidor. Es un sistema nuevo, no un port. *(grande)*
 
@@ -134,8 +149,13 @@ llegada, no por nada parecido a nivel o región.
 
 ### 6. Contenido y balance de battle royale
 
-6.1. **Combate a distancia**: arcos y flechas. Los datos están en `obj.dat`.
-*(mediano)*
+6.1. **Combate a distancia.** Hecho. El arco se equipa y después se **usa** —la
+misma U o el mismo doble clic que una poción, que es el gesto del original— y
+eso pone la mira; el clic elige a quién. La flecha se gasta, se equipa como el arma (el
+`MunicionEqpSlot` del original), suma su propia tirada al daño, y la ve pasar
+todo el que la tenga en pantalla. Con las columnas de proyectiles de
+`Balance.dat` el Cazador es por fin un arquero. Las cuchillas arrojadizas salen
+de la misma rama y gastan el arma en vez de una flecha.
 6.2. **Revisar la densidad de loot con gente real.** Está en 1.494 piezas de
 equipo y 2.976 pilas de pociones por mundo; se ajustó a ojo, no jugando. *(chico)*
 6.3. **Decidir qué hacer con hambre y sed.** Son estado real del servidor, el HUD

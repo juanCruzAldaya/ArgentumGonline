@@ -46,6 +46,12 @@ type Player struct {
 	joinedAt uint64
 	diedAt   uint64
 
+	// exitAt is the tick an eliminated player is taken out of the world and
+	// put back in the lobby, or 0 for never — which is what a ghost with no
+	// seat to return to gets, and what -death-exit 0 gives everybody. See
+	// deathexit.go.
+	exitAt uint64
+
 	// respawnAt is the tick a dead player comes back on, or 0 for never —
 	// which is the default, since elimination is the genre's rule. Only a
 	// server started with -respawn sets it. See respawn.go.

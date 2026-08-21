@@ -26,6 +26,11 @@ COPY build/web /web
 # absolute on purpose: the binary's relative defaults assume it runs from
 # server/, and here it runs from /.
 COPY server/maps /maps
+# Las dos pistas de música. Van en la imagen y NO adentro del cliente web: el
+# .pck se baja entero antes de que nadie vea un tile, y 4,8 MB de música ahí
+# serían 4,8 MB para todo el que entre, escuche o no. Servidas por HTTP las
+# baja el que las quiere, una vez, y el navegador se las queda.
+COPY server/music /music
 EXPOSE 8080
 # -accounts points at the mounted volume, so a deploy does not take everybody's
 # account with it: the rootfs is replaced on every one of them.
@@ -51,6 +56,7 @@ ENTRYPOINT ["/server", \
     "-map-file", "/maps/map1.json", \
     "-items-file", "/maps/items.json", \
     "-spells-file", "/maps/spells.json", \
+    "-music-dir", "/music", \
     "-accounts", "/data/cuentas.log", \
     "-lobby-min", "2", \
     "-lobby-wait", "20"]

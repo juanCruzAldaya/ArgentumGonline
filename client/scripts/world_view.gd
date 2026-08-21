@@ -101,6 +101,23 @@ var _camera := Vector2.ZERO
 ## projectile — see play_spell_fx.
 var _active_fx: Array = []
 
+## Los proyectiles en vuelo. Una flecha vive lo que tarda en cruzar y se va;
+## nada del servidor la sigue, porque el tiro ya se resolvió cuando el mensaje
+## salió — esto es la película de algo que ya pasó, igual que el FX de un
+## hechizo.
+var _shots: Array = []
+## Tiles por segundo de una flecha. Rápida a propósito: tiene que leerse como
+## "salió de allá" y no como un objeto flotando por la pantalla. A esta
+## velocidad cruzar la pantalla entera son unos 0,5 s.
+const PROJECTILE_TILES_PER_SECOND := 16.0
+## Piso de duración, para que un tiro a un tile de distancia se vea igual.
+const PROJECTILE_MIN_SECONDS := 0.08
+## El arte de la flecha ya apunta a algún lado: en el atlas (grh 752) la punta
+## está arriba a la derecha y las plumas abajo a la izquierda, o sea -45°. Para
+## que mire a donde va hay que rotarla desde ahí y no desde el eje X — rotar
+## desde 0 la dejaría cruzada respecto de su propio vuelo.
+const PROJECTILE_ART_ANGLE := -PI / 4.0
+
 ## Argentum tile layers, loaded from the map the server named in its welcome.
 ## Layer 1 covers every tile so it is dense; the rest are sparse index -> grh.
 var _has_map := false
@@ -442,9 +459,14 @@ func set_ground(items: Array) -> void:
 ## already ships the same spells.json the server converted its table from, so
 ## SpellEvent naming the spell is enough.
 func play_spell_fx(target_id: int, spell_id: int) -> void:
+	var spell := _data.spell(spell_id)
+	# El sonido antes que el dibujo y fuera de los cortes de abajo: hay hechizos
+	# sin FX —Hechizos.dat les pone FXgrh 0— y ninguno sin WAV, así que salir
+	# temprano por el gráfico dejaría mudo justo al que solo se oye.
+	GameAudio.play_spell(spell)
+
 	if not _sprites.is_loaded():
 		return
-	var spell := _data.spell(spell_id)
 	var fx_id := int(spell.get("fx", 0))
 	if fx_id <= 0:
 		return
@@ -463,6 +485,70 @@ func play_spell_fx(target_id: int, spell_id: int) -> void:
 		"start": _world_time,
 		"until": _world_time + duration,
 	})
+
+
+## play_projectile pone una flecha en el aire.
+##
+## Sale de donde el servidor dijo y llega a donde el servidor dijo, pero si las
+## dos entidades están en pantalla se ancla a donde el cliente las está
+## dibujando *ahora*: el tiro se resolvió sobre tiles enteros y acá la gente se
+## dibuja a mitad de paso, así que usar el tile crudo haría que la flecha
+## saliera de un costado del que tiró.
+func play_projectile(shot: Dictionary) -> void:
+	if not _sprites.is_loaded():
+		return
+	var item := _data.item(int(shot.get("i", 0)))
+	var grh := int(item.get("grh", 0))
+	if grh == 0:
+		return
+
+	var from := _shot_point(
+		int(shot.get("a", 0)), Vector2(float(shot.get("x", 0)), float(shot.get("y", 0)))
+	)
+	var to := _shot_point(
+		int(shot.get("v", 0)), Vector2(float(shot.get("tx", 0)), float(shot.get("ty", 0)))
+	)
+	var seconds := maxf(from.distance_to(to) / PROJECTILE_TILES_PER_SECOND, PROJECTILE_MIN_SECONDS)
+	_shots.append(
+		{
+			"from": from,
+			"to": to,
+			"grh": grh,
+			"start": _world_time,
+			"seconds": seconds,
+			"until": _world_time + seconds,
+		}
+	)
+
+
+## Dónde está una punta del tiro: la posición dibujada de esa entidad si la
+## tenemos a la vista, y si no el tile que mandó el servidor. Lo segundo es el
+## caso interesante — una flecha que entra a la pantalla desde afuera es
+## exactamente cómo uno se entera de que hay alguien con un arco allá.
+func _shot_point(id: int, tile: Vector2) -> Vector2:
+	var entity: Variant = _entities.get(id)
+	return tile if entity == null else entity["render"]
+
+
+func _draw_projectiles(origin: Vector2) -> void:
+	for shot: Dictionary in _shots:
+		var grh := int(shot["grh"])
+		var rect: Rect2 = _sprites.grh_rect(grh, _world_time)
+		if rect.size.x <= 0.0:
+			continue
+
+		var progress: float = clampf((_world_time - float(shot["start"])) / float(shot["seconds"]), 0.0, 1.0)
+		var tile: Vector2 = (shot["from"] as Vector2).lerp(shot["to"], progress)
+		# Centrada en el tile y no apoyada en él como el loot del piso: esto
+		# está en el aire.
+		var at := (tile - origin) * TILE_SIZE + Vector2(TILE_SIZE * 0.5, TILE_SIZE * 0.5)
+		var flight: Vector2 = (shot["to"] as Vector2) - (shot["from"] as Vector2)
+
+		draw_set_transform(at, flight.angle() - PROJECTILE_ART_ANGLE, Vector2.ONE)
+		draw_texture_rect_region(
+			_sprites.texture_for(grh), Rect2(-rect.size * 0.5, rect.size), rect
+		)
+		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
 
 ## Moves render one frame's worth toward target, along ONE axis at a time.
@@ -500,6 +586,8 @@ func _process(delta: float) -> void:
 
 	if not _active_fx.is_empty():
 		_active_fx = _active_fx.filter(func(fx): return float(fx["until"]) > _world_time)
+	if not _shots.is_empty():
+		_shots = _shots.filter(func(shot): return float(shot["until"]) > _world_time)
 
 	if _entities.is_empty():
 		return
@@ -645,6 +733,10 @@ func _draw() -> void:
 	var font := ThemeDB.fallback_font
 	for id: int in ids:
 		_draw_entity(id, _entities[id], origin, font)
+
+	# Las flechas van sobre la gente: pasan por el aire, no por el piso.
+	if not _shots.is_empty():
+		_draw_projectiles(origin)
 
 	# Words from somebody the snapshot does not carry: an invisible caster.
 	_draw_orphan_speech(origin, font)
@@ -801,6 +893,16 @@ func try_step(dir: int) -> int:
 	var result := _resolve_move(me["tile"], dir)
 	if result["stepped"]:
 		me["tile"] = result["tile"]
+		# El paso suena acá y en ningún otro lado: este es el único punto donde
+		# el personaje cambia de tile de verdad.
+		#
+		# Estaba en main.gd, al lado del envío del mensaje, y sonaba contra una
+		# pared sin parar: el input bloqueado igual manda un mensaje —para que
+		# el servidor te gire hacia donde estás empujando— y lo reintenta cada
+		# 50 ms, así que "se mandó un movimiento" pasaba veinte veces por
+		# segundo mientras el personaje no se movía ni un tile. Un giro en el
+		# lugar tampoco es un paso, y por la misma razón tampoco suena.
+		GameAudio.play_step()
 		# Advances from the ready mark, not from now, so the leftover fraction
 		# of a cooldown survives from one step to the next — mirrors the
 		# server's moveReadyAt += exactly. Advancing from now instead drops

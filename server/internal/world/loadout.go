@@ -44,7 +44,11 @@ type startingKit struct {
 const (
 	potionStack     = 3000
 	consumableStack = 10
-	arrowStack      = 500
+	// A hundred arrows, not the five hundred this was while nothing fired
+	// them. Five hundred is more shots than a whole match has room for, which
+	// makes the quiver a number instead of a decision; a hundred is several
+	// fights, and then you are looking for more. See groundArrowStack.
+	arrowStack = 100
 )
 
 // Consumables are the deliberate exception to "basic gear", and they are not
@@ -206,15 +210,18 @@ func computeStartingKit(items map[int]Item, class Class, race Race) startingKit 
 	// Proyectil — is what says so: Cuchillas are thrown and gone, while a bow
 	// declares both and is a stick without a quiver behind it.
 	if weapon.NeedsAmmo {
+		// Equipped, not merely carried: the bow fires whatever quiver is worn
+		// (see equippedAmmo), and a Cazador spawning with a bow in one hand and
+		// arrows they have to remember to put on would just be a Cazador who
+		// cannot shoot for the first ten seconds of every match.
 		if arrows, ok := pickGear(items, ItemArrow, class, race, weaponStat, nil); ok {
-			add(arrows, arrowStack, false)
+			add(arrows, arrowStack, true)
 		}
-		// And a sidearm, carried rather than worn. Ranged combat is not
-		// implemented yet, so a bow currently swings like a club for its own
-		// 6-11 — handing a Cazador only that would make the one class whose kit
-		// *is* its identity the one class that cannot fight. The sidearm comes
-		// out of the same rule with projectiles excluded, so it is still that
-		// class's own weapon and not a generic fallback.
+		// And a sidearm, carried rather than worn. A quiver runs out, and the
+		// archer who spent it should have something to do about the person
+		// walking towards them — the bow itself swings for its own 1-4. The
+		// sidearm comes out of the same rule with projectiles excluded, so it
+		// is still that class's own weapon and not a generic fallback.
 		if melee, ok := pickGear(items, ItemWeapon, class, race, weaponStat,
 			func(i Item) bool { return !i.Projectile }); ok {
 			add(melee, 1, false)

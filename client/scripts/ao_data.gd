@@ -18,6 +18,10 @@ const TYPE_DRINK := 13
 const TYPE_SHIELD := 16
 const TYPE_HELMET := 17
 const TYPE_RING := 18
+## otFlechas: lo que dispara un arco. Se equipa como el arma y el escudo —el
+## MunicionEqpSlot del original— así que el bolso lo manda con "e" como
+## cualquier otra cosa puesta. Ver ranged.go en el servidor.
+const TYPE_ARROW := 32
 
 ## obj.dat's ePocionType, in the server's own order (see items.go). The HUD
 ## reads these to count red/blue potions for the two quick-slot boxes the

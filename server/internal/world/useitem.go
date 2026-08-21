@@ -32,6 +32,23 @@ func (w *World) useItem(p *Player, slotIndex int, action protocol.UseAction) {
 		return
 	}
 
+	// Un arma de proyectiles no se usa como se usa una poción: **usarla es
+	// apuntar**. Es literal del original — UsarInvItem, rama otWeapon:
+	//
+	//	If ObjData(ObjIndex).proyectil = 1 Then
+	//	    If .Invent.Object(Slot).Equipped = 0 Then
+	//	        "Antes de usar el arco deberias equipartelo."
+	//	    Call WriteWorkRequestTarget(UserIndex, Proyectiles)
+	//
+	// Va antes del switch de abajo justamente porque ese switch contestaría
+	// "eso no se consume, se equipa", que para un arco es la respuesta a otra
+	// pregunta. Equipar sigue siendo E, y sigue siendo lo primero que hay que
+	// hacer: acá se pide puntería, no el arma.
+	if item.Type == ItemWeapon && item.Projectile && action != protocol.UseEquip {
+		w.aimProjectile(p, idx, item)
+		return
+	}
+
 	// An explicit action that does not match the slot is refused and said out
 	// loud. The whole point of separating E from U is that neither one ever
 	// quietly does the other's job — a mistyped equip must not drink anything.
@@ -150,7 +167,12 @@ func (w *World) equip(p *Player, idx int, item Item) {
 // ePocionType. Every arm ends by removing one unit of the potion, which
 // consumeStack does for whichever arm ran.
 func (w *World) drinkPotion(p *Player, idx int, item Item) {
-	result := protocol.UseResult{ItemName: item.Name}
+	// Consumed va desde el vamos y no al final: es lo que hace que el trago se
+	// oiga (el SND_BEBER del original, ver el audio.gd del cliente), y sin él
+	// la poción se tomaba en silencio. El campo estaba en el protocolo desde
+	// que existe UseResult y nadie lo había llenado nunca — el cliente no tenía
+	// para qué mirarlo hasta que hubo sonido.
+	result := protocol.UseResult{ItemName: item.Name, Consumed: true}
 
 	switch item.PotionType {
 	case PotionHealth: // Roja: instant, no duration
@@ -173,11 +195,13 @@ func (w *World) drinkPotion(p *Player, idx int, item Item) {
 		p.Vitals.Mana += restored
 		result.RestoredMana = restored
 
+	// Potions accumulate towards double the base attribute; spells overwrite.
+	// See drinkAgility for why these no longer borrow the spell path.
 	case PotionAgility:
-		result.AgilityDelta = w.applyAgility(p, Spell{MinAgility: item.MinModificador, MaxAgility: item.MaxModificador}, attributeBuff)
+		result.AgilityDelta = w.drinkAgility(p, item.MinModificador, item.MaxModificador)
 
 	case PotionStrength:
-		result.StrengthDelta = w.applyStrength(p, Spell{MinStrength: item.MinModificador, MaxStrength: item.MaxModificador}, attributeBuff)
+		result.StrengthDelta = w.drinkStrength(p, item.MinModificador, item.MaxModificador)
 
 	case PotionCurePoison:
 		// Poison is not modelled yet (see README) — nothing currently
@@ -213,7 +237,7 @@ func (w *World) consumeFlat(p *Player, idx int, item Item, vital *int, max int, 
 	}
 	*vital += restored
 
-	result := protocol.UseResult{ItemName: item.Name}
+	result := protocol.UseResult{ItemName: item.Name, Consumed: true}
 	if label == "hambre" {
 		result.RestoredHunger = restored
 	} else {

@@ -104,6 +104,23 @@ func (w *World) decidable() bool {
 func (w *World) matchTick() {
 	switch w.match.phase {
 	case matchRunning:
+		// A match with nobody in it ends, decidable or not.
+		//
+		// decidable() answers "can this match have a last player standing?",
+		// and for a match that never held two people the answer is no — but it
+		// does not follow that the match should keep running, empty, forever.
+		// That is what it did: one person entering alone, playing, and closing
+		// their client left the server saying "partida en curso, 0 jugando"
+		// and refusing everybody who came afterwards, with no way out short of
+		// a restart. There is no winner to announce and nobody to send a card
+		// to, so this goes straight back to the lobby instead of through
+		// endMatch.
+		if len(w.players) == 0 {
+			w.log.Info("partida vacía, vuelve el lobby", "tick", w.tick)
+			w.match.phase = matchLobby
+			w.lobbyCheck()
+			return
+		}
 		if !w.decidable() || w.aliveCount() > 1 {
 			return
 		}
@@ -173,6 +190,21 @@ func (w *World) endMatch(winner *Player) {
 		}
 	}
 
+	// And everybody who was eliminated and has already gone back to the camp,
+	// which since deathexit.go is most of the field. They got the card with
+	// their placement on it when they died; this is the same card with the
+	// winner filled in, which is the half they could not have known then.
+	for _, s := range w.seatsInOrder() {
+		if !s.carded || s.playing != 0 {
+			continue
+		}
+		card := s.card
+		card.Winner = name
+		if frame, err := w.codec.Encode(protocol.TypeOutcome, card); err == nil {
+			_ = s.conn.Send(frame)
+		}
+	}
+
 	w.log.Info("partida terminada",
 		"ganador", name, "jugadores", w.match.peak,
 		"duracion_s", (w.tick-w.match.startedAt)/uint64(w.tickRate))
@@ -198,6 +230,12 @@ func (w *World) eliminate(p *Player) {
 	}
 	out := w.outcomeFor(p)
 	w.sendTo(p, protocol.TypeOutcome, out)
+	// Kept on the seat as well, so the half of the card that only exists once
+	// the match is decided can still reach somebody who has since walked back
+	// to the camp. See endMatch.
+	if s := w.seatOf(p.ID); s != nil {
+		s.card, s.carded = out, true
+	}
 	// Filed here rather than at the end of the match: the placement is already
 	// final, and a player who closes the client on their own corpse still
 	// played the match.

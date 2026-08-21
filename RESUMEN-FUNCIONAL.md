@@ -63,7 +63,9 @@ al crear la partida — ver §10. Están armados con pedazos de 135 mapas reales
 Argentum, así que el terreno, los edificios y los caminos son los del juego
 original aunque la geografía sea nueva.
 
-## 4. Combate cuerpo a cuerpo
+## 4. Combate
+
+### Cuerpo a cuerpo
 
 **Ctrl** golpea. Sin campo de objetivo en el protocolo: el melee de Argentum
 pega en el casillero al que estás mirando, así que un cliente no puede nombrar
@@ -82,10 +84,83 @@ Fórmulas portadas de `SistemaCombate.bas`:
 
 Cooldown de ataque: 24 ticks = 1.2 s, el intervalo de melee clásico.
 
+### A distancia: arcos, flechas y cuchillas
+
+El arco se equipa como cualquier arma y después **se usa** —U, o doble clic en
+el ítem— y eso es lo que pone la mira; el clic siguiente elige a quién. El gesto
+no se eligió: es el del original, donde `UsarInvItem` sobre un arma con
+`Proyectil = 1` contesta `WriteWorkRequestTarget(Proyectiles)`, exactamente como
+un hechizo pide su objetivo. Ctrl nunca apunta: con el arco en la mano sigue
+siendo un golpe, porque el arco también es un palo. Si el arco está en la
+mochila sin equipar, usarlo contesta la frase del original —"Antes de usar el
+arco deberías equipártelo"— y no arma nada.
+
+Escape o clic derecho cancelan; errar el clic cuesta el intento y hay que volver
+a usarlo. Lo que **no** se chequea al armar la mira son las flechas: el original
+deja armar y que sea el tiro el que diga "no tenés municiones", y acá igual —
+negarse antes contestaría una pregunta que el jugador todavía no hizo, y podría
+estar yendo a juntar flechas.
+
+Dos armas toman este camino y no son lo mismo, y `obj.dat` lo dice con dos
+campos distintos:
+
+| | Proyectil | Municiones | Qué gasta el tiro |
+|---|---|---|---|
+| **Arco** | sí | sí | una flecha del carcaj equipado |
+| **Cuchillas** | sí | no | la cuchilla misma |
+
+**Las flechas se equipan**, no se usan a mano: es el `MunicionEqpSlot` del
+original, así que ponerse una flecha mejor saca la anterior igual que una espada
+mejor saca la vieja. El Cazador y los demás arqueros ya nacen con el carcaj
+puesto, y el panel de abajo muestra cuántas quedan al lado del daño del arma.
+
+Las fórmulas son las de la rama de proyectiles de `SistemaCombate.bas`:
+
+| Concepto | Cómo se calcula |
+|---|---|
+| Poder de ataque | Skill de **Proyectiles** (no la de armas) con los mismos escalones de agilidad, por `MODATAQUEPROYECTILES` |
+| Daño | Tirada del arco **más la de la flecha**, por `MODDANOPROYECTILES` |
+| Alcance | El viewport: se le puede tirar a quien se ve, y a nadie más |
+| Cadencia | El mismo cooldown que el golpe, así que alternar arco y espada no ataca al doble |
+
+Con esas dos columnas el Cazador es, por fin, un arquero: es la única clase que
+apunta a 1,0 y pega a 1,1, y la única cuyos números con arco superan a los
+suyos con arma blanca.
+
+**La flecha la ve pasar todo el que la ve.** El daño es cosa de los dos que se
+están peleando, pero el proyectil viaja como mensaje propio a cualquiera que lo
+tenga en pantalla — incluso si el que tiró está fuera de la suya, que es
+justamente cómo uno se entera de que hay alguien con un arco allá. Es el mismo
+razonamiento que las palabras mágicas sobre la cabeza del que lanza.
+
+Y **disparar delata**: el que estaba oculto deja de estarlo, igual que al pegar
+y al lanzar.
+
 **Muerte.** A cero de vida no hay revivir: eliminación de la partida. El cuerpo
 queda dibujado en el piso y **el inventario se desparrama en los tiles libres
 alrededor**. Ese drop al morir del AO hardcore ya *era* mecánica de battle
 royale, así que se dejó tal cual.
+
+**Y morir te saca al campamento.** El cuerpo se queda unos segundos —cinco, con
+`-death-exit`— y después el jugador sale del mundo y vuelve al lobby, con la
+tarjeta del resultado encima y su carrera ya actualizada. Antes se quedaba de
+fantasma hasta que la partida terminara: podía caminar y mirar, pero no jugar,
+y no tenía a dónde ir. El lobby es a dónde.
+
+La espera no es decoración. Es el momento en que la tarjeta aparece y el que te
+mató está parado al lado; sacarte en el mismo cuadro se leería como una
+desconexión y no como una eliminación. Y del lado del servidor tiene otra razón:
+la partida se decide contando quién queda vivo, así que la última muerte tiene
+que poder terminar la partida con su víctima todavía adentro.
+
+Lo que dejaste tirado se queda: el inventario se desparrama antes de que te
+vayas, así que salir no es llevarte el botín. Y quién ganó igual te llega —la
+tarjeta que recibiste al morir tenía tu puesto, y cuando la partida se define te
+llega la misma tarjeta con el ganador escrito, ya desde el campamento.
+
+Un `Join` directo —el bot de carga, y todos los tests— no tiene campamento al
+que volver, así que para ellos morir sigue siendo lo que era: un fantasma en el
+mapa. `-death-exit 0` hace lo mismo para todos.
 
 **Respawn, para testear.** Hoy el servidor arranca con `-respawn 5`: el muerto
 queda de fantasma 5 segundos y vuelve a entrar **en el medio del mapa**, con
@@ -307,14 +382,32 @@ tienda, no es newbie) y se eligen una por `ePocionType`, no "la primera que
 aparezca": Go randomiza el orden de iteración de mapas, así que una elección
 que se apoyara en eso cambiaba la mochila entre arranques del servidor.
 
-**Loot en el piso.** Dos pasadas distintas sobre un mismo pool de tiles libres
+**Loot en el piso.** Tres pasadas distintas sobre un mismo pool de tiles libres
 barajado, así nunca se pisan (Argentum permite un objeto por tile y esa regla
 se respeta):
 
 | Pasada | Densidad | En Ullathorpe | Peso |
 |---|---|---|---|
 | Equipo | 1 cada 30 tiles caminables | 165 objetos | `1/(1+poder)` — una espada común (MaxHit 8) y un martillo de guerra (MaxHit 40) quedan ~5× separados |
+| Cofres | 1 cada 2600 tiles caminables | 117 en un mundo compuesto | — |
 | Pociones | 1 stack de 25 cada 4 tiles caminables | ~1200 stacks, ~30.000 pociones | plano entre todos los tipos |
+
+**Los cofres son la diferencia entre lo que hay y lo que te sirve.** El loot
+suelto es lo que el mapa tenga; un cofre larga **tres piezas que tu clase puede
+usar**, filtradas con la misma lista `CP` de obj.dat que decide si podés
+equipar algo, más la forma de tu raza para las armaduras. Un mago que cruza
+medio mapa hasta un cofre sabe que no le va a tocar una espada que no puede
+levantar.
+
+Se abre con la misma tecla que agarrar, parado encima, y lo que sale **cae al
+piso, no a la mochila**: son varios segundos agachado juntando tres piezas, a
+la vista de cualquiera que venga llegando. Eso es lo que hace que un cofre sea
+un lugar y no un botón. El primero que llega se lo lleva, como todo lo demás
+del piso.
+
+Por dentro no es nada nuevo: es un objeto más del piso, con el tipo que
+Argentum le da a los contenedores (`ObjType 7`) y el `grh 503` de su propio
+"Cofre Cerrado", que ya estaba en el atlas.
 
 Las dos pasadas excluyen el tier newbie, que no existe en este juego, y la
 poción negra.
@@ -325,7 +418,12 @@ la mitad de la densidad que declaraba. La cantidad de equipo en el mapa no
 cambió (165 contra 166); lo que cambió es que ahora el número significa algo en
 un mapa que no sea medio campo abierto.
 
-**Acciones, todas con las teclas de AO:**
+**Acciones, todas con las teclas de AO — y todas configurables.** `F1` abre el
+panel de teclas, que es el `frmCustomKeys` del original: dos columnas, una
+tecla por acción, sin combos. Fuera del browser también responde al `Ctrl+0`
+del original; adentro no, porque ese es el zoom de la página y Chrome no lo
+suelta. Lo que se elige se guarda en `user://teclas.cfg` y sobrevive a cerrar
+el juego. Las teclas de abajo son los defaults.
 
 | Tecla | Acción | Detalle |
 |---|---|---|
@@ -586,7 +684,40 @@ encima. En una partida de minutos, la pregunta cada vez que levantás algo del
 piso es si le gana a lo que tenés puesto, así que el número vive a la vista.
 La barra se lleva media fila de tiles del viewport.
 
-## 14. Operación
+## 14. Sonido
+
+Los efectos son los de Argentum, con los números que usa el original: el
+**2** para el golpe que no entra, el **10** para el que sí, el **37** cuando un
+escudo lo rechaza, el **11** cuando alguien muere, el **46** para tomar algo,
+el **23** y el **24** para los dos pasos que se alternan al caminar, y el WAV
+que **cada hechizo trae en `Hechizos.dat`** — catorce sonidos distintos para
+cincuenta hechizos, que es el reparto que hizo el original.
+
+**Ningún sonido viaja por la red.** El original manda un paquete `PlayWave`
+porque allá el servidor es el que decide que algo sonó; acá el cliente ya
+recibe el evento de combate, el del hechizo y el resultado de usar un objeto,
+así que sabe lo que pasó y sabe qué sonar. Un mensaje nuevo habría sido una
+segunda forma de contar lo mismo.
+
+**La música se baja aparte, y esa es la decisión que importa.** El original
+trae 223 WAV y 72 MP3: 227 MB de audio para un juego cuyo cliente web entero
+pesa 37. Los efectos que se usan son 22 archivos y 32 segundos, que comprimidos
+dentro del juego son **0,3 MB**; la música son dos pistas de 4,8 MB que **no
+entran al paquete** y las sirve el servidor por HTTP. El que la quiere la baja
+una vez y el navegador se la queda; el que la deja apagada no baja un byte de
+música nunca.
+
+Suenan dos: una en el campamento y otra en la partida — el tema de Ullathorpe
+y el del campo, que es la pista a la que estaban puestos más mapas del original
+(45 de ellos).
+
+**F2** apaga y prende el sonido, **F3** la música, y lo elegido sobrevive a
+cerrar el juego. No están en el panel de teclas porque su arte está horneado
+con trece casilleros: agregar dos filas es regenerar el PNG y volver a medir,
+no editar una tabla. El original les da M y S, que acá ya son el mapa y caminar
+al sur.
+
+## 15. Operación
 
 **Correr el servidor:**
 
@@ -603,7 +734,9 @@ síntoma de "no conozco los hechizos y el mapa no renderiza". Esa arena sigue
 estando pero hay que pedirla (`-map-file=""`), y `/healthz` contesta qué cargó
 (`ok map="Ciudad de Ullathorpe" items=496 spells=50`) en vez de solo decir que
 el proceso está vivo. Otros flags: `-addr`, `-tick`, `-map-width`,
-`-map-height`, `-seed`, `-debug`, `-web-dir`.
+`-map-height`, `-seed`, `-debug`, `-web-dir`, `-death-exit` (segundos de
+fantasma antes de volver al campamento) y `-music-dir` (de dónde salen las dos
+pistas que el cliente baja a pedido).
 
 **Bots.** Hablan exactamente el mismo protocolo que un cliente real; del lado
 del servidor no existe el concepto de "bot". Lo que se rompe con bots se hubiera
@@ -633,7 +766,7 @@ duerme cuando no hay nadie y despierta en un par de segundos. Medido: 67 ms de
 latencia sentida, contra 116 ms de un túnel casero y 25 ms en local; el detalle
 está en OPERACION §7.
 
-## 15. Cómo está armado por dentro
+## 16. Cómo está armado por dentro
 
 Una sola goroutine es dueña de todo el estado del mundo. **No hay un mutex en
 todo el repo.**
@@ -731,9 +864,9 @@ siguiendo al que te mató; las dos cosas esperan a que exista el lobby.
 | Falta | Nota |
 |---|---|
 | **Matchmaking** | La cola existe (ver §12) pero es una sola y por orden de llegada: no hay nada parecido a emparejar por nivel, por región ni por nada. Plan: una máquina Fly por partida vía Machines API. |
-| **Combate a distancia** | Arcos y flechas. Solo hay melee y hechizos. |
+| **Sonido para el vecino** | Los efectos suenan por los eventos que ya le llegan al cliente, y esos son los de quien participa: se oye la pelea propia, no la de al lado. La flecha sí se ve pasar. |
 | **Facciones** | Armada/Legión no están. |
 | **Hambre y sed que drenen** | Los vitals son estado real del servidor y el HUD los muestra en sus dos barras, pero nada los baja. Es una decisión de diseño pendiente: ¿un battle royale quiere upkeep? |
 | **Persistencia del personaje** | A propósito: nadie levelea, no hay build que guardar. Lo que sí persiste desde ahora es la **carrera** — ver §12 — que es otra cosa: una frase sobre el pasado, no un progreso que arrastrás a la partida siguiente. |
-| **Salir al lobby al morir** | La partida ya se decide y se reinicia, pero el muerto se queda de fantasma en el mapa en vez de salir al lobby. El modo espectador siguiendo al que te mató tampoco existe. |
+| **Modo espectador** | Morir ya te devuelve al campamento (ver §4), pero mirar la partida desde adentro, siguiendo al que te mató, no existe. |
 | **Codec binario** | Ya está medido y ya molesta: el snapshot pesa 3,6 KB con la partida llena, 74 KB/s por jugador. Ver OPERACION §7. |

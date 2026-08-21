@@ -29,3 +29,16 @@ window/stretch/mode="canvas_items"
 textures/canvas_textures/default_texture_filter=0
 renderer/rendering_method="gl_compatibility"
 renderer/rendering_method.mobile="gl_compatibility"
+
+[autoload]
+
+; Las acciones del InputMap se registran acá en vez de en la sección [input],
+; que Godot serializa como Object(InputEventKey, ...) por tecla. El catálogo
+; entero vive en un archivo que se lee, con el nombre que cada tecla tiene en
+; el Argentum original al lado.
+KeyBindings="*res://scripts/key_bindings.gd"
+
+; El sonido, por lo mismo: cualquiera tiene que poder hacer sonar algo sin que
+; le pasen una referencia. Se llama GameAudio y no Audio para no pelearse con
+; los nombres que Godot ya usa para lo suyo.
+GameAudio="*res://scripts/audio.gd"

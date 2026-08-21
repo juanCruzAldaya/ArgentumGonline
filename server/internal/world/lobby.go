@@ -64,6 +64,18 @@ type seat struct {
 	// to when the match ends, which is why the lobby does not simply forget a
 	// seat the moment it lets it in.
 	playing EntityID
+
+	// card is the result this seat's player was handed when they were
+	// eliminated, and carded says there is one.
+	//
+	// It exists because the two halves of an Outcome are now separated by the
+	// player leaving the world: the placement is decided at the moment of
+	// death, the winner only when the match is called, and by then the dead
+	// have been back at the camp for minutes. Keeping the first half on the
+	// seat is what lets endMatch finish the sentence for somebody who is no
+	// longer a player. See deathexit.go.
+	card   protocol.Outcome
+	carded bool
 }
 
 // lobbyDefaultMin is how many queued players it takes to start a match.
@@ -358,21 +370,58 @@ func (w *World) startMatchFromLobby() {
 	// with a startedAt one player later than the truth.
 	w.match.phase = matchRunning
 	w.match.startedAt = w.tick
-	w.startIfArmed()
+	// Peak counts this match's players, not the last one's. addPlayer raises it
+	// as each seat comes in.
+	w.match.peak = 0
+
+	// A match starting from the lobby is as new as one starting from a restart,
+	// and used to be the only one that did not act like it: resetMatch rebuilds
+	// the floor and reopens the ring, this path did neither. So the second
+	// match on a server ran on the first one's leftovers — the same loot nobody
+	// picked up, and a ring already halfway shut, which is what put players in
+	// the second match on the edge of a circle that was closing on them from
+	// the first tick, with none of the grace period they were owed.
+	//
+	// The order is load-bearing, same as in resetMatch: the ring goes first
+	// because freeSpawn draws inside the safe circle, so opening it after the
+	// players are placed would pack them into the last match's final arena.
+	clear(w.ground)
+	w.scatterMatchLoot()
+	if w.zone.armed {
+		w.startZone()
+	}
 
 	for _, s := range let {
 		id := w.addPlayer(joinReq{name: s.name, class: s.class, race: s.race, conn: s.conn})
 		if s.account != "" {
 			w.setAccount(id, s.account)
 		}
-		// Buffered, so this never blocks the world on a connection goroutine
-		// that has not got round to listening yet.
-		s.started <- id
+		// Buffered *and* non-blocking. The buffer is what lets the world hand
+		// the entity over without waiting for a connection goroutine that has
+		// not got round to listening yet; the select is what keeps a full
+		// buffer from being the end of the world — literally.
+		//
+		// The channel holds one, and a seat that never read the id from its
+		// last match is a seat whose reader is gone. A plain send there parks
+		// the world goroutine forever: the tick stops, and the connection
+		// goroutine that would clear it is itself blocked handing its seat
+		// back on a channel nobody is reading any more. Found by a test that
+		// hung for ten minutes rather than failing, which is exactly the shape
+		// of the bug it was pointing at.
+		select {
+		case s.started <- id:
+		default:
+			w.log.Warn("el asiento no está escuchando; entra igual pero su cliente no se entera",
+				"seat", s.id, "cuenta", s.account, "entidad", id)
+		}
 		// The seat stays in the map while its player is in the world, so that
 		// the end of the match can put them back in the lobby without needing
 		// a second index from player to seat.
 		s.queued = false
 		s.playing = id
+		// Last match's result, gone: the card on screen belongs to a match
+		// that is over, and endMatch must not finish that sentence twice.
+		s.card, s.carded = protocol.Outcome{}, false
 	}
 
 	w.log.Info("partida empezada desde el lobby",
@@ -437,6 +486,10 @@ func (w *World) returnToLobby() int {
 		if s.playing == 0 {
 			continue
 		}
+		// The camp draws this seat's career on its right-hand column, and the
+		// match that just ended belongs in it. Same call the eliminated get on
+		// their way out — see sendCareer.
+		w.sendCareer(s)
 		w.removePlayer(s.playing)
 		s.playing = 0
 		// Not re-queued: coming back from a match you just lost and being put

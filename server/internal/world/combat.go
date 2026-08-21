@@ -79,14 +79,24 @@ func (w *World) poderAtaque(p *Player) float64 {
 	return power + 2.5*math.Max(float64(p.Vitals.Level-12), 0)
 }
 
-// hitChance is the ProbExito line of UsuarioImpacto, clamped exactly as the
-// original clamps it.
+// hitChance is the ProbExito line of UsuarioImpacto for a melee swing.
 func (w *World) hitChance(attacker, victim *Player) float64 {
+	return w.hitChanceFrom(w.poderAtaque(attacker), victim)
+}
+
+// hitChanceFrom is that same line given whatever attack power the attack in
+// question brings, clamped exactly as the original clamps it.
+//
+// The power is a parameter rather than derived here because UsuarioImpacto
+// picks it before this line runs — PoderAtaqueArma, PoderAtaqueWrestling or
+// PoderAtaqueProyectil — and everything after that point is identical for all
+// three. See ranged.go for the third.
+func (w *World) hitChanceFrom(power float64, victim *Player) float64 {
 	evasion := w.poderEvasion(victim)
 	if _, shielded := w.equippedShield(victim); shielded {
 		evasion += w.poderEvasionEscudo(victim)
 	}
-	chance := 50 + (w.poderAtaque(attacker)-evasion)*0.4
+	chance := 50 + (power-evasion)*0.4
 	if victim.Meditating {
 		// SistemaCombate.bas cuts a meditating target's miss chance by a
 		// quarter: sitting still to regen mana costs evasion, not just the
@@ -149,9 +159,22 @@ func (w *World) armorAbsorption(p *Player) int {
 // resolveAttack runs one swing. It is called from the world goroutine, so it
 // mutates both players directly.
 func (w *World) resolveAttack(attacker, victim *Player) AttackResult {
+	return w.resolveHit(attacker, victim, w.poderAtaque(attacker), func() int {
+		return w.calcDamage(attacker)
+	})
+}
+
+// resolveHit is the part of UsuarioAtacaUsuario that a swing and a shot share:
+// roll to hit, fall through to the shield, subtract armour, and stop the health
+// bar at zero.
+//
+// What the two do not share is bracketed out — how hard the attack swings
+// (power) and how hard it lands (damage) — because those are exactly the two
+// lines the source switches on the weapon for, and nothing else.
+func (w *World) resolveHit(attacker, victim *Player, power float64, damage func() int) AttackResult {
 	result := AttackResult{Attacker: attacker.ID, Victim: victim.ID}
 
-	if w.randRange(1, 100) > int(w.hitChance(attacker, victim)) {
+	if w.randRange(1, 100) > int(w.hitChanceFrom(power, victim)) {
 		// A miss can still be a shield block, which is worth reporting
 		// separately: it tells the victim their shield is doing something.
 		if _, shielded := w.equippedShield(victim); shielded {
@@ -161,8 +184,7 @@ func (w *World) resolveAttack(attacker, victim *Player) AttackResult {
 	}
 
 	result.Hit = true
-	damage := w.calcDamage(attacker) - w.armorAbsorption(victim)
-	result.Damage = max(damage, 1)
+	result.Damage = max(damage()-w.armorAbsorption(victim), 1)
 
 	victim.Vitals.HP -= result.Damage
 	if victim.Vitals.HP <= 0 {
@@ -218,7 +240,7 @@ func (w *World) attack(p *Player) {
 		// roll it uses against an NPC attacker (this game has no NPCs yet).
 		victim.stopMeditating()
 	}
-	w.reportCombat(p, victim, result)
+	w.reportCombat(p, victim, result, false)
 
 	if result.Killed {
 		w.kill(victim, p)
@@ -276,14 +298,24 @@ func (w *World) kill(victim, killer *Player) {
 
 	w.scatterInventory(victim)
 
+	// And the clock that takes them back to the camp. Set after the inventory
+	// is on the floor, because what they dropped stays on the map whether or
+	// not they are still standing over it. See deathexit.go.
+	w.markForExit(victim)
+
 	if killer != nil && killer.ID != victim.ID {
 		killer.Kills++
 	}
 }
 
 // reportCombat tells both sides what happened, each from their own side of it.
-func (w *World) reportCombat(attacker, victim *Player, result AttackResult) {
+//
+// Both sides and no more: the damage is between the two of them. What the
+// neighbours get to see of a ranged attack is the arrow, which travels as its
+// own message to everyone in view — see ranged.go.
+func (w *World) reportCombat(attacker, victim *Player, result AttackResult, ranged bool) {
 	event := protocol.CombatEvent{
+		Ranged:       ranged,
 		AttackerID:   uint32(attacker.ID),
 		AttackerName: attacker.Name,
 		VictimID:     uint32(victim.ID),

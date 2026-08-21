@@ -45,12 +45,20 @@ Si el arranque está bien, el log dice estas líneas:
 mundo sorteado       de=4 archivo=map1003.json
 mapa cargado         number=1003 name=Yermo size="[760 760]"
 loot esparcido       pedido=1435 colocado=1435
+cofres esparcidos    pedido=120 colocado=120
 pociones esparcidas  pedido=2857 colocado=2857 unidades=14285
 items cargados       count=496
 hechizos cargados    count=50
 world running        tickRate=20
+sirviendo música     dir=music
 listening            addr=[::]:8080
 ```
+
+**La música es opcional y su ausencia no rompe nada.** `-music-dir` apunta por
+default a `music/`, que existe en el repo con las dos pistas; un servidor sin
+ese directorio contesta 404 al cliente, el cliente se queda sin música y el
+juego se juega igual. Lo que **no** hay que hacer es meterlas dentro del
+cliente web: ver §4.
 
 **No aparece "zona activa" hasta que entra el primer jugador**, y eso está bien:
 el anillo no corre en un servidor vacío.
@@ -171,6 +179,52 @@ tiran y listo, el arco necesita carcaj), `newbie`, los cortes de armadura
 que le permite al kit inicial distinguir el equipo básico de una clase del
 trofeo que un GM repartía — ver RESUMEN-FUNCIONAL §9. Las flechas (`ObjType` 32)
 se convierten desde que existe el kit del Cazador.
+
+### Regenerar el sonido
+
+Va por separado del atlas porque no lo toca, y necesita el `AUDIO/` del cliente
+original, que **no está en `ao-assets`**: hay que sacarlo del zip
+(`ao-cliente-master.zip`, carpetas `AUDIO/WAV` y `AUDIO/MP3`).
+
+```powershell
+go run -C tools/aoconv . `
+  -assets "$env:USERPROFILE\Downloads\ao-assets" `
+  -sounds "$PWD\client\assets\ao\sfx" `
+  -music  "$PWD\server\music"
+```
+
+```
+sonidos:      22 archivos (14 de hechizos), 32.1 s, 1.35 MB en ...\client\assets\ao\sfx
+música:       4.mp3 -> ...\server\music\lobby.mp3 (1.67 MB)
+música:       3.mp3 -> ...\server\music\match.mp3 (3.16 MB)
+```
+
+**Convierte una lista, no un directorio, y eso es la feature.** El original trae
+223 WAV y 72 MP3: 227 MB de audio para un juego cuyo cliente web pesa 37. Lo que
+se convierte es lo que el juego puede causar —golpe, escudo, muerte, poción,
+pasos— más el `WAV=` que cada hechizo declara en `Hechizos.dat`, que es de dónde
+salen 14 de los 22. Agregar un hechizo trae su sonido solo.
+
+Cada archivo se pasa a **mono 22 kHz 16 bits** (la mitad ya lo eran) y Godot lo
+comprime a QOA al importarlo: 1,35 MB en disco quedan en **0,28 MB dentro del
+`.pck`**. Verificado contra los originales archivo por archivo — misma duración,
+mismo RMS, mismo pico, así que la conversión no metió clipping ni erró la tasa.
+
+**La música se copia, no se convierte, y va al servidor y no al cliente.** Son
+dos MP3 (el tema de Ullathorpe para el campamento y el del campo para la
+partida, que es la pista a la que estaban puestos más mapas del original) que el
+servidor sirve en `/music/lobby.mp3` y `/music/match.mp3`. Meterlas en el
+cliente serían 4,8 MB que baja todo el que entre, escuche o no; servidas aparte
+las baja el que las quiere, una vez, y el navegador se las queda. Ver
+`client/scripts/audio.gd`.
+
+Después de regenerar los `.wav` hay que reimportar, como con el atlas:
+
+```powershell
+& $godot --headless --path client --import
+```
+
+### Reemplazar un gráfico de AO por otro (cuerpos)
 
 La lista de cuerpos ya no se pasa a mano: se deriva de las armaduras de
 `obj.dat`, porque equipar una armadura *es* cambiar de cuerpo. Hoy salen 309
@@ -418,6 +472,21 @@ vivos se posicionan encima cayendo en los agujeros que el arte ya dibuja.**
 | login / creación | `client/assets/ao/ui/login_bg.png` | 855x756 | `scripts/character_picker.gd` |
 | panel lateral | `client/assets/ao/ui/panel_bg.png` | horneado a 525x962, que es como se muestra | `scenes/main.tscn` + `scripts/hud.gd` |
 | footer de equipo | `client/assets/ao/ui/footer_bg.png` | horneado a 1088x37 | `scenes/main.tscn` + `scripts/hud.gd` |
+| panel de teclas | `client/assets/ao/ui/keys_bg.png` | horneado a 1339x898 | `scripts/key_config_panel.gd` |
+
+**El panel de teclas se mide, no se acomoda a ojo**, y la forma de comprobarlo
+es dibujar los rects sobre el PNG antes de cablear nada:
+
+```powershell
+python -c "from PIL import Image, ImageDraw; im=Image.open(r'client/assets/ao/ui/keys_bg.png').convert('RGB'); d=ImageDraw.Draw(im); [d.rectangle([x,y,x+279,y+52], outline=(255,60,60), width=2) for x,y in [(359,165),(998,165)]]; im.save(r'<scratchpad>/check.png')"
+```
+
+Los casilleros salieron de leer el perfil de luminancia de cada columna: son
+279x52, la columna izquierda en x=359 y la derecha en x=998, con los renglones
+cada 62px salvo los dos de OTRAS TECLAS, que el arte separa 65. La primera
+tanda de medidas estaba corrida 25px hacia arriba porque lo que parecía el
+borde de un casillero era el marco del recuadro que los agrupa — mirar la
+imagen con los rects encima es lo que lo mostró en dos segundos.
 
 Dos piezas más salieron del panel a su propio PNG porque tienen que moverse o
 aparecer y desaparecer: `scroll_grabber.png` (el hueso del scroll) y
@@ -680,13 +749,19 @@ El script exporta y después **precomprime**. Eso no es cosmético:
 
 | Archivo | Crudo | Comprimido |
 |---|---|---|
-| `index.wasm` | 38.8 MB | **10.1 MB** |
-| `index.pck` | 12.9 MB | **11.6 MB** |
-| **Primera carga** | **51.7 MB** | **21.7 MB** |
+| `index.wasm` | 37.0 MB | **9.7 MB** |
+| `index.pck` | 42.5 MB | **28.7 MB** |
+| **Primera carga** | **79.8 MB** | **38.4 MB** |
 
-El `.pck` creció de 8.4 a 12.9 MB cuando el atlas sumó las 309 armaduras del
-juego: el peso de la primera carga lo domina el contenido gráfico, no el
-motor.
+El peso lo domina el contenido, no el motor: el `.pck` pasó de 8.4 a 12.9 MB
+cuando el atlas sumó las 309 armaduras, y a 42 MB con los mundos compuestos.
+
+**El audio casi no se nota, y eso fue una decisión y no una suerte.** De los
+1,45 MB que sumó la última tanda, **1,16 MB son el arte del panel de teclas** y
+solo 0,28 MB los 22 efectos de sonido. La música —4,8 MB— no está acá: la sirve
+el servidor aparte (§3). Un MB de audio es un MB entero en la red, además,
+porque ya viene comprimido y gzip no le saca nada: el 32% que se le saca al
+`.pck` sale del resto.
 
 El servidor sirve el `.gz` a quien acepte gzip y cae al archivo plano si no
 (`transport.precompressed`). Se comprime una vez en el build y no por request,
@@ -1540,6 +1615,89 @@ Verificado de punta a punta con tres bots y `-zone-speed 60`: ganó uno a los 11
 segundos, y cinco segundos más tarde la zona volvió a activarse y arrancó la
 siguiente sobre las mismas conexiones.
 
+### Salir al campamento al morir
+
+`internal/world/deathexit.go`. `kill()` le pone al muerto un `exitAt`, y
+`exitDue()` lo saca del mundo cuando vence: `removePlayer`, el asiento vuelve a
+`playing = 0`, y con eso solo el cliente ya recibe otra vez el estado del lobby
+—que es, por sí solo, cómo se entera de que volvió al campamento.
+
+**Dónde va en el tick es lo único delicado**, y son dos condiciones que se
+cruzan:
+
+```go
+w.matchTick()   // decide la partida contando quién queda vivo
+w.exitDue()     // recién ahora se van los eliminados
+w.lobbyTick()   // y el frame del lobby sale en el mismo tick
+```
+
+Después de `matchTick` porque la partida se decide contando vivos y repartiendo
+la tarjeta final: si el último en caer saliera en el mismo tick, no quedaría
+nadie contra quien contar al último en pie. Antes de `lobbyTick` porque lo
+siguiente que tiene que llegarle a esa conexión es el campamento.
+
+Los cinco segundos de fantasma no son una animación: son el rato en que la
+tarjeta aparece y el que te mató está parado al lado. `-death-exit 0` lo apaga y
+deja el comportamiento viejo, y un `Join` directo —el bot, los tests— no sale
+nunca, porque no tiene asiento al que volver.
+
+**La tarjeta se parte en dos y la segunda mitad cruza la puerta.** El puesto se
+sabe al morir, el ganador recién cuando la partida se define, y para entonces el
+eliminado hace rato que no es un jugador. Por eso el asiento se queda con una
+copia (`seat.card`) y `endMatch` le manda la misma tarjeta con el ganador
+escrito. La carrera también se re-manda al salir: el campamento dibuja las
+últimas partidas en su columna derecha y estaría mostrando una lista sin la que
+se acaba de jugar.
+
+### Combate a distancia
+
+`internal/world/ranged.go`, portado de `LanzarProyectil` y de las ramas de
+proyectil de `UsuarioAtacaUsuario` y `CalcularDano`.
+
+El mensaje es nuevo (`shoot`) y **nombra un objetivo**, que es lo único que el
+melee no hace: una flecha cruza la pantalla, así que el tile de adelante no dice
+a quién apunta. El servidor lo chequea igual que un hechizo — tiene que estar
+dentro del viewport del que tira.
+
+Tres decisiones que valen la pena:
+
+- **Las flechas son equipo.** `equipmentTypes` las incluye, que es el
+  `MunicionEqpSlot` del original: se ponen, no se usan, y ponerse una mejor saca
+  la anterior. Cualquier otra cosa habría dejado "¿qué flecha está disparando
+  este arco?" sin una respuesta única.
+- **La resolución del golpe se compartió, no se copió.** `resolveHit` toma el
+  poder de ataque y una función de daño; melee y tiro pasan los suyos. Es
+  exactamente lo que hace el original: `UsuarioAtacaUsuario` elige entre
+  `PoderAtaqueArma` y `PoderAtaqueProyectil` en una línea y sigue igual.
+- **La stamina no se cobra**, aunque el original saque 1..10 por tiro. Este
+  juego no mide energía en ningún lado (ver el comentario en `spells.go`), y
+  prenderla solo para el arco lo dejaría como la única arma con un recurso que
+  nada repone.
+
+La flecha va como mensaje propio (`projectile`) a **todo el que la vea pasar**,
+mientras que el daño sigue yendo solo a los dos involucrados. Son dos audiencias
+distintas a propósito: de dónde salió un tiro es información pública, cuánto
+pegó no.
+
+### El sonido
+
+`client/scripts/audio.gd`, y del lado del servidor **no hay nada** — que es la
+decisión. El original manda un paquete `PlayWave` porque allá el servidor
+decide que algo sonó; acá el cliente ya recibe el evento de combate, el del
+hechizo y el resultado de usar un objeto, así que sabe qué sonar sin que se lo
+digan. Un mensaje nuevo habría sido una segunda forma de contar lo mismo.
+
+Los efectos se cargan a demanda y quedan cacheados; hay ocho voces en round
+robin, así que un noveno sonido pisa al más viejo en vez de no sonar. Un número
+que no existe avisa una vez y se anota, en vez de una advertencia por golpe.
+
+La música es lo único que viaja por HTTP: `GameAudio.set_server()` convierte la
+URL del juego (`ws://host:8080/ws`) en `http://host:8080/music/…`, la baja con
+`HTTPRequest` y la decodifica con `AudioStreamMP3.load_from_buffer`. Si el
+servidor no tiene música, contesta 404 y no pasa nada más. Y si el jugador la
+tiene apagada, **no se baja nunca** — que es todo el punto de que no esté
+adentro del `.pck`.
+
 ### Las cuentas
 
 `internal/account`, y son opcionales: `-accounts <archivo>` las prende, sin el
@@ -1630,6 +1788,46 @@ además te saca el ocultamiento, igual que el original.
 Los carteles expiran con la fórmula de AO: `5000 ms + 100 ms por carácter`
 (`clsDialogs.cls`), con corte de línea a los 18 caracteres.
 
+### Las teclas configurables
+
+El catálogo entero está en `client/scripts/key_bindings.gd`, un autoload, con
+el nombre que cada tecla tiene en el Argentum original al lado
+(`mKeyAttack`, `mKeyGetObject`, …). Agregar una acción es agregar una fila ahí:
+el panel se dibuja solo a partir de esa lista.
+
+**Las acciones se registran en runtime y no en la sección `[input]` de
+`project.godot`.** Godot serializa cada tecla ahí como un
+`Object(InputEventKey, "resource_local_to_scene":false, …)` de una línea, que
+no se lee ni se revisa; el catálogo en GDScript sí, y "restaurar por defecto"
+sale gratis porque los defaults viven en el mismo lugar.
+
+**`physical_keycode`, nunca `keycode`.** Con un teclado latinoamericano el
+keycode se mueve con el layout, y lo que uno espera de WASD es la posición de
+la tecla. Para mostrarla se traduce al revés con
+`DisplayServer.keyboard_get_keycode_from_physical`, que es el `ReadableName`
+del original — y que en headless no está soportado, así que hay un fallback.
+
+Lo que el jugador cambia va a `user://teclas.cfg`, un INI. Se lee **clave por
+clave**: una acción que no está usa su default y una que el juego no conoce se
+ignora, así un archivo viejo o editado a mano nunca deja a nadie sin poder
+atacar. Un duplicado en el archivo se lo queda el primero del catálogo y el
+otro vuelve a su default, con un `WARNING` que dice cuál. En web `user://` vive
+sobre IndexedDB: persiste, pero es **por origen** — lo que configurás en
+`localhost` no aparece en `juegito.fly.dev`.
+
+Para probar el autoload sin abrir el juego, con el script que está en
+`client/probe_teclas.gd`:
+
+```powershell
+& $godot --headless --path client --script res://probe_teclas.gd
+# PRUEBAS: todo bien
+```
+
+Cubre las seis cosas que se pueden romper sin que se note: que el catálogo se
+registre, que los defaults sean los del original, que el guardado sobreviva a
+reabrir, que remapear deje una sola tecla, que un duplicado en el archivo no
+desarme a nadie, y que restaurar vuelva a fábrica.
+
 ### Dónde vive cada cosa
 
 ```
@@ -1647,9 +1845,14 @@ server/
       spells.go    50 hechizos, libro de 30 slots reordenable
       meditate.go  F6: regen de maná, ramp, corte por golpe/caminar
       useitem.go   equipar vs consumir, pociones
+      ranged.go    arco, flechas y cuchillas: el tiro y lo que gasta
+      deathexit.go morir descalifica y te devuelve al campamento
+  music/           las dos pistas, servidas por HTTP y fuera del cliente web
 client/
   scripts/         net_client, world_view, hud, minimap, main,
-                   character_picker, ao_data, ao_sprites, inventory_slot
+                   character_picker, ao_data, ao_sprites, inventory_slot,
+                   audio (autoload), key_bindings (autoload), key_config_panel
+  assets/ao/sfx/   los 22 efectos convertidos, en mono 22 kHz
   scenes/main.tscn estructura y posiciones; lo cosmético vive en hud.gd
 tools/aoconv/      lee los índices de AO y arma el atlas y los .json
   overrides/       arte que reemplaza gráficos de AO, pintado sobre el atlas
@@ -1664,6 +1867,5 @@ El roadmap vive en [RESUMEN-EJECUTIVO](RESUMEN-EJECUTIVO.md), numerado y
 ordenado por impacto, para que haya una sola lista y no dos que se contradigan.
 
 Lo más urgente de ahí, en una línea: el codec binario (el snapshot mide 3,6 KB
-con la partida llena, ver §7), comprimir el Welcome, y salir al lobby al morir en
-vez de quedar de fantasma — el lobby ya existe, así que eso último dejó de ser
-una pantalla que hay que inventar y pasó a ser a dónde mandar al muerto.
+con la partida llena, ver §7) y comprimir el Welcome, que son los dos cuellos de
+botella medidos; después, una máquina Fly por partida.

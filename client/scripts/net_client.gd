@@ -13,6 +13,10 @@ signal loadout_received(loadout: Dictionary)
 signal combat_received(event: Dictionary)
 signal spell_received(event: Dictionary)
 signal use_result_received(result: Dictionary)
+## Una flecha —o una cuchilla— cruzando el piso. Llega a todo el que la ve
+## pasar, no solo a los dos que se están peleando: ver de dónde salió un tiro es
+## cómo una pelea a distancia le avisa al resto que hay una pelea.
+signal projectile_received(shot: Dictionary)
 ## Somebody's words, to be drawn over their head. Chat and spell incantations
 ## arrive through the same signal because the server sends them as one message.
 signal speech_received(speech: Dictionary)
@@ -126,6 +130,14 @@ func send_attack() -> void:
 	_send("attack", {})
 
 
+## Disparar sí nombra a quién, porque la flecha cruza la pantalla y el tile de
+## adelante no dice nada sobre a quién le apuntás. El servidor vuelve a chequear
+## que haya un arco equipado, que haya flechas atrás y que el objetivo esté a la
+## vista.
+func send_shoot(target_id: int) -> void:
+	_send("shoot", {"target": target_id})
+
+
 ## The target is named here because Argentum spells reach across the screen.
 ## The server re-checks range, knowledge and cost regardless.
 func send_cast(spell_id: int, target_id: int) -> void:
@@ -224,6 +236,8 @@ func _handle_frame(text: String) -> void:
 			loadout_received.emit(data)
 		"combat":
 			combat_received.emit(data)
+		"projectile":
+			projectile_received.emit(data)
 		"speech":
 			speech_received.emit(data)
 		"outcome":
