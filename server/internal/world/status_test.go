@@ -279,6 +279,76 @@ func TestStrengthDebuffFloorsAtOne(t *testing.T) {
 	}
 }
 
+// Lanzar Celeridad dos veces sube dos veces. El hechizo suma sobre lo que ya
+// tenias, igual que la pocion y igual que modHechizos.bas — antes sobreescribia,
+// asi que el techo real de un buff era una sola tirada por mas veces que lo
+// lanzaras.
+func TestCastingABuffTwiceStacksInsteadOfReplacing(t *testing.T) {
+	w := statusWorld(t)
+	caster, _ := place(t, w, "veloz", 10, 10)
+	arm(w, caster, Guerrero, 0, 0, 0)
+	caster.Attributes.Agilidad = 20
+	castKnown(w, caster, spellHasteBuff) // +5 fijo en la tabla de este test
+
+	w.cast(caster, spellHasteBuff, caster.ID)
+	if got := w.effectiveAttributes(caster).Agilidad; got != 25 {
+		t.Fatalf("agilidad %d tras el primer lanzamiento, esperaba 25", got)
+	}
+
+	caster.lastCastTick = 0
+	w.cast(caster, spellHasteBuff, caster.ID)
+	if got := w.effectiveAttributes(caster).Agilidad; got != 30 {
+		t.Errorf("agilidad %d tras el segundo, esperaba 30 (los buffs se acumulan)", got)
+	}
+}
+
+// Un debuff sobre alguien buffeado le come el buff en vez de reemplazarlo: es
+// un solo modificador con signo, no dos efectos que compiten.
+func TestADebuffEatsIntoAStandingBuff(t *testing.T) {
+	w := statusWorld(t)
+	caster, _ := place(t, w, "mago", 10, 10)
+	victim, _ := place(t, w, "veloz", 10, 11)
+	arm(w, victim, Guerrero, 0, 0, 0)
+	victim.Attributes.Agilidad = 20
+	victim.AgilityDelta, victim.AgilityUntil = 8, w.tick+buffDurationTicks
+
+	castKnown(w, caster, spellSlowDebuff) // -5 fijo
+	w.cast(caster, spellSlowDebuff, victim.ID)
+
+	if got := w.effectiveAttributes(victim).Agilidad; got != 23 {
+		t.Errorf("agilidad %d, esperaba 23 (20 base + 8 de buff - 5 de Torpeza)", got)
+	}
+}
+
+// El evento informa cuanto movio ESTE lanzamiento, medido contra el modificador
+// vigente. Con el buff ya vencido el de antes no cuenta: medirlo contra el valor
+// viejo daba un delta negativo en un hechizo que subia el atributo, y el cliente
+// escribia "ha reducido" sobre un buff que acababa de aplicarse.
+func TestABuffCastAfterTheLastOneLapsedReportsAGain(t *testing.T) {
+	w := statusWorld(t)
+	caster, conn := place(t, w, "veloz", 10, 10)
+	arm(w, caster, Guerrero, 0, 0, 0)
+	caster.Attributes.Agilidad = 20
+	castKnown(w, caster, spellHasteBuff)
+
+	w.cast(caster, spellHasteBuff, caster.ID)
+	w.tick = caster.AgilityUntil + 1 // se vence, el campo queda con el 5 viejo
+
+	castKnown(w, caster, spellHasteBuff)
+	w.cast(caster, spellHasteBuff, caster.ID)
+
+	var event protocol.SpellEvent
+	if err := w.codec.DecodePayload(conn.lastOfType(t, protocol.TypeSpell), &event); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if event.AgilityDelta != 5 {
+		t.Errorf("informo %+d, esperaba +5", event.AgilityDelta)
+	}
+	if got := w.effectiveAttributes(caster).Agilidad; got != 25 {
+		t.Errorf("agilidad %d, esperaba 25: un buff vencido arranca de cero", got)
+	}
+}
+
 func TestBuffExpiresAfterItsDuration(t *testing.T) {
 	w := statusWorld(t)
 	caster, _ := place(t, w, "mago", 10, 10)

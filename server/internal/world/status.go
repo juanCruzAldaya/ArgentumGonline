@@ -13,12 +13,21 @@ const (
 // Status effect durations.
 //
 // Argentum stores these as a counter decremented by elapsed real time on a
-// ~40ms AI pulse (General.bas's EfectoParalisisUser takes a DeltaTick of
-// elapsed pulses, not ticks of our simulation). IntervaloParalizado=500 pulses
-// and DuracionEfecto=1200/700 pulses work out to roughly 20s of paralysis and
-// 48s/28s of buff/debuff — but that arithmetic rests on an inferred pulse
-// rate, not a constant grepped straight out of the source, so treat it as a
-// well-reasoned estimate rather than a verified figure.
+// 40ms pulse, not by ticks of our simulation. The pulse is no longer inferred:
+// mMainLoop.bas declares GAME_TIMER_INTERVAL = 40 and computes
+// DeltaTick = (GetTickCount - LastGameTick) / GAME_TIMER_INTERVAL, so a
+// "duration" is milliseconds/40. That puts the originals at:
+//
+//	IntervaloParalizado 500  ->  20s of paralysis
+//	DuracionEfecto     1200  ->  48s of buff
+//	DuracionEfecto      700  ->  28s of debuff
+//	obj.dat's potions  1000  ->  40s
+//
+// One more thing the source does that this does not: those all share a single
+// flags.DuracionEfecto per character, and when it lapses General.bas restores
+// every attribute from backup at once. So in Argentum refreshing strength also
+// extends agility. Here the two carry separate deadlines, which is a
+// simplification and not a port.
 //
 // More importantly: those durations were tuned for an MMO where a fight is one
 // event in a session that runs for hours. A 20-second stun or a 48-second buff
@@ -100,13 +109,26 @@ func (p *Player) canAct(tick uint64) bool {
 // base attributes. Combat formulas read this instead of Attributes directly.
 func (w *World) effectiveAttributes(p *Player) Attributes {
 	a := p.Attributes
-	if w.tick < p.AgilityUntil {
-		a.Agilidad += p.AgilityDelta
-	}
-	if w.tick < p.StrengthUntil {
-		a.Fuerza += p.StrengthDelta
-	}
+	a.Agilidad += liveDelta(w.tick, p.AgilityDelta, p.AgilityUntil)
+	a.Fuerza += liveDelta(w.tick, p.StrengthDelta, p.StrengthUntil)
 	return a
+}
+
+// liveDelta is the modifier actually in force right now. A buff or debuff whose
+// timer has run out counts as zero even though the field still holds its last
+// value — nothing clears it on expiry, the deadline is what decides.
+//
+// Every caller that stacks onto an existing modifier, and every caller that
+// reports how much one changed, has to start from this rather than from the raw
+// field. Reading the field directly is what made a potion taken after the
+// previous buff lapsed report a *negative* delta: the sip raised agility from
+// 21 to 26 and the client announced "tu agilidad ha disminuido", because the
+// change was measured against a bonus the character no longer had.
+func liveDelta(tick uint64, delta int, until uint64) int {
+	if tick >= until {
+		return 0
+	}
+	return delta
 }
 
 // applyParalysis and applyImmobilize mirror the source: casting either clears
@@ -126,77 +148,79 @@ func (p *Player) removeParalysis() {
 	p.ImmobilizedUntil = 0
 }
 
-// applyAgility/applyStrength roll and store a new buff or debuff, overwriting
-// whatever was already running rather than stacking with it — casting Fuerza
-// twice in a row does not double up, exactly as in the source.
+// applyAgility/applyStrength are Celeridad/Torpeza and Fuerza/Debilidad. They
+// roll spell.Min..Max and add it onto whatever modifier is already running —
+// they do not replace it.
 //
-// A buff is capped at the character's own base attribute (so the effective
-// total tops out at double); a debuff is capped so it can never floor the
-// attribute below 1.
-// applyAgility rolls spell.MinAgility..MaxAgility and stores it as a buff
-// (attributeBuff) or debuff (attributeDebuff) on p.AgilityDelta.
-func (w *World) applyAgility(p *Player, spell Spell, effect int) (delta int) {
-	roll := w.randRange(spell.MinAgility, spell.MaxAgility)
-	delta = clampAttributeDelta(effect, roll, p.Attributes.Agilidad)
-	p.AgilityDelta = delta
-	p.AgilityUntil = w.tick + durationFor(effect)
-	return delta
+// This used to overwrite, with a comment claiming that was what the source did.
+// It is not. modHechizos.bas adds, in the same shape the potion does:
+//
+//	.Stats.UserAtributos(Agilidad) = .Stats.UserAtributos(Agilidad) + dano
+//
+// A spell and a potion are one operation in Argentum, which is why casting
+// Celeridad repeatedly is how you climb to the ceiling rather than a way to
+// re-roll a single +5. Overwriting capped every buff at one roll above base no
+// matter how many you cast — the same bug the potions had before they stopped
+// sharing this path, arrived at from the opposite direction.
+//
+// Refreshing also resets the deadline, so a debuff landing on a buffed target
+// shortens what is left of the buff to the debuff's own (shorter) duration.
+// That falls out of the source's single shared timer rather than being aimed
+// at, and it is the one piece of that design that survives here — juegito
+// keeps agility and strength on separate deadlines, where Argentum runs both
+// off one flags.DuracionEfecto and restores every attribute together when it
+// lapses.
+func (w *World) applyAgility(p *Player, spell Spell, effect int) (gained int) {
+	roll := signedRoll(w.randRange(spell.MinAgility, spell.MaxAgility), effect)
+	return w.addAgility(p, roll, durationFor(effect))
 }
 
-func (w *World) applyStrength(p *Player, spell Spell, effect int) (delta int) {
-	roll := w.randRange(spell.MinStrength, spell.MaxStrength)
-	delta = clampAttributeDelta(effect, roll, p.Attributes.Fuerza)
-	p.StrengthDelta = delta
-	p.StrengthUntil = w.tick + durationFor(effect)
-	return delta
+func (w *World) applyStrength(p *Player, spell Spell, effect int) (gained int) {
+	roll := signedRoll(w.randRange(spell.MinStrength, spell.MaxStrength), effect)
+	return w.addStrength(p, roll, durationFor(effect))
 }
 
-// drinkAgility and drinkStrength apply a green or yellow potion. That is not
-// the same operation as casting the equivalent spell, even though both land on
-// the same field, and treating it as the same one is what capped everybody
-// short of their race's ceiling.
-//
-// The source's potion ADDS to whatever the character is carrying right now,
-// and tops out at double the base attribute (InvUsuario.bas):
+// addAgility/addStrength are the one operation every buff and debuff goes
+// through, spell or potion. They return how much THIS application moved the
+// attribute, which is not the same as the total modifier now standing — the
+// client shows it as "tu agilidad ha aumentado" next to the character.
+func (w *World) addAgility(p *Player, roll int, duration uint64) (gained int) {
+	before := liveDelta(w.tick, p.AgilityDelta, p.AgilityUntil)
+	p.AgilityDelta = clampAttributeDelta(before+roll, p.Attributes.Agilidad)
+	p.AgilityUntil = w.tick + duration
+	return p.AgilityDelta - before
+}
+
+func (w *World) addStrength(p *Player, roll int, duration uint64) (gained int) {
+	before := liveDelta(w.tick, p.StrengthDelta, p.StrengthUntil)
+	p.StrengthDelta = clampAttributeDelta(before+roll, p.Attributes.Fuerza)
+	p.StrengthUntil = w.tick + duration
+	return p.StrengthDelta - before
+}
+
+func signedRoll(roll, effect int) int {
+	if effect == attributeDebuff {
+		return -roll
+	}
+	return roll
+}
+
+// drinkAgility and drinkStrength apply a green or yellow potion — the same
+// accumulate-and-clamp the spells go through, which is what the source does
+// too (InvUsuario.bas):
 //
 //	.Stats.UserAtributos(Agilidad) = MinimoInt(
 //	    .Stats.UserAtributos(Agilidad) + RandomNumber(obj.MinModificador, obj.MaxModificador),
 //	    .Stats.UserAtributosBackUP(Agilidad) * 2)
 //
-// A spell overwrites instead — casting Fuerza twice does not stack — and both
-// paths used to go through applyAgility. So every potion after the first threw
-// away the one before it, and the real ceiling was one roll above base rather
-// than double it: a human topped out at 27 strength (21 base + a 6 roll) when
-// the rule allows 42.
+// A potion is always a buff — there is no potion that lowers an attribute —
+// so the roll goes in positive and the duration is the buff's.
 func (w *World) drinkAgility(p *Player, minMod, maxMod int) (gained int) {
-	before := p.AgilityDelta
-	p.AgilityDelta = w.accumulateBuff(before, p.AgilityUntil, w.randRange(minMod, maxMod), p.Attributes.Agilidad)
-	p.AgilityUntil = w.tick + buffDurationTicks
-	return p.AgilityDelta - before
+	return w.addAgility(p, w.randRange(minMod, maxMod), buffDurationTicks)
 }
 
 func (w *World) drinkStrength(p *Player, minMod, maxMod int) (gained int) {
-	before := p.StrengthDelta
-	p.StrengthDelta = w.accumulateBuff(before, p.StrengthUntil, w.randRange(minMod, maxMod), p.Attributes.Fuerza)
-	p.StrengthUntil = w.tick + buffDurationTicks
-	return p.StrengthDelta - before
-}
-
-// accumulateBuff adds a fresh roll onto a buff that is still running, bounded
-// so the effective attribute never passes double its base.
-//
-// A buff that has already expired counts as zero rather than as its last
-// value: the character is back at base by then, and carrying the old delta
-// forward would let somebody stack up to the ceiling, let it lapse, and then
-// jump straight back to the top on a single potion.
-func (w *World) accumulateBuff(delta int, until uint64, roll, base int) int {
-	if w.tick >= until {
-		delta = 0
-	}
-	if delta+roll > base {
-		return base
-	}
-	return delta + roll
+	return w.addStrength(p, w.randRange(minMod, maxMod), buffDurationTicks)
 }
 
 func durationFor(effect int) uint64 {
@@ -206,19 +230,22 @@ func durationFor(effect int) uint64 {
 	return debuffDurationTicks
 }
 
-// clampAttributeDelta bounds a rolled buff/debuff against the target's own
-// base value: a buff cannot push the effective total past double the base, a
-// debuff cannot push it below 1.
-func clampAttributeDelta(effect, roll, base int) int {
-	if effect == attributeBuff {
-		if roll > base {
-			return base
-		}
-		return roll
+// clampAttributeDelta bounds an accumulated modifier against the target's own
+// base value: it cannot push the effective total past double the base, nor
+// floor the attribute below 1.
+//
+// Argentum clamps the same two ends with global constants instead —
+// MinimoInt(MAXATRIBUTOS, base*2) and MINATRIBUTOS, which are 40 and 6
+// (Declares.bas:422,424). Those are deliberately not ported: every character
+// here spawns at the cap, so a flat 40 would bind on some races and not
+// others, and a floor of 6 would make Torpeza and Debilidad much gentler than
+// the rest of the balance assumes.
+func clampAttributeDelta(delta, base int) int {
+	if delta > base {
+		return base
 	}
-	// debuff
-	if roll >= base {
+	if delta < -(base - 1) {
 		return -(base - 1)
 	}
-	return -roll
+	return delta
 }

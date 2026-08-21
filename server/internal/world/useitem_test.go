@@ -406,6 +406,33 @@ func TestPotionReportsWhatThisSipAdded(t *testing.T) {
 	}
 }
 
+// Y lo informa contra el buff VIGENTE, no contra el campo crudo. Con el buff ya
+// vencido el delta viejo sigue guardado, y restarselo al nuevo daba un numero
+// negativo en un trago que subia el atributo: la agilidad iba de 21 a 26 y el
+// cliente escribia "tu agilidad ha disminuido" en rojo.
+func TestPotionAfterAnExpiredBuffReportsAGain(t *testing.T) {
+	w := itemWorld(t)
+	p, conn := place(t, w, "wachin", 5, 5)
+	p.Attributes.Agilidad = 21
+	p.Inventory = []protocol.InventorySlot{{Slot: 0, ItemID: 12, Amount: 10}}
+
+	drink(w, p)
+	drink(w, p) // +10 en total
+	w.tick = p.AgilityUntil + 1
+
+	w.useItem(p, 0, protocol.UseAuto)
+	var result protocol.UseResult
+	if err := w.codec.DecodePayload(conn.lastOfType(t, protocol.TypeUseResult), &result); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if result.AgilityDelta != 5 {
+		t.Errorf("informo %+d, esperaba +5", result.AgilityDelta)
+	}
+	if got := w.effectiveAttributes(p).Agilidad; got != 26 {
+		t.Errorf("agilidad efectiva %d, esperaba 26", got)
+	}
+}
+
 // Tomar algo dice que se consumió. El campo estaba en el protocolo desde
 // siempre y nadie lo llenaba, porque hasta que hubo sonido no había nada del
 // otro lado que lo mirara: la poción se tomaba en silencio.

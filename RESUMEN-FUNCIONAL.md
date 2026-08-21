@@ -226,14 +226,20 @@ Efectos implementados, con el switch tal como lo codifica `Hechizos.dat`:
 - **Invisibilidad** — un jugador invisible simplemente no aparece en el
   `Entities` de nadie más, y no se lo puede tomar como objetivo. Se ve a sí
   mismo.
-- **Buffs y debuffs de atributos** — Celeridad/Fuerza y Torpeza/Debilidad. El
-  buff está capeado al doble del atributo base; el debuff tiene piso en 1. Los
-  deltas viajan firmados, así que el cliente distingue buff de debuff sin un
-  flag aparte.
+- **Buffs y debuffs de atributos** — Celeridad/Fuerza y Torpeza/Debilidad.
+  **Se acumulan**: lanzar Celeridad de nuevo suma sobre lo que ya tenías, igual
+  que tomarse otra poción, que es como funciona `modHechizos.bas`. Es un solo
+  modificador con signo, así que Torpeza sobre alguien buffeado le come el buff
+  en vez de reemplazarlo, y refrescarlo reinicia el reloj. El buff está capeado
+  al doble del atributo base; el debuff tiene piso en 1. Los deltas viajan
+  firmados —y miden lo que movió *ese* lanzamiento, no el total acumulado— así
+  que el cliente distingue buff de debuff sin un flag aparte.
 
 Duraciones (recortadas a propósito respecto del original, porque en un MMO la
 pelea es un episodio y acá es la partida entera): parálisis 6 s, invisibilidad
-12 s, buff 30 s, debuff 20 s.
+12 s, buff 30 s, debuff 20 s. Las del original, ahora verificadas contra
+`GAME_TIMER_INTERVAL = 40` en vez de estimadas, son 20 s / 48 s / 28 s, y las
+pociones 40 s.
 
 **Gráfico del impacto.** Todo hechizo que pega en alguien dispara el efecto
 visual real del original (`CreateFX` de `Fxs.ini`), la animación anclada al
