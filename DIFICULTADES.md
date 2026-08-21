@@ -805,6 +805,85 @@ que perdía su `armed` al arrancar — era exactamente lo mismo: un campo que de
 "configurado" y que la propia función de arranque pisaba.
 
 
+## 22. El tile de más al soltar la tecla: medí bien y deduje mal
+
+Reportado como *"no frena justo cuando suelto la tecla, avanza un tile de más;
+da la sensación de que esquía o driftea"*. Terminó **revertido entero** después
+de dos intentos que empeoraron el juego, y el capítulo es sobre eso.
+
+### Lo que la medición dijo, y es cierto
+
+Se instrumentaron los dos lados y se cruzaron por `seq` — la receta del §11 —
+contra Fly y con Wachín jugando, no con teclado simulado. Los números:
+
+- **El 53% de los comandos de movimiento llegan tarde**, uno a cuatro ticks
+  después de que el paso ya estaba habilitado. Es el jitter de la red: 50 ms de
+  latencia contra `gru` es exactamente un tick.
+- La cadencia sale despareja: **63 pasos a los 4 ticks correctos, 5 a 3 ticks y
+  un par separado por un solo tick**, cuatro veces más rápido que caminar.
+
+La causa mecánica también es real. `moveReadyAt += moveCooldownMilliticks`
+avanza desde la marca vieja y no desde el instante del paso, así que el reloj
+*recupera* el tiempo que la red se comió. Con latencia constante eso es correcto
+y deliberado —es lo que evita que el que tiene ping camine más lento— pero con
+jitter el crédito se gasta todo junto y salen dos pasos pegados.
+
+### La deducción equivocada
+
+De ahí se concluyó que el servidor "se adelanta al cliente" y que había que
+frenarlo con un piso: un paso no puede salir antes de un cooldown completo desde
+el paso real anterior.
+
+Medido, el piso funcionaba: cero pasos adelantados en una partida real. Pero al
+jugarlo apareció un tironcito, y el segundo intento —retener el paso en vez de
+contestarlo como giro, para no matar la predicción del cliente— tampoco alcanzó.
+El veredicto fue *"estaba MUCHO mejor antes"*.
+
+Lo que lo cerró fue contar pasos en vez de mirar la cadencia. Una simulación de
+40 pasos con jitter de llegada:
+
+| variante | pasos concedidos de 40 |
+|---|---|
+| **original** | **40** |
+| piso solo | 25 |
+| piso + retención | 25 |
+
+**El servidor original no pierde un solo paso.** Concede exactamente los que el
+cliente pide; lo único que hace es agruparlos de a dos cuando el jitter le
+devuelve crédito. La posición final siempre coincidió — nunca hubo desfasaje que
+corregir.
+
+Frenar pasos, entonces, no arregla un desfasaje: **destruye pasos**. El cliente
+pedía 40 y recibía 25, así que la reconciliación lo arrastraba hacia atrás sin
+parar. Los dos intentos cambiaron un artefacto visual por pérdida real de
+movimiento, que es mucho peor, y por eso se sintieron peor que el bug.
+
+### Lo que queda en pie
+
+El patinazo existe y está caracterizado: es de **presentación, no de
+simulación**. Dos pasos legítimos llegan pegados y el render los dibuja a
+velocidad de patín. Si alguna vez se arregla, el lugar es el cliente —que el
+render tenga su propia cadencia y camine el segundo tile a paso normal en vez de
+acelerar para alcanzar la posición— y no la cadencia del servidor, que está
+bien.
+
+De paso quedaron descartadas con datos tres hipótesis que parecían buenas: el
+sesgo de fase de `sync_server_tick`, una cola de comandos en el servidor, y
+drift fraccional del cooldown (no existe: `walkSpeedPercent` está en 100 y el
+paso es de 4 ticks exactos).
+
+**Lección:** medir bien no es diagnosticar bien. Los datos eran correctos y la
+conclusión no, porque la métrica elegida —la separación entre pasos— no podía
+distinguir "el servidor va más rápido" de "el servidor agrupa dos pasos". La
+métrica que sí decidía era **contar pasos concedidos contra pasos pedidos**, y
+tardó dos intentos fallidos en aparecer. Cuando un arreglo medido empeora la
+experiencia, lo que está mal es la métrica, no la percepción del que juega.
+
+**Y la lección barata:** antes de tocar una regla que el jugador siente, hay que
+tener una prueba de que la regla está mal. Acá había una prueba de que la
+cadencia era despareja, que no es lo mismo.
+
+
 ## Lo que quedó aprendido, en una línea cada uno
 
 1. Si el objetivo es "igual a esta imagen", usá la imagen.
@@ -859,3 +938,7 @@ que perdía su `armed` al arrancar — era exactamente lo mismo: un campo que de
     que cambia la fuente. Y antes de investigar un síntoma visual, leer el log.
 23. Un test que no puede fallar no es cobertura. Se ve igual de verde que uno
     que sirve.
+24. Medir bien no es diagnosticar bien. Si un arreglo medido empeora la
+    experiencia, la que está mal es la métrica, no la percepción del que juega
+    — y la métrica correcta suele ser la que cuenta lo que se pierde, no la que
+    mide lo que se ve raro.
