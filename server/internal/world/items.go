@@ -11,14 +11,17 @@ const (
 	ItemFood   = 1
 	ItemWeapon = 2
 	ItemArmor  = 3
+	// ItemChest is otObjetosContenedores, "bolsas y cofres" in obj.dat's own
+	// table. Nothing in the converted data carries this type — aoconv keeps
+	// only what a character can carry — so it is entirely ours: see chest.go.
+	ItemChest  = 7
 	ItemPotion = 11
 	ItemDrink  = 13
 	ItemShield = 16
 	ItemHelmet = 17
 	ItemRing   = 18
-	// ItemArrow is otFlechas. Nothing fires them — ranged combat does not
-	// exist yet — but a bow without them is a stick, so the classes whose kit
-	// is a bow carry a quiver anyway. See computeStartingKit.
+	// ItemArrow is otFlechas: what a bow fires, and worn in its own equipped
+	// slot rather than used by hand. See ranged.go and equipmentTypes.
 	ItemArrow = 32
 )
 
@@ -228,6 +231,10 @@ func (w *World) scatterMatchLoot() {
 		gear = minGroundLoot
 	}
 	pool = w.spawnGroundLoot(pool, gear)
+	// Los cofres salen del mismo pool y antes que las pociones, que son las que
+	// se comen la mayor parte de los tiles: si fueran últimos, en un mapa
+	// apretado no quedaría lugar para ninguno.
+	pool = w.spawnChests(pool, len(pool)/chestTiles)
 	w.spawnGroundPotions(pool, len(pool)/groundPotionTiles)
 }
 
@@ -266,6 +273,13 @@ func (w *World) equippedDefence(p *Player) []Item {
 }
 
 // equipmentTypes toggle Equipped when used; everything else is consumed.
+//
+// Arrows are in here and that is the source's own model, not a convenience:
+// MunicionEqpSlot is a worn slot like the weapon and the shield, so a quiver is
+// put on rather than used up by hand, and equipping a better arrow takes the
+// old one off the same way a better sword does. Nothing else would have made
+// "which arrow is this bow firing?" a question with one answer.
 var equipmentTypes = map[int]bool{
 	ItemWeapon: true, ItemShield: true, ItemArmor: true, ItemHelmet: true, ItemRing: true,
+	ItemArrow: true,
 }

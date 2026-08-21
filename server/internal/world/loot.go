@@ -156,14 +156,25 @@ func (w *World) spawnGroundPotions(pool []tileKey, count int) []tileKey {
 	return rest
 }
 
+// groundArrowStack is how many arrows one find on the ground is worth.
+//
+// It is a resupply, not a refill: at the melee interval an archer empties this
+// in half a minute of sustained shooting, which is more than any single fight
+// takes and less than a match. One arrow — what the default below used to hand
+// out, back when nothing fired them — would have been an item that exists only
+// to be disappointing.
+const groundArrowStack = 25
+
 // stackAmountFor is how many units a single gear-scatter spawn carries — a
-// found weapon or piece of armour is one, a found consumable a small handful.
-// Potions scattered by spawnGroundPotions do not come through here; they use
-// groundPotionStack.
+// found weapon or piece of armour is one, a found consumable a small handful,
+// a found quiver enough to fight with. Potions scattered by spawnGroundPotions
+// do not come through here; they use groundPotionStack.
 func stackAmountFor(item Item) int {
 	switch item.Type {
 	case ItemPotion, ItemFood, ItemDrink:
 		return 3
+	case ItemArrow:
+		return groundArrowStack
 	default:
 		return 1
 	}
@@ -207,6 +218,14 @@ func (w *World) pickup(p *Player) {
 	key := tileKey{p.X, p.Y}
 	stack, ok := w.ground[key]
 	if !ok {
+		return
+	}
+
+	// Un cofre no se levanta, se abre. Es la misma tecla porque es el mismo
+	// gesto —estás parado encima de algo y lo agarrás— y porque una tecla nueva
+	// para un solo tipo de objeto es una tecla que hay que enseñar.
+	if w.isChest(stack.ItemID) {
+		w.openChest(p, key)
 		return
 	}
 
