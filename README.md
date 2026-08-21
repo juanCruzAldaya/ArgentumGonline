@@ -15,13 +15,15 @@ sistema por dentro. Los otros cuatro:
 [RESUMEN-EJECUTIVO](RESUMEN-EJECUTIVO.md) para decidir,
 [RESUMEN-FUNCIONAL](RESUMEN-FUNCIONAL.md) para saber qué hace el juego,
 [DIFICULTADES](DIFICULTADES.md) para lo que costó y por qué, y
-[SESION-2026-08-20](SESION-2026-08-20.md) para el camino de la última tanda.
+[SESION-2026-08-21](SESION-2026-08-21.md) para el camino de la última tanda.
 
 ## Documentos
 
 - [RESUMEN-EJECUTIVO.md](RESUMEN-EJECUTIVO.md) — qué es, qué se logró, qué falta
 - [RESUMEN-FUNCIONAL.md](RESUMEN-FUNCIONAL.md) — todo lo que hace el juego hoy, en detalle
 - [DIFICULTADES.md](DIFICULTADES.md) — lo que costó y por qué
+- [SESION-2026-08-21.md](SESION-2026-08-21.md) — salir al campamento, combate
+  a distancia, sonido, y los bugs que aparecieron jugando
 - [SESION-2026-08-20.md](SESION-2026-08-20.md) — el deploy con los mundos, la
   latencia por jugador, cinco bugs, el panel de teclas y los cofres
 
