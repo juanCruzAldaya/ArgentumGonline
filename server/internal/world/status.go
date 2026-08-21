@@ -151,6 +151,54 @@ func (w *World) applyStrength(p *Player, spell Spell, effect int) (delta int) {
 	return delta
 }
 
+// drinkAgility and drinkStrength apply a green or yellow potion. That is not
+// the same operation as casting the equivalent spell, even though both land on
+// the same field, and treating it as the same one is what capped everybody
+// short of their race's ceiling.
+//
+// The source's potion ADDS to whatever the character is carrying right now,
+// and tops out at double the base attribute (InvUsuario.bas):
+//
+//	.Stats.UserAtributos(Agilidad) = MinimoInt(
+//	    .Stats.UserAtributos(Agilidad) + RandomNumber(obj.MinModificador, obj.MaxModificador),
+//	    .Stats.UserAtributosBackUP(Agilidad) * 2)
+//
+// A spell overwrites instead — casting Fuerza twice does not stack — and both
+// paths used to go through applyAgility. So every potion after the first threw
+// away the one before it, and the real ceiling was one roll above base rather
+// than double it: a human topped out at 27 strength (21 base + a 6 roll) when
+// the rule allows 42.
+func (w *World) drinkAgility(p *Player, minMod, maxMod int) (gained int) {
+	before := p.AgilityDelta
+	p.AgilityDelta = w.accumulateBuff(before, p.AgilityUntil, w.randRange(minMod, maxMod), p.Attributes.Agilidad)
+	p.AgilityUntil = w.tick + buffDurationTicks
+	return p.AgilityDelta - before
+}
+
+func (w *World) drinkStrength(p *Player, minMod, maxMod int) (gained int) {
+	before := p.StrengthDelta
+	p.StrengthDelta = w.accumulateBuff(before, p.StrengthUntil, w.randRange(minMod, maxMod), p.Attributes.Fuerza)
+	p.StrengthUntil = w.tick + buffDurationTicks
+	return p.StrengthDelta - before
+}
+
+// accumulateBuff adds a fresh roll onto a buff that is still running, bounded
+// so the effective attribute never passes double its base.
+//
+// A buff that has already expired counts as zero rather than as its last
+// value: the character is back at base by then, and carrying the old delta
+// forward would let somebody stack up to the ceiling, let it lapse, and then
+// jump straight back to the top on a single potion.
+func (w *World) accumulateBuff(delta int, until uint64, roll, base int) int {
+	if w.tick >= until {
+		delta = 0
+	}
+	if delta+roll > base {
+		return base
+	}
+	return delta + roll
+}
+
 func durationFor(effect int) uint64 {
 	if effect == attributeBuff {
 		return buffDurationTicks

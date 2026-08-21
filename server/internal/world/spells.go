@@ -132,6 +132,21 @@ func (w *World) swapSpells(p *Player, from, to int) {
 // the screen. So the server re-checks everything the client could lie about:
 // that the spell is known, that the victim exists and is close enough to see,
 // and that the caster can actually pay for it.
+// offensive says whether a spell is something done TO somebody rather than FOR
+// them, which is what the self-target rule turns on: casting on yourself stays
+// legal, because healing and buffing yourself is most of what a support spell
+// is for.
+//
+// Damage, paralysis and immobilisation are hostile outright. Agility and
+// strength count only when they debuff, since those same two fields carry the
+// buffs a player puts on themselves on purpose.
+func offensive(s Spell) bool {
+	return s.AffectsHP == effectDamages ||
+		s.Paralyzes || s.Immobilizes ||
+		s.AffectsAgility == attributeDebuff ||
+		s.AffectsStrength == attributeDebuff
+}
+
 func (w *World) cast(caster *Player, spellID int, targetID EntityID) {
 	// Paralysis does not stop casting in the source — only movement and melee
 	// do — so only death gates it here.
@@ -171,6 +186,15 @@ func (w *World) cast(caster *Player, spellID int, targetID EntityID) {
 	// client: a modified one could still send an id it inferred some other way.
 	if victim.ID != caster.ID && victim.invisible(w.tick) {
 		w.spellFailed(caster, "No hay nadie ahí.")
+		return
+	}
+	// Nobody attacks themselves. Casting on yourself stays legal — healing and
+	// buffing yourself is most of what a support spell is for — so this gates
+	// on what the spell does rather than on who it is aimed at.
+	//
+	// It sits before the mana is spent, so a misclick costs nothing.
+	if victim.ID == caster.ID && offensive(spell) {
+		w.spellFailed(caster, "No podés atacarte a vos mismo.")
 		return
 	}
 	if !w.withinViewport(caster, victim) {
