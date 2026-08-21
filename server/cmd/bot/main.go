@@ -1,13 +1,17 @@
-// Command bot runs headless clients that wander the map.
+// Command bot corre clientes headless contra un servidor por la red.
 //
-// With -pass they register an account and sign in first, so a swarm can be
-// pointed at a server started with -accounts. Without it they go straight to
-// the join, which is all a server without accounts wants.
+// Con -pass se registran y entran a una cuenta antes de jugar, así el swarm se
+// puede apuntar a un servidor arrancado con -accounts. Sin eso van directo al
+// join, que es todo lo que quiere un servidor sin cuentas.
 //
-// Two people cannot fill a 50-player match by hand, so the load test has to be
-// synthetic. Bots speak exactly the protocol a real client speaks — there is no
-// server-side "bot" concept — which means anything that breaks under bots would
-// have broken under players too.
+// Dos personas no llenan una partida de cincuenta, así que la prueba de carga
+// tiene que ser sintética. Hablan exactamente el protocolo que habla un cliente
+// real — del lado del servidor no existe el concepto de "bot" — así que lo que
+// se rompe con bots se hubiera roto con jugadores.
+//
+// El cerebro y el loop viven en internal/bot, compartidos con el relleno que el
+// servidor corre adentro suyo (-fill). Un solo bot, dos formas de largarlo: por
+// la red desde acá, o por un transport.Pipe desde el propio servidor.
 package main
 
 import (
@@ -15,18 +19,19 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
-	"math/rand"
 	"os"
 	"os/signal"
 	"sync"
 	"syscall"
 	"time"
 
+	"juegito/server/internal/bot"
 	"juegito/server/internal/protocol"
 	"juegito/server/internal/transport"
 )
 
 func main() {
+	def := bot.DefaultTemper()
 	var (
 		url      = flag.String("url", "ws://127.0.0.1:8080/ws", "server websocket URL")
 		count    = flag.Int("n", 10, "number of bots to run")
@@ -35,6 +40,12 @@ func main() {
 		stagger  = flag.Duration("stagger", 50*time.Millisecond, "delay between bot connections")
 		password = flag.String("pass", "", "contraseña con la que registrarse en un servidor que pide cuenta; vacío asume un servidor sin cuentas")
 		debug    = flag.Bool("debug", false, "enable debug logging")
+		sight    = flag.Int("sight", def.Sight, "a cuántos tiles un bot se da cuenta de que hay alguien; 0 los deja paseando sin pelear")
+		sloppy   = flag.Float64("sloppy", def.Sloppy, "con qué frecuencia hace cualquier cosa en vez de lo que le conviene, y con qué frecuencia le erra al clic de un hechizo, 0 a 1")
+		focus    = flag.Duration("focus", def.Focus, "cuánto le dura una decisión antes de volver a pensarla")
+		react    = flag.Duration("react", def.React, "cuánto tarda como mínimo entre una acción deliberada y la siguiente")
+		hurt     = flag.Float64("hurt", def.Hurt, "con qué fracción de vida se acuerda de tomar una roja")
+		drained  = flag.Float64("drained", def.Drained, "con qué fracción de maná se acuerda de tomar una azul")
 	)
 	flag.Parse()
 
@@ -47,10 +58,12 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	temper := bot.NewTemper(*sight, *sloppy, *focus, *react, *hurt, *drained)
+
 	var wg sync.WaitGroup
-	for i := 0; i < *count; i++ {
-		// Connecting all at once would measure the accept path rather than the
-		// steady state we actually care about.
+	for i := range *count {
+		// Conectarlos todos de golpe mediría el camino de accept en vez del
+		// estado estacionario, que es lo que interesa.
 		select {
 		case <-ctx.Done():
 			return
@@ -61,7 +74,7 @@ func main() {
 		go func(n int) {
 			defer wg.Done()
 			name := fmt.Sprintf("%s%02d", *prefix, n)
-			if err := runBot(ctx, *url, name, *password, *interval, log); err != nil && ctx.Err() == nil {
+			if err := dialAndPlay(ctx, *url, name, *password, *interval, temper); err != nil && ctx.Err() == nil {
 				log.Error("bot stopped", "name", name, "err", err)
 			}
 		}(i)
@@ -71,7 +84,7 @@ func main() {
 	wg.Wait()
 }
 
-func runBot(ctx context.Context, url, name, password string, interval time.Duration, log *slog.Logger) error {
+func dialAndPlay(ctx context.Context, url, name, password string, interval time.Duration, t bot.Temper) error {
 	dialCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
@@ -81,163 +94,22 @@ func runBot(ctx context.Context, url, name, password string, interval time.Durat
 	}
 	defer conn.Close()
 
-	codec := protocol.JSONCodec{}
-	rng := rand.New(rand.NewSource(time.Now().UnixNano() + int64(len(name))))
-
-	// A server with accounts speaks first and refuses anything before a login,
-	// so a swarm without -pass could never reach the production configuration —
-	// exactly the one worth load testing. Registering rather than requiring the
-	// accounts to exist keeps the swarm a one-liner; a name already taken falls
-	// through to signing in, which is what happens on every run after the first.
+	// Un servidor con cuentas habla primero y rechaza cualquier cosa antes de
+	// un login, así que un swarm sin -pass nunca podría alcanzar la
+	// configuración de producción — justamente la que vale la pena medir.
+	// Registrarse en vez de exigir que las cuentas ya existan mantiene al swarm
+	// en una línea; un nombre ya tomado cae en el ingreso, que es lo que pasa
+	// en toda corrida después de la primera.
 	if password != "" {
-		if err := signIn(conn, codec, name, password); err != nil {
+		if err := bot.SignIn(conn, protocol.JSONCodec{}, name, password); err != nil {
 			return err
 		}
 	}
 
-	// Bots pick their own class and race before joining, the same as a real
-	// player's character picker would. The server has no "randomize this for
-	// me" path — a Join always names a real selection — so an all-Guerrero,
-	// all-Humano bot swarm would be this loop's fault, not the server's.
-	// classCount/raceCount must stay in step with world.allClasses/allRaces;
-	// cmd/bot deliberately doesn't import internal/world just to read two
-	// slice lengths.
-	const classCount, raceCount = 12, 5
-	join, err := codec.Encode(protocol.TypeJoin, protocol.Join{
-		Name:  name,
-		Class: rng.Intn(classCount),
-		Race:  rng.Intn(raceCount),
+	return bot.Play(ctx, conn, bot.Config{
+		Name:     name,
+		Seed:     time.Now().UnixNano() + int64(len(name)),
+		Interval: interval,
+		Temper:   t,
 	})
-	if err != nil {
-		return err
-	}
-	if err := conn.Send(join); err != nil {
-		return fmt.Errorf("join: %w", err)
-	}
-
-	// And take a place in the queue. On the default one-player lobby the join
-	// above already did it and this is a no-op; against a server started with
-	// -lobby-min it is the difference between a swarm that plays and a swarm
-	// that sits in the waiting room watching each other.
-	queue, err := codec.Encode(protocol.TypeQueue, protocol.Queue{Join: true})
-	if err != nil {
-		return err
-	}
-	if err := conn.Send(queue); err != nil {
-		return fmt.Errorf("queue: %w", err)
-	}
-
-	// Snapshots must be drained or the server's send queue fills and the bot
-	// gets disconnected as a slow client — exactly as a real client would.
-	go func() {
-		<-ctx.Done()
-		_ = conn.Close()
-	}()
-	go func() {
-		for {
-			frame, err := conn.Recv()
-			if err != nil {
-				return
-			}
-			typ, payload, err := codec.DecodeEnvelope(frame)
-			if err != nil {
-				continue
-			}
-			// The server measures latency by pinging and timing the echo, so a
-			// bot that stayed quiet would look like a connection that never
-			// answers: filling a lobby with bots would fill the log with
-			// phantom packet loss, and the one configuration that most needs
-			// measuring — a match under load — would be the one that could
-			// not be.
-			//
-			// Answering from the read goroutine is safe because Send only
-			// queues onto the channel that writePump owns.
-			if typ == protocol.TypePing {
-				var ping protocol.Ping
-				if codec.DecodePayload(payload, &ping) == nil {
-					if pong, err := codec.Encode(protocol.TypePong, protocol.Pong{T: ping.T}); err == nil {
-						_ = conn.Send(pong)
-					}
-				}
-				continue
-			}
-			log.Debug("bot received", "name", name, "type", typ)
-		}
-	}()
-
-	dir := protocol.Heading(rng.Intn(4))
-	var seq uint32
-
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-ticker.C:
-			// Mostly hold a heading, occasionally turn: a pure random walk
-			// barely leaves its spawn tile and would not exercise the viewport
-			// entering and leaving that snapshots are built around.
-			if rng.Intn(4) == 0 {
-				dir = protocol.Heading(rng.Intn(4))
-			}
-			seq++
-			move, err := codec.Encode(protocol.TypeMove, protocol.Move{Dir: dir, Seq: seq})
-			if err != nil {
-				return err
-			}
-			if err := conn.Send(move); err != nil {
-				return fmt.Errorf("send move: %w", err)
-			}
-		}
-	}
-}
-
-// signIn registers this bot's account and signs in, tolerating the name already
-// existing from an earlier run.
-//
-// The email is required by the server and is deliberately obvious junk on a
-// .invalid domain, which RFC 2606 reserves precisely so that nothing anybody
-// writes can ever reach a real mailbox.
-func signIn(conn transport.Conn, codec protocol.JSONCodec, name, password string) error {
-	send := func(register bool) error {
-		login := protocol.Login{Name: name, Password: password, Register: register}
-		if register {
-			login.Email = name + "@bots.invalid"
-		}
-		frame, err := codec.Encode(protocol.TypeLogin, login)
-		if err != nil {
-			return err
-		}
-		return conn.Send(frame)
-	}
-
-	if err := send(true); err != nil {
-		return fmt.Errorf("registro: %w", err)
-	}
-
-	// The server answers a login with an account card on success and an error
-	// on failure, and keeps the connection open either way so a typo does not
-	// cost a reconnect. Two attempts is all this needs: register, then sign in.
-	for attempts := 0; attempts < 2; attempts++ {
-		frame, err := conn.Recv()
-		if err != nil {
-			return fmt.Errorf("login: %w", err)
-		}
-		typ, _, err := codec.DecodeEnvelope(frame)
-		if err != nil {
-			continue
-		}
-		switch typ {
-		case protocol.TypeAccount:
-			return nil
-		case protocol.TypeError:
-			// Almost certainly "ese nombre ya está tomado" from a previous run.
-			if err := send(false); err != nil {
-				return fmt.Errorf("login: %w", err)
-			}
-		}
-	}
-	return fmt.Errorf("login rechazado para %s", name)
 }

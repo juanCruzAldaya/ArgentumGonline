@@ -40,6 +40,15 @@ EXPOSE 8080
 # for half a second; two is the smallest number for which waiting is real, and
 # still small enough that two people can arrange a match between themselves.
 #
+# -fill 40 completa la cola con bots mientras haya al menos una persona
+# esperando, que es lo que hacen los battle royale comerciales cuando no hay
+# cola para armar una partida entera. Acá el problema es peor: un juego que se
+# comparte mandando un link empieza siempre con alguien solo mirando un
+# campamento vacío. Los bots viven adentro de este mismo proceso, hablan el
+# protocolo por un transport.Pipe y no tienen cuenta — así que no ensucian
+# /data/cuentas.log, que es lo que sí hace correr cmd/bot contra este servidor.
+# Sin nadie de verdad conectado se van solos, para que la máquina pueda dormir.
+#
 # -worlds has to be absolute here for the same reason the three data files are:
 # its default pattern is relative to server/, and this binary runs from /. The
 # glob matched nothing, so every match silently fell back to -map-file — a
@@ -59,4 +68,5 @@ ENTRYPOINT ["/server", \
     "-music-dir", "/music", \
     "-accounts", "/data/cuentas.log", \
     "-lobby-min", "2", \
-    "-lobby-wait", "20"]
+    "-lobby-wait", "20", \
+    "-fill", "40"]

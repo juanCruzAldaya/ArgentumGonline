@@ -200,6 +200,18 @@ type World struct {
 	match match
 	lobby lobby
 
+	// Relleno con bots. fillTo es a cuántos jugadores completar la cola y
+	// spawnBot es quién sabe crear uno — inyectado desde cmd/server para que
+	// este paquete no tenga que importar internal/bot. Ver fill.go.
+	fillTo   int
+	spawnBot func(ctx context.Context, name string, conn transport.Conn)
+	// botsPending son los largados que todavía no se sentaron, y botsLive el
+	// total de la tanda. botCtx/botStop los echan a todos de una.
+	botsPending int
+	botsLive    int
+	botCtx      context.Context
+	botStop     context.CancelFunc
+
 	// accounts is nil on a server without them; see accounts.go.
 	accounts Accounts
 	// accountNames maps a live entity to the account it signed in as.

@@ -49,6 +49,12 @@ type seat struct {
 	race    Race
 	hasChar bool
 
+	// bot marks a seat the filler created (see fill.go). Nothing in the
+	// simulation reads it: it is what lets the log say "de los cuarenta, seis
+	// eran personas" and what keeps the filler from counting its own bots as
+	// the company they were spawned to keep.
+	bot bool
+
 	// queued is whether this seat wants in on the next match. A seat that is
 	// not queued still gets lobby updates — it is looking at the screen — but
 	// is not counted toward starting anything.
@@ -127,10 +133,10 @@ func (w *World) SetLobby(minPlayers, waitSeconds int) {
 //
 // The seat starts without a character and out of the queue, so somebody can see
 // how many are already waiting before deciding to be one of them.
-func (w *World) EnterLobby(name, account string, conn transport.Conn) (*seat, error) {
+func (w *World) EnterLobby(name, account string, conn transport.Conn, isBot bool) (*seat, error) {
 	resp := make(chan *seat, 1)
 	select {
-	case w.seatCh <- seatReq{name: name, account: account, conn: conn, resp: resp}:
+	case w.seatCh <- seatReq{name: name, account: account, conn: conn, bot: isBot, resp: resp}:
 	case <-w.done:
 		return nil, ErrWorldClosed
 	}
@@ -200,6 +206,7 @@ type seatReq struct {
 	name    string
 	account string
 	conn    transport.Conn
+	bot     bool
 	resp    chan *seat
 }
 
@@ -224,7 +231,11 @@ func (w *World) addSeat(req seatReq) *seat {
 		name:    req.name,
 		account: req.account,
 		conn:    req.conn,
+		bot:     req.bot,
 		started: make(chan EntityID, 1),
+	}
+	if req.bot && w.botsPending > 0 {
+		w.botsPending--
 	}
 	w.lobby.seats[s.id] = s
 
@@ -431,6 +442,10 @@ func (w *World) startMatchFromLobby() {
 // lobbyTick advances the countdown and tells everybody waiting where things
 // stand.
 func (w *World) lobbyTick() {
+	// El relleno primero: si hace falta gente, que los bots ya estén en la
+	// cola cuando lobbyCheck decida si arranca la partida.
+	w.fillTick()
+
 	if w.lobby.counting {
 		w.lobbyCheck()
 	}

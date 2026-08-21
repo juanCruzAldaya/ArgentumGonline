@@ -30,22 +30,38 @@ const (
 // disconnects. It runs on the connection's own goroutine and touches no world
 // state directly.
 func (w *World) HandleConn(conn transport.Conn) {
+	w.serve(conn, "")
+}
+
+// serve is HandleConn's body, plus the one thing a fill bot needs that a real
+// connection does not: a name it was handed instead of one it signed in with.
+//
+// A non-empty botName means "skip the account handshake": the filler creates
+// these from inside the process and there is no account to authenticate, no
+// career to keep, and nothing to write to the accounts log. See fill.go.
+// Everything after this point is identical for both, which is the whole point —
+// the simulation never learns which is which.
+func (w *World) serve(conn transport.Conn, botName string) {
 	defer conn.Close()
 
 	// The server speaks first, once, so the client knows which handshake it is
 	// in before it draws anything.
 	w.sendHello(conn)
 
-	account, ok := w.signIn(conn)
-	if !ok {
-		return
+	account := botName
+	if botName == "" {
+		var ok bool
+		account, ok = w.signIn(conn)
+		if !ok {
+			return
+		}
 	}
 
 	// The lobby is what you land on the moment you are through the door, before
 	// there is a character to play — signing in and arriving at the camp are the
 	// same step. The seat exists from here on, and the Join that names a
 	// character comes later, from the lobby screen, on the way into the queue.
-	s, err := w.EnterLobby(account, account, conn)
+	s, err := w.EnterLobby(account, account, conn, botName != "")
 	if err != nil {
 		return
 	}

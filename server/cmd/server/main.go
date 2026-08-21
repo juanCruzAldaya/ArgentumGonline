@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"juegito/server/internal/account"
+	"juegito/server/internal/bot"
 	"juegito/server/internal/protocol"
 	"juegito/server/internal/transport"
 	"juegito/server/internal/world"
@@ -64,6 +65,7 @@ func main() {
 		restart    = flag.Int("match-restart", 20, "seconds between a match being decided and the next one starting; 0 leaves the finished match standing")
 		lobbyMin   = flag.Int("lobby-min", 1, "cuantos en la cola hacen falta para empezar una partida; 1, el default, arranca apenas entra alguien, que es como se comportaba el servidor antes de que existiera el lobby")
 		lobbyWait  = flag.Int("lobby-wait", 0, "segundos de cuenta regresiva una vez que la cola llego al minimo; 0 arranca en el acto")
+		fill       = flag.Int("fill", 0, "a cuántos jugadores completar la cola con bots mientras haya al menos una persona esperando; 0, el default, no rellena nada")
 		deathExit  = flag.Int("death-exit", 5, "segundos que un eliminado se queda de fantasma antes de volver al campamento; 0 lo deja en el mapa hasta que termine la partida")
 	)
 	flag.Parse()
@@ -190,6 +192,22 @@ func main() {
 		// symptom on screen ("no conozco los hechizos, el mapa no renderiza")
 		// never pointed back at the flag that caused it.
 		log.Warn("arrancando sin datos de juego", "estado", status)
+	}
+
+	// El relleno con bots. El mundo no importa internal/bot —sería un ciclo, y
+	// además la simulación no tiene por qué poder nombrar a los bots— así que
+	// acá se le pasa quién sabe crear uno. Del otro lado del pipe hay un
+	// cliente igual a cualquiera.
+	if *fill > 0 {
+		w.SetFill(*fill, func(ctx context.Context, name string, conn transport.Conn) {
+			_ = bot.Play(ctx, conn, bot.Config{
+				Name:     name,
+				Seed:     time.Now().UnixNano() + int64(len(name)),
+				Interval: 200 * time.Millisecond,
+				Temper:   bot.DefaultTemper(),
+			})
+		})
+		log.Info("relleno con bots activo", "hasta", *fill)
 	}
 
 	go w.Run(ctx)
