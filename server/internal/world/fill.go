@@ -16,7 +16,14 @@ package world
 //     una persona, no para jugar solo. Además la máquina de Fly duerme cuando
 //     no queda ninguna conexión, y un servidor que se rellena a sí mismo no se
 //     dormiría nunca: serían cuarenta bots peleando toda la noche a cuenta de
-//     alguien.
+//     alguien. "De verdad" es quien apretó entrar, no quien mira: el que está
+//     sentado sin encolarse no pidió una partida.
+//   - **Entran de a poco, no de golpe.** El objetivo es siempre cuarenta menos
+//     los que ya están, pero repartido a lo largo de la cuenta regresiva: la
+//     sala se llena mientras corre el reloj, como se llena la de un battle
+//     royale. Aparecer los treinta y nueve en un segundo delata lo que son, y
+//     además le saca sentido a la espera — si a los diez segundos ya están
+//     todos, los dos minutos no están esperando a nadie.
 //   - **No tienen cuenta.** Entran por serve() con un nombre en la mano,
 //     salteando el login. No se registran, no escriben en el log de cuentas y
 //     no tienen carrera — que es exactamente el problema que hoy ensucia el
@@ -47,10 +54,10 @@ func (w *World) SetFill(to int, spawn func(ctx context.Context, name string, con
 	w.spawnBot = spawn
 }
 
-// fillPerTick limita cuántos bots se largan por tick. Cuarenta goroutines de
-// golpe, cada una mandando su join y su queue en el mismo instante, mediría el
-// camino de entrada en vez de la partida — el mismo motivo por el que cmd/bot
-// escalona sus conexiones. A dos por tick, una partida se llena en un segundo.
+// fillPerTick limita cuántos bots se largan por tick, aun cuando la rampa
+// pediría más. Cuarenta goroutines de golpe, cada una mandando su join y su
+// queue en el mismo instante, mediría el camino de entrada en vez de la
+// partida — el mismo motivo por el que cmd/bot escalona sus conexiones.
 const fillPerTick = 2
 
 // fillTick decide si hace falta más gente y larga lo que falte. Corre una vez
@@ -66,7 +73,8 @@ func (w *World) fillTick() {
 		return
 	}
 
-	if w.humansSeated() == 0 {
+	humans := w.humansQueued()
+	if humans == 0 {
 		w.dismissBots()
 		return
 	}
@@ -76,18 +84,78 @@ func (w *World) fillTick() {
 	// siguiente. Sin contarlos, cada tick volvería a ver la cola corta y
 	// largaría otros dos, y para cuando el primero apareciera habría cuarenta
 	// de más. botsPending baja en addSeat, donde el asiento realmente existe.
-	missing := w.fillTo - w.queuedCount() - w.botsPending
-	for range min(missing, fillPerTick) {
+	have := w.queuedCount() + w.botsPending
+
+	// Antes de que arranque el reloj hay un solo trabajo: llegar al mínimo que
+	// lo dispara. Una persona sola nunca alcanza los dos que pide el lobby, así
+	// que sin esto no habría cuenta regresiva sobre la cual repartir nada — y
+	// el relleno se quedaría esperando un reloj que espera al relleno.
+	if !w.lobby.counting {
+		if have < w.lobby.minPlayers {
+			w.launchBot()
+		}
+		return
+	}
+
+	for range min(w.fillTarget(humans)-have, fillPerTick) {
 		w.launchBot()
 	}
 }
 
-// humansSeated es cuánta gente de verdad está mirando el campamento. Un asiento
-// sin bot detrás es una persona: los bots son los únicos que entran sin cuenta.
+// fillTarget es cuántos tiene que haber en la cola AHORA: el total menos los
+// que faltan por llegar, repartido a lo largo de lo que queda de cuenta
+// regresiva.
+//
+// La rampa es lineal contra el reloj de la cuenta y no contra un ritmo fijo,
+// para que el último bot entre junto con el final de la espera sin importar
+// cuánto dure. Cambiar -lobby-wait cambia la pendiente y nada más.
+//
+// Las personas no se descuentan de la rampa sino del total: si entran treinta,
+// los bots que faltan son diez y esos diez se reparten igual en el tiempo. Y si
+// entran cuarenta, no entra ninguno.
+func (w *World) fillTarget(humans int) int {
+	room := w.fillTo - humans
+	if room <= 0 {
+		return humans
+	}
+	if w.lobby.waitTicks == 0 {
+		return w.fillTo // sin espera no hay rampa posible: se llena y arranca
+	}
+	// startAt es el tick en que la cuenta termina, así que lo que queda es la
+	// distancia hasta ahí. Se acota por abajo porque el último tick puede
+	// pasarse.
+	left := uint64(0)
+	if w.lobby.startAt > w.tick {
+		left = w.lobby.startAt - w.tick
+	}
+	elapsed := w.lobby.waitTicks - min(left, w.lobby.waitTicks)
+	return humans + int(uint64(room)*elapsed/w.lobby.waitTicks)
+}
+
+// humansSeated es cuánta gente de verdad está conectada al campamento, esté
+// esperando para jugar o sólo mirando. Un asiento sin bot detrás es una
+// persona: los bots son los únicos que entran sin cuenta.
+//
+// Es lo que decide si el relleno se queda o se va, y por eso cuenta también al
+// que mira: echar a los bots porque alguien todavía no apretó entrar dejaría la
+// sala vacía justo cuando está por llenarse.
 func (w *World) humansSeated() int {
 	n := 0
 	for _, s := range w.lobby.seats {
 		if !s.bot {
+			n++
+		}
+	}
+	return n
+}
+
+// humansQueued es cuánta gente pidió jugar. Es la que manda el relleno: el que
+// mira el campamento sin encolarse no pidió una partida, y llenarle una sala
+// que no va a usar es gastar la máquina en nadie.
+func (w *World) humansQueued() int {
+	n := 0
+	for _, s := range w.lobby.seats {
+		if !s.bot && s.queued {
 			n++
 		}
 	}
