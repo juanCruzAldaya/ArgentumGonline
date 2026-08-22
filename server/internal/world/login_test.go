@@ -170,6 +170,7 @@ func TestLoginThenJoin(t *testing.T) {
 	conn := &scriptedConn{}
 	conn.push(t, protocol.TypeLogin, protocol.Login{Name: "wachin", Email: "wachin@ejemplo.com", Password: "seiscaracteres", Register: true})
 	conn.push(t, protocol.TypeJoin, protocol.Join{Name: "otro", Class: 0, Race: 0})
+	conn.push(t, protocol.TypeQueue, protocol.Queue{Join: true})
 	w.HandleConn(conn)
 
 	var got protocol.Account
@@ -206,6 +207,7 @@ func TestSignInNeedsNoEmail(t *testing.T) {
 	conn := &scriptedConn{}
 	conn.push(t, protocol.TypeLogin, protocol.Login{Name: "wachin", Password: "seiscaracteres"})
 	conn.push(t, protocol.TypeJoin, protocol.Join{Class: 0, Race: 0})
+	conn.push(t, protocol.TypeQueue, protocol.Queue{Join: true})
 	w.HandleConn(conn)
 
 	var welcome protocol.Welcome
@@ -229,6 +231,7 @@ func TestTheJoinCannotRenameAnAccount(t *testing.T) {
 	conn := &scriptedConn{}
 	conn.push(t, protocol.TypeLogin, protocol.Login{Name: "wachin", Password: "seiscaracteres"})
 	conn.push(t, protocol.TypeJoin, protocol.Join{Name: "ElVerdaderoCampeon"})
+	conn.push(t, protocol.TypeQueue, protocol.Queue{Join: true})
 	w.HandleConn(conn)
 
 	var welcome protocol.Welcome
@@ -263,6 +266,7 @@ func TestAWrongPasswordCanBeRetried(t *testing.T) {
 	conn.push(t, protocol.TypeLogin, protocol.Login{Name: "wachin", Password: "equivocada"})
 	conn.push(t, protocol.TypeLogin, protocol.Login{Name: "wachin", Password: "seiscaracteres"})
 	conn.push(t, protocol.TypeJoin, protocol.Join{})
+	conn.push(t, protocol.TypeQueue, protocol.Queue{Join: true})
 	w.HandleConn(conn)
 
 	types := conn.types()
@@ -310,6 +314,9 @@ func TestWithoutAccountsTheJoinStillCarriesTheName(t *testing.T) {
 
 	conn := &scriptedConn{}
 	conn.push(t, protocol.TypeJoin, protocol.Join{Name: "wachin"})
+	// Y a la cola: elegir personaje ya no encola solo — son dos gestos, ver
+	// seatCharacter. Sin esto la partida no arranca y no hay Welcome.
+	conn.push(t, protocol.TypeQueue, protocol.Queue{Join: true})
 	w.HandleConn(conn)
 
 	var welcome protocol.Welcome

@@ -115,6 +115,15 @@ func (w *World) matchTick() {
 		// a restart. There is no winner to announce and nobody to send a card
 		// to, so this goes straight back to the lobby instead of through
 		// endMatch.
+		// El relleno no tiene a quién acompañar si la última persona se fue a
+		// mitad de partida. Sin esto los bots siguen peleando entre ellos hasta
+		// que quede uno —hasta un cuarto de hora con la zona en su ritmo
+		// normal— y mientras tanto la máquina no puede dormir, porque dormir
+		// depende de que no quede ninguna conexión. Echarlos deja el mundo sin
+		// jugadores, y de ahí se encarga el caso de abajo, que ya existía.
+		if w.fillTo > 0 && w.botsLive > 0 && w.humansSeated() == 0 {
+			w.dismissBots()
+		}
 		if len(w.players) == 0 {
 			w.log.Info("partida vacía, vuelve el lobby", "tick", w.tick)
 			w.match.phase = matchLobby

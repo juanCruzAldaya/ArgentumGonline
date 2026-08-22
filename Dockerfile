@@ -40,6 +40,13 @@ EXPOSE 8080
 # for half a second; two is the smallest number for which waiting is real, and
 # still small enough that two people can arrange a match between themselves.
 #
+# -lobby-wait 120 son dos minutos de cuenta regresiva desde que la cola llega al
+# mínimo. Es largo a propósito y el relleno es la razón: con bots completando
+# los cuarenta al instante, una espera corta arrancaría la partida antes de que
+# nadie más alcance a llegar, y el único momento en que dos personas pueden
+# coincidir es esa ventana. Dos minutos es lo que tarda alguien en abrir un
+# link que le mandaron.
+#
 # -fill 40 completa la cola con bots mientras haya al menos una persona
 # esperando, que es lo que hacen los battle royale comerciales cuando no hay
 # cola para armar una partida entera. Acá el problema es peor: un juego que se
@@ -68,5 +75,5 @@ ENTRYPOINT ["/server", \
     "-music-dir", "/music", \
     "-accounts", "/data/cuentas.log", \
     "-lobby-min", "2", \
-    "-lobby-wait", "20", \
+    "-lobby-wait", "120", \
     "-fill", "40"]

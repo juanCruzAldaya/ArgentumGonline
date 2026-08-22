@@ -260,11 +260,17 @@ func (w *World) seatCharacter(req charReq) *seat {
 	s.class = req.class
 	s.race = req.race
 	s.hasChar = true
-	s.queued = true
 
-	// Evaluated right here rather than left to the next tick. See SeatCharacter
-	// for why that is load-bearing and not just an optimisation.
-	w.lobbyCheck()
+	// Elegir personaje NO te mete en la cola. Son dos gestos distintos y el
+	// campamento los muestra como tales: primero decidís quién sos, después
+	// decidís que querés jugar. Encolar acá hacía que la partida te arrastrara
+	// apenas terminabas de elegir, sin que nadie te preguntara — y es el otro
+	// lado de la confusión de la sesión del 21, donde estar sentado se veía
+	// igual que estar en la cola. El cliente manda un Queue explícito cuando
+	// apretás el botón; ver SetQueued.
+	//
+	// No hace falta lobbyCheck: sin cambiar la cola, no hay nada que
+	// re-decidir.
 	return s
 }
 

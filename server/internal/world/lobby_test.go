@@ -129,12 +129,15 @@ func sitConn(t *testing.T, w *World) *liveConn {
 	return conn
 }
 
-// seatConn goes one step further and names a character, which is what the lobby
-// screen sends on the way into the queue — and what queues the seat.
+// seatConn nombra un personaje y pide entrar a la cola: los dos gestos que hace
+// alguien en el campamento. Son dos mensajes y no uno porque son dos decisiones
+// — elegir quién sos no es lo mismo que decir que querés jugar; ver
+// seatCharacter.
 func seatConn(t *testing.T, w *World, name string) *liveConn {
 	t.Helper()
 	conn := sitConn(t, w)
 	conn.push(t, protocol.TypeJoin, protocol.Join{Name: name})
+	conn.push(t, protocol.TypeQueue, protocol.Queue{Join: true})
 	return conn
 }
 
@@ -195,10 +198,11 @@ func TestWatchingWithoutQueueingDoesNotCount(t *testing.T) {
 	never(t, "arrancó con uno solo en la cola", func() bool {
 		return uno.got(protocol.TypeWelcome, nil)
 	})
-	// Y elegir personaje sí la arranca, que es lo que prueba que mirar sin
-	// jugar no rompió la cola sino que simplemente no contaba.
+	// Y pedir entrar sí la arranca, que es lo que prueba que mirar sin jugar no
+	// rompió la cola sino que simplemente no contaba.
 	dos.push(t, protocol.TypeJoin, protocol.Join{Name: "dos"})
-	eventually(t, "elige personaje y arranca", func() bool {
+	dos.push(t, protocol.TypeQueue, protocol.Queue{Join: true})
+	eventually(t, "pide entrar y arranca", func() bool {
 		return uno.got(protocol.TypeWelcome, nil) && dos.got(protocol.TypeWelcome, nil)
 	})
 }
@@ -249,10 +253,12 @@ func TestMatchEndReturnsSeatsToTheLobby(t *testing.T) {
 	}
 
 	w.seatCharacter(charReq{seat: first.id, name: "uno"})
+	w.setQueued(queueReq{seat: first.id, join: true})
 	if w.match.phase != matchLobby {
 		t.Fatalf("con uno solo en la cola la fase es %v, se esperaba matchLobby", w.match.phase)
 	}
 	w.seatCharacter(charReq{seat: second.id, name: "dos"})
+	w.setQueued(queueReq{seat: second.id, join: true})
 	if w.match.phase != matchRunning {
 		t.Fatalf("con dos en la cola la fase es %v, se esperaba matchRunning", w.match.phase)
 	}
@@ -338,9 +344,17 @@ func TestLobbyArrivesBeforeAnyCharacter(t *testing.T) {
 		return mirando.got(protocol.TypeWelcome, nil)
 	})
 
-	// Y recién el join lo mete en la cola.
+	// Elegir personaje tampoco lo encola: sigue mirando, ahora con un personaje
+	// elegido. Son dos gestos distintos.
 	mirando.push(t, protocol.TypeJoin, protocol.Join{Name: "wachin"})
-	eventually(t, "el join lo encola", func() bool {
+	never(t, "el join solo lo encoló", func() bool {
+		var state protocol.LobbyState
+		return mirando.got(protocol.TypeLobby, &state) && state.Mine
+	})
+
+	// Y recién el "quiero jugar" lo mete en la cola.
+	mirando.push(t, protocol.TypeQueue, protocol.Queue{Join: true})
+	eventually(t, "pedir entrar lo encola", func() bool {
 		var state protocol.LobbyState
 		return mirando.got(protocol.TypeLobby, &state) && state.Mine && state.Queued == 1
 	})
