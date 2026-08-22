@@ -15,7 +15,7 @@ func TestKillTurnsTheVictimIntoAGhost(t *testing.T) {
 	victim.Body, victim.Head = 3, 4
 	victim.Heading = protocol.North
 
-	w.kill(victim, killer)
+	w.kill(victim, killer, "")
 
 	if !victim.Dead {
 		t.Fatal("the victim is not dead")
@@ -63,7 +63,7 @@ func TestKillClearsStatusEffectsAndHiding(t *testing.T) {
 	victim.AgilityDelta, victim.AgilityUntil = 5, w.tick+500
 	victim.StrengthDelta, victim.StrengthUntil = -5, w.tick+500
 
-	w.kill(victim, killer)
+	w.kill(victim, killer, "")
 
 	if victim.paralyzed(w.tick) || victim.immobilized(w.tick) {
 		t.Error("the ghost is still counting down a paralysis")
@@ -81,7 +81,7 @@ func TestKillCreditsTheKiller(t *testing.T) {
 	killer, _ := place(t, w, "asesino", 5, 6)
 	for i := 0; i < 3; i++ {
 		victim, _ := place(t, w, "victima", 10+i, 10)
-		w.kill(victim, killer)
+		w.kill(victim, killer, "")
 	}
 	if killer.Kills != 3 {
 		t.Errorf("kills = %d, want 3", killer.Kills)
@@ -94,7 +94,7 @@ func TestASelfInflictedDeathCreditsNobody(t *testing.T) {
 	w := combatWorld(t)
 	p, _ := place(t, w, "wachin", 5, 5)
 
-	w.kill(p, nil)
+	w.kill(p, nil, "")
 
 	if !p.Dead {
 		t.Fatal("the player is not dead")
@@ -109,8 +109,8 @@ func TestKillIsIdempotent(t *testing.T) {
 	victim, _ := place(t, w, "victima", 5, 5)
 	killer, _ := place(t, w, "asesino", 5, 6)
 
-	w.kill(victim, killer)
-	w.kill(victim, killer)
+	w.kill(victim, killer, "")
+	w.kill(victim, killer, "")
 
 	if killer.Kills != 1 {
 		t.Errorf("kills = %d, want 1: killing a corpse counted twice", killer.Kills)

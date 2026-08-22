@@ -45,10 +45,15 @@ const (
 	TypeQueue MsgType = "queue"
 
 	// Server -> client.
-	TypeWelcome   MsgType = "welcome"
-	TypeSnapshot  MsgType = "snapshot"
-	TypeLoadout   MsgType = "loadout"
-	TypeCombat    MsgType = "combat"
+	TypeWelcome  MsgType = "welcome"
+	TypeSnapshot MsgType = "snapshot"
+	TypeLoadout  MsgType = "loadout"
+	TypeCombat   MsgType = "combat"
+	// TypeKill es el aviso de baja, y va a TODO el mundo — no por viewport y no
+	// sólo a los dos involucrados como TypeCombat. Es el feed que hace que una
+	// partida se sienta poblada: saber que quedan doce y que alguien está
+	// arrasando es información del género, no de la pelea.
+	TypeKill      MsgType = "kill"
 	TypeSpell     MsgType = "spell"
 	TypeUseResult MsgType = "useResult"
 	TypeSpeech    MsgType = "speech"
@@ -318,6 +323,32 @@ type Loadout struct {
 	Inventory []InventorySlot `json:"inv"`
 	Spells    []int           `json:"spells"`
 }
+
+// KillEvent anuncia una baja a toda la partida.
+//
+// Killer vacío significa que no hubo asesino: la zona, o una poción que resultó
+// veneno. El cliente redacta la línea a partir de eso en vez de recibirla
+// escrita, para que el idioma viva de un solo lado.
+type KillEvent struct {
+	KillerName string `json:"k,omitempty"`
+	VictimName string `json:"v"`
+	// Cause distingue las muertes sin asesino entre sí. Vacío cuando Killer
+	// tiene algo, que es el caso normal.
+	Cause KillCause `json:"c,omitempty"`
+	// Placement es el puesto en que quedó el eliminado, y Alive cuántos siguen
+	// en pie después de esta baja. Los dos son la lectura de battle royale que
+	// convierte "murió alguien" en "quedan once".
+	Placement int `json:"p,omitempty"`
+	Alive     int `json:"a"`
+}
+
+// KillCause nombra las muertes que nadie causó.
+type KillCause string
+
+const (
+	CauseZone KillCause = "zona"
+	CauseSelf KillCause = "propia"
+)
 
 // Attack swings at whoever is standing on the tile the player faces. There is
 // no target field on purpose: melee in Argentum hits the square in front of

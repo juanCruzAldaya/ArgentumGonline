@@ -344,8 +344,8 @@ func TestEachPlayerIsRecordedOncePerMatch(t *testing.T) {
 	w.setAccount(b.ID, "b")
 	w.setAccount(c.ID, "c")
 
-	w.kill(b, a)
-	w.kill(c, a)
+	w.kill(b, a, "")
+	w.kill(c, a, "")
 	w.matchTick()
 
 	accounts.mu.Lock()

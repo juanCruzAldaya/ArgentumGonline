@@ -296,7 +296,7 @@ func (w *World) applySpellDamage(caster, victim *Player, spell Spell, event *pro
 	event.Damage = damage
 	if victim.Vitals.HP <= 0 {
 		event.Killed = true
-		w.kill(victim, caster)
+		w.kill(victim, caster, "")
 		w.log.Info("player killed by spell",
 			"victim", victim.Name, "by", caster.Name, "spell", spell.Name, "alive", w.aliveCount())
 	}

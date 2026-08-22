@@ -417,7 +417,7 @@ func TestGhostsStayInTheViewport(t *testing.T) {
 	watcher, _ := place(t, w, "vivo", 10, 10)
 	victim, _ := place(t, w, "muerto", 11, 10)
 
-	w.kill(victim, watcher)
+	w.kill(victim, watcher, "")
 
 	if _, blocks := w.occupied[tileKey{11, 10}]; blocks {
 		t.Error("el cadáver sigue bloqueando su tile")
@@ -445,7 +445,7 @@ func TestReviveClearsTheCorpseIndex(t *testing.T) {
 	watcher, _ := place(t, w, "vivo", 10, 10)
 	victim, _ := place(t, w, "muerto", 11, 10)
 
-	w.kill(victim, watcher)
+	w.kill(victim, watcher, "")
 	w.revive(victim, 12, 10)
 
 	if len(w.corpses) != 0 {
@@ -470,7 +470,7 @@ func TestLeavingWhileDeadClearsTheCorpseIndex(t *testing.T) {
 	watcher, _ := place(t, w, "vivo", 10, 10)
 	victim, _ := place(t, w, "muerto", 11, 10)
 
-	w.kill(victim, watcher)
+	w.kill(victim, watcher, "")
 	w.removePlayer(victim.ID)
 
 	if len(w.corpses) != 0 {
@@ -492,7 +492,7 @@ func TestSeveralCorpsesShareATile(t *testing.T) {
 	var dead []*Player
 	for i := 0; i < 3; i++ {
 		p, _ := place(t, w, "muerto", 12, 10)
-		w.kill(p, watcher)
+		w.kill(p, watcher, "")
 		dead = append(dead, p)
 	}
 

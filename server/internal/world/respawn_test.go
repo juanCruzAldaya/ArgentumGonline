@@ -10,7 +10,7 @@ func TestWithoutTheFlagDeathIsStillForever(t *testing.T) {
 	w := combatWorld(t)
 	victim, _ := place(t, w, "victima", 5, 5)
 
-	w.kill(victim, nil)
+	w.kill(victim, nil, "")
 	if victim.respawnAt != 0 {
 		t.Fatalf("respawnAt = %d, want 0: no flag, no respawn", victim.respawnAt)
 	}
@@ -30,7 +30,7 @@ func TestRespawnWaitsItsDelayAndComesBackInTheMiddle(t *testing.T) {
 	victim, _ := place(t, w, "victima", 5, 5)
 	victim.Kills = 3
 
-	w.kill(victim, nil)
+	w.kill(victim, nil, "")
 	if want := w.tick + uint64(5*w.tickRate); victim.respawnAt != want {
 		t.Fatalf("respawnAt = %d, want %d", victim.respawnAt, want)
 	}
@@ -104,8 +104,8 @@ func TestTwoRespawnsOnTheSameTickDoNotShareATile(t *testing.T) {
 	first, _ := place(t, w, "uno", 5, 5)
 	second, _ := place(t, w, "dos", 7, 7)
 
-	w.kill(first, nil)
-	w.kill(second, nil)
+	w.kill(first, nil, "")
+	w.kill(second, nil, "")
 	for i := 0; i <= w.tickRate; i++ {
 		w.tick++
 		w.respawnDue()

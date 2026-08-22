@@ -117,6 +117,7 @@ func _ready() -> void:
 	_net.snapshot_received.connect(_on_snapshot)
 	_net.loadout_received.connect(_hud.set_loadout)
 	_net.combat_received.connect(_on_combat)
+	_net.kill_received.connect(_on_kill)
 	_net.spell_received.connect(_on_spell)
 	_net.speech_received.connect(_on_speech)
 	_net.projectile_received.connect(_view.play_projectile)
@@ -365,6 +366,52 @@ func _tell_blocked(text: String) -> void:
 		return
 	_told_blocked = true
 	_hud.log_line(text, _hud.COLOR_TEXT_DIM)
+
+
+## El feed de bajas: quién mató a quién, para todos los de la partida.
+##
+## Es lo que hace que el mapa se sienta habitado cuando no ves a nadie —
+## cuarenta jugadores en un mundo de 760x760 se cruzan poco, y sin esto una
+## partida entera puede parecer vacía hasta que la zona te empuja contra
+## alguien. El "quedan N" al lado es la lectura del género: no es lo mismo una
+## baja con treinta vivos que con tres.
+##
+## La línea se redacta acá y no llega escrita del servidor, para que el idioma
+## viva de un solo lado.
+func _on_kill(event: Dictionary) -> void:
+	var killer := str(event.get("k", ""))
+	var victim := str(event.get("v", "alguien"))
+	var alive := int(event.get("a", 0))
+	var mine := victim == _player_name
+	var text := ""
+
+	if killer == "":
+		match str(event.get("c", "")):
+			"zona":
+				text = "%s no llegó a tiempo." % victim
+			"propia":
+				text = "%s se envenenó solo." % victim
+			_:
+				text = "%s cayó." % victim
+	elif killer == _player_name:
+		text = "Mataste a %s." % victim
+	elif mine:
+		text = "%s te mató." % killer
+	else:
+		text = "%s mató a %s." % [killer, victim]
+
+	# Lo tuyo va en color; lo de los demás, apagado. Con cuarenta jugadores el
+	# feed corre solo, y lo que importa es que tu propia línea se distinga de
+	# las treinta y nueve que no te involucran.
+	var color := _hud.COLOR_TEXT_DIM
+	if killer == _player_name:
+		color = _hud.COLOR_HP
+	elif mine:
+		color = _hud.COLOR_EXP
+
+	if alive > 1:
+		text += "  Quedan %d." % alive
+	_hud.log_line(text, color)
 
 
 ## Combat lines are worded the way Argentum words them, from the point of view

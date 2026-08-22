@@ -222,7 +222,7 @@ func (w *World) drinkPotion(p *Player, idx int, item Item) {
 	// Nobody is credited with the kill — you did this to yourself.
 	consumeStack(p, idx)
 	if result.Died {
-		w.kill(p, nil)
+		w.kill(p, nil, protocol.CauseSelf)
 	}
 	w.sendLoadout(p)
 	w.sendTo(p, protocol.TypeUseResult, result)

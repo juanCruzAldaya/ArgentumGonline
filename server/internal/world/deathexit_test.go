@@ -63,7 +63,7 @@ func TestAnEliminatedPlayerGoesBackToTheCamp(t *testing.T) {
 	seats, players := playFromLobby(t, w, "uno", "dos", "tres")
 
 	victim := players[0]
-	w.kill(victim, players[1])
+	w.kill(victim, players[1], "")
 
 	// El cuerpo se queda unos segundos: la tarjeta recién apareció y el que
 	// mató está parado al lado.
@@ -106,7 +106,7 @@ func TestWhatTheDeadDroppedStaysOnTheMap(t *testing.T) {
 
 	victim := players[0]
 	victim.Inventory = []protocol.InventorySlot{{Slot: 0, ItemID: 480, Amount: 7}}
-	w.kill(victim, players[1])
+	w.kill(victim, players[1], "")
 
 	before := len(w.ground)
 	if before == 0 {
@@ -129,7 +129,7 @@ func TestADirectJoinStaysOnTheMap(t *testing.T) {
 	dos, _ := place(t, w, "dos", 12, 10)
 	w.startMatchIfIdle()
 
-	w.kill(uno, dos)
+	w.kill(uno, dos, "")
 	for i := 0; i < 3*w.tickRate; i++ {
 		w.step()
 	}
@@ -147,7 +147,7 @@ func TestRespawnKeepsTheGhost(t *testing.T) {
 	w.SetRespawnDelay(2)
 	_, players := playFromLobby(t, w, "uno", "dos")
 
-	w.kill(players[0], players[1])
+	w.kill(players[0], players[1], "")
 	if players[0].exitAt != 0 {
 		t.Fatalf("exitAt=%d con respawn puesto, esperaba 0", players[0].exitAt)
 	}
@@ -172,7 +172,7 @@ func TestTheWinnerReachesSomebodyWhoAlreadyLeft(t *testing.T) {
 	conn := seats[0].conn.(*fakeConn)
 
 	// El primero muere y se va al campamento.
-	w.kill(players[0], players[2])
+	w.kill(players[0], players[2], "")
 	cards := conn.countOfType(t, protocol.TypeOutcome)
 	if cards != 1 {
 		t.Fatalf("recibió %d tarjetas al morir, esperaba 1", cards)
@@ -185,7 +185,7 @@ func TestTheWinnerReachesSomebodyWhoAlreadyLeft(t *testing.T) {
 	}
 
 	// Y recién entonces se define la partida.
-	w.kill(players[1], players[2])
+	w.kill(players[1], players[2], "")
 	w.step()
 
 	if got := conn.countOfType(t, protocol.TypeOutcome); got != 2 {
@@ -211,7 +211,7 @@ func TestTheLastDeathStillDecidesTheMatch(t *testing.T) {
 	w.SetDeathExit(5)
 	_, players := playFromLobby(t, w, "uno", "dos")
 
-	w.kill(players[0], players[1])
+	w.kill(players[0], players[1], "")
 	w.step()
 
 	if w.match.phase != matchOver {
@@ -229,7 +229,7 @@ func TestANewMatchClearsTheOldCard(t *testing.T) {
 	w.SetDeathExit(1)
 	seats, players := playFromLobby(t, w, "uno", "dos", "tres")
 
-	w.kill(players[0], players[2])
+	w.kill(players[0], players[2], "")
 	for i := 0; i < w.tickRate+2; i++ {
 		w.step()
 	}

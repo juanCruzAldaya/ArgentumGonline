@@ -35,8 +35,8 @@ func TestMatchEndsWithTheLastPlayerStanding(t *testing.T) {
 	b, _ := place(t, w, "b", 7, 7)
 	c, _ := place(t, w, "c", 9, 9)
 
-	w.kill(b, a)
-	w.kill(c, a)
+	w.kill(b, a, "")
+	w.kill(c, a, "")
 	w.matchTick()
 
 	if w.match.phase != matchOver {
@@ -72,7 +72,7 @@ func TestOnePlayerNeverEndsTheMatch(t *testing.T) {
 	}
 
 	// Not even when they die: nobody is left to have beaten them.
-	w.kill(solo, nil)
+	w.kill(solo, nil, "")
 	w.matchTick()
 	if w.match.phase != matchRunning {
 		t.Errorf("fase = %v, una partida de uno no se decide", w.match.phase)
@@ -92,9 +92,9 @@ func TestPlacementIsFixedAtTheMomentOfDeath(t *testing.T) {
 	c, _ := place(t, w, "c", 7, 7)
 	d, _ := place(t, w, "d", 8, 8)
 
-	w.kill(d, a)
-	w.kill(c, a)
-	w.kill(b, a)
+	w.kill(d, a, "")
+	w.kill(c, a, "")
+	w.kill(b, a, "")
 	w.matchTick()
 
 	for _, want := range []struct {
@@ -117,7 +117,7 @@ func TestEliminationTellsThePlayerBeforeTheMatchIsDecided(t *testing.T) {
 	place(t, w, "c", 7, 7)
 
 	w.tick = 200 // ten seconds in, at 20 Hz
-	w.kill(victim, a)
+	w.kill(victim, a, "")
 
 	out := outcomeOf(t, w, conn)
 	if out.Placement != 3 {
@@ -144,7 +144,7 @@ func TestSecondsSurvivedCountsFromTheOwnJoin(t *testing.T) {
 	late, conn := place(t, w, "late", 6, 6)
 	w.tick = 1400 // ten seconds later
 
-	w.kill(late, nil)
+	w.kill(late, nil, "")
 	if out := outcomeOf(t, w, conn); out.Seconds != 10 {
 		t.Errorf("sobrevivió %.1fs, se esperaban 10 desde que entró", out.Seconds)
 	}
@@ -159,7 +159,7 @@ func TestRespawnKeepsTheMatchRunning(t *testing.T) {
 	a, _ := place(t, w, "a", 5, 5)
 	b, _ := place(t, w, "b", 6, 6)
 
-	w.kill(b, a)
+	w.kill(b, a, "")
 
 	// The window that used to end the match: a full second where the ghost is
 	// down and the count really does say one. Nothing may be decided in it.
@@ -184,8 +184,8 @@ func TestNobodyWinsWhenTheLastTwoDieTogether(t *testing.T) {
 	a, connA := place(t, w, "a", 5, 5)
 	b, _ := place(t, w, "b", 6, 6)
 
-	w.kill(a, nil)
-	w.kill(b, nil)
+	w.kill(a, nil, "")
+	w.kill(b, nil, "")
 	w.matchTick()
 
 	if w.match.phase != matchOver {
@@ -207,7 +207,7 @@ func TestRestartWaitsItsTime(t *testing.T) {
 	a, _ := place(t, w, "a", 5, 5)
 	b, _ := place(t, w, "b", 6, 6)
 
-	w.kill(b, a)
+	w.kill(b, a, "")
 	w.matchTick()
 	if w.match.phase != matchOver {
 		t.Fatalf("fase = %v, se esperaba matchOver", w.match.phase)
@@ -233,7 +233,7 @@ func TestRestartOffLeavesTheMatchStanding(t *testing.T) {
 	a, _ := place(t, w, "a", 5, 5)
 	b, _ := place(t, w, "b", 6, 6)
 
-	w.kill(b, a)
+	w.kill(b, a, "")
 	w.matchTick()
 	w.tick += 10000
 	w.matchTick()
@@ -254,7 +254,7 @@ func TestRestartPutsEveryoneBackAndRelaysTheFloor(t *testing.T) {
 	// Empty the floor so the reseed is the only thing that could refill it.
 	clear(w.ground)
 
-	w.kill(b, a)
+	w.kill(b, a, "")
 	w.matchTick()
 	w.tick += 20
 	w.matchTick()
@@ -299,8 +299,8 @@ func TestRestartGivesEveryoneTheirOwnTile(t *testing.T) {
 	b, _ := place(t, w, "b", 6, 6)
 	c, _ := place(t, w, "c", 7, 7)
 
-	w.kill(b, a)
-	w.kill(c, a)
+	w.kill(b, a, "")
+	w.kill(c, a, "")
 	w.matchTick()
 	w.tick += 20
 	w.matchTick()
@@ -337,7 +337,7 @@ func TestRestartStartsTheZoneOver(t *testing.T) {
 	firstRadius := w.zone.radius
 	w.zone.radius = 3
 
-	w.kill(b, a)
+	w.kill(b, a, "")
 	w.matchTick()
 	w.tick += 20
 	w.matchTick()
@@ -397,7 +397,7 @@ func TestRestartSpreadsBeyondTheOldFinalCircle(t *testing.T) {
 
 	// End the match with the ring squeezed into a corner.
 	w.zone.x, w.zone.y, w.zone.radius = 10, 10, 4
-	w.kill(b, a)
+	w.kill(b, a, "")
 	w.matchTick()
 	w.tick += 20
 	w.matchTick()

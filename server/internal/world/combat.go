@@ -243,7 +243,7 @@ func (w *World) attack(p *Player) {
 	w.reportCombat(p, victim, result, false)
 
 	if result.Killed {
-		w.kill(victim, p)
+		w.kill(victim, p, "")
 		w.log.Info("player killed", "victim", victim.Name, "by", p.Name, "alive", w.aliveCount())
 	}
 }
@@ -265,7 +265,7 @@ const (
 // bottle was consumed, and none of them turned the body into a ghost.
 //
 // killer may be nil: the black potion has no one to credit.
-func (w *World) kill(victim, killer *Player) {
+func (w *World) kill(victim, killer *Player, cause protocol.KillCause) {
 	if victim.Dead {
 		return
 	}
@@ -306,6 +306,38 @@ func (w *World) kill(victim, killer *Player) {
 	if killer != nil && killer.ID != victim.ID {
 		killer.Kills++
 	}
+
+	w.announceKill(victim, killer, cause)
+}
+
+// announceKill manda la baja a toda la partida.
+//
+// A todos y no por viewport, que es lo contrario de reportCombat: el daño es
+// entre dos, pero una baja es del estado de la partida. Es lo que hace que el
+// mapa se sienta habitado cuando no ves a nadie, y lo único que convierte
+// "quedan doce" en un número que se mira.
+//
+// Sale de kill() y no de cada lugar donde alguien muere porque kill() es el
+// único camino que todas las muertes comparten — melee, flecha, hechizo, la
+// zona y la poción que resultó veneno. Emitir desde los cinco sería cinco
+// oportunidades de olvidarse de uno.
+func (w *World) announceKill(victim, killer *Player, cause protocol.KillCause) {
+	event := protocol.KillEvent{
+		VictimName: victim.Name,
+		Cause:      cause,
+		Placement:  victim.Placement,
+		Alive:      w.aliveCount(),
+	}
+	if killer != nil && killer.ID != victim.ID {
+		event.KillerName = killer.Name
+		event.Cause = ""
+	}
+	for _, p := range w.players {
+		w.sendTo(p, protocol.TypeKill, event)
+	}
+	w.log.Info("baja",
+		"quien", event.KillerName, "a", event.VictimName,
+		"causa", event.Cause, "puesto", event.Placement, "vivos", event.Alive)
 }
 
 // reportCombat tells both sides what happened, each from their own side of it.

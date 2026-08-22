@@ -272,7 +272,7 @@ func TestMatchEndReturnsSeatsToTheLobby(t *testing.T) {
 		t.Error("los asientos no quedaron marcados como jugando")
 	}
 
-	w.kill(dos, uno)
+	w.kill(dos, uno, "")
 	w.matchTick()
 	if w.match.phase != matchOver {
 		t.Fatalf("fase = %v, se esperaba matchOver", w.match.phase)
@@ -310,7 +310,7 @@ func TestPlayersWithoutASeatStillRestartInPlace(t *testing.T) {
 	a, _ := place(t, w, "a", 5, 5)
 	b, _ := place(t, w, "b", 7, 7)
 
-	w.kill(b, a)
+	w.kill(b, a, "")
 	w.matchTick()
 	if w.match.phase != matchOver {
 		t.Fatalf("fase = %v, se esperaba matchOver", w.match.phase)

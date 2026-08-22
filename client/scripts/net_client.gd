@@ -11,6 +11,9 @@ signal welcomed(welcome: Dictionary)
 signal snapshot_received(snapshot: Dictionary)
 signal loadout_received(loadout: Dictionary)
 signal combat_received(event: Dictionary)
+## Una baja, con quién mató a quién. Llega a todos los de la partida y no sólo
+## a los dos involucrados, que es lo que la separa de combat_received.
+signal kill_received(event: Dictionary)
 signal spell_received(event: Dictionary)
 signal use_result_received(result: Dictionary)
 ## Una flecha —o una cuchilla— cruzando el piso. Llega a todo el que la ve
@@ -236,6 +239,8 @@ func _handle_frame(text: String) -> void:
 			loadout_received.emit(data)
 		"combat":
 			combat_received.emit(data)
+		"kill":
+			kill_received.emit(data)
 		"projectile":
 			projectile_received.emit(data)
 		"speech":

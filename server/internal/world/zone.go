@@ -489,7 +489,7 @@ func (w *World) applyZoneDamage(p *Player, damage int) {
 	}
 
 	p.Vitals.HP = 0
-	w.kill(p, nil)
+	w.kill(p, nil, protocol.CauseZone)
 	w.sendTo(p, protocol.TypeCombat, protocol.CombatEvent{
 		VictimID:   uint32(p.ID),
 		VictimName: p.Name,

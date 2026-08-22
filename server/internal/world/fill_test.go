@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"juegito/server/internal/protocol"
 	"juegito/server/internal/transport"
 )
 
@@ -246,5 +247,57 @@ func TestBotNamesAreUniqueAndLookLikePlayers(t *testing.T) {
 		seen[name] = true
 		// Ocuparlo, que es lo que pasa cuando el bot se sienta.
 		w.lobby.seats[seatID(i+1)] = &seat{id: seatID(i + 1), name: name, bot: true}
+	}
+}
+
+// El feed de bajas va a TODA la partida, no sólo a los dos involucrados.
+//
+// Es lo contrario de reportCombat, y a propósito: el daño es entre dos, pero
+// una baja es del estado de la partida. Con cuarenta jugadores en 760x760 te
+// cruzás con poca gente, y sin esto una partida entera puede parecer vacía.
+func TestAKillIsAnnouncedToEverybody(t *testing.T) {
+	w := matchWorld(t)
+	killer, killerConn := place(t, w, "Rakhar", 5, 5)
+	victim, _ := place(t, w, "Nahuel", 6, 5)
+	_, bystanderConn := place(t, w, "mirón", 40, 40) // lejísimos, fuera del viewport
+
+	w.kill(victim, killer, "")
+
+	// Al que no vio nada le llega igual: eso es lo que prueba que no va por
+	// viewport.
+	var event protocol.KillEvent
+	if err := w.codec.DecodePayload(bystanderConn.lastOfType(t, protocol.TypeKill), &event); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if event.KillerName != "Rakhar" || event.VictimName != "Nahuel" {
+		t.Errorf("el aviso dijo %q mató a %q", event.KillerName, event.VictimName)
+	}
+	if event.Alive != 2 {
+		t.Errorf("vivos = %d, esperaba 2", event.Alive)
+	}
+	// Y al que mató también: lastOfType corta el test si no hay ninguno.
+	killerConn.lastOfType(t, protocol.TypeKill)
+}
+
+// Una muerte sin asesino se anuncia igual, diciendo de qué fue. Sin esto, el
+// que se lo come el anillo desaparece de la partida sin que nadie se entere.
+func TestZoneAndSelfInflictedDeathsSayWhy(t *testing.T) {
+	for _, cause := range []protocol.KillCause{protocol.CauseZone, protocol.CauseSelf} {
+		w := matchWorld(t)
+		victim, _ := place(t, w, "Lyra", 5, 5)
+		_, conn := place(t, w, "testigo", 6, 5)
+
+		w.kill(victim, nil, cause)
+
+		var event protocol.KillEvent
+		if err := w.codec.DecodePayload(conn.lastOfType(t, protocol.TypeKill), &event); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if event.KillerName != "" {
+			t.Errorf("le adjudicó la muerte a %q", event.KillerName)
+		}
+		if event.Cause != cause {
+			t.Errorf("causa %q, esperaba %q", event.Cause, cause)
+		}
 	}
 }

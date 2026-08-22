@@ -220,7 +220,7 @@ func (w *World) shoot(p *Player, targetID EntityID) {
 	}
 
 	if result.Killed {
-		w.kill(victim, p)
+		w.kill(victim, p, "")
 		w.log.Info("player shot dead",
 			"victim", victim.Name, "by", p.Name, "arma", weapon.Name, "alive", w.aliveCount())
 	}
