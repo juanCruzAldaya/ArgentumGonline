@@ -48,20 +48,28 @@ func (w *World) serve(conn transport.Conn, botName string) {
 	// in before it draws anything.
 	w.sendHello(conn)
 
-	account := botName
-	if botName == "" {
+	// Un bot de relleno tiene nombre pero NO cuenta, y la diferencia importa
+	// más de lo que parece: la cuenta es lo que hace que al morir se le grabe
+	// la partida. Dándole el nombre también como cuenta —que es lo que hacía
+	// antes— el servidor intentaba archivarle la carrera a alguien que no está
+	// registrado, y cada baja de bot dejaba un ERROR "no existe esa cuenta" en
+	// el log. Treinta y nueve por partida.
+	isBot := botName != ""
+	name, account := botName, ""
+	if !isBot {
 		var ok bool
 		account, ok = w.signIn(conn)
 		if !ok {
 			return
 		}
+		name = account
 	}
 
 	// The lobby is what you land on the moment you are through the door, before
 	// there is a character to play — signing in and arriving at the camp are the
 	// same step. The seat exists from here on, and the Join that names a
 	// character comes later, from the lobby screen, on the way into the queue.
-	s, err := w.EnterLobby(account, account, conn, botName != "")
+	s, err := w.EnterLobby(name, account, conn, isBot)
 	if err != nil {
 		return
 	}
@@ -97,6 +105,16 @@ func (w *World) serve(conn transport.Conn, botName string) {
 		who = conn.RemoteAddr()
 	}
 	logLatency := func() {
+		// Un bot no tiene latencia que medir: habla por un transport.Pipe en
+		// memoria y mide cero por construcción. Loguearlo igual llenaba el log
+		// con treinta y ocho líneas cada media hora diciendo p50_ms=0, y como
+		// `fly logs` retiene cien líneas, eso tapaba la partida entera — las
+		// bajas, los cofres, la zona y las dos personas que sí interesan. El
+		// número existe para saber cómo la está pasando alguien conectado desde
+		// su casa.
+		if isBot {
+			return
+		}
 		p50, p95, max, got, lost := lat.summary(time.Now())
 		if got == 0 {
 			return
