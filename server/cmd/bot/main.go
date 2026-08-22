@@ -74,7 +74,7 @@ func main() {
 		go func(n int) {
 			defer wg.Done()
 			name := fmt.Sprintf("%s%02d", *prefix, n)
-			if err := dialAndPlay(ctx, *url, name, *password, *interval, temper); err != nil && ctx.Err() == nil {
+			if err := dialAndPlay(ctx, *url, name, *password, *interval, temper, log); err != nil && ctx.Err() == nil {
 				log.Error("bot stopped", "name", name, "err", err)
 			}
 		}(i)
@@ -84,7 +84,7 @@ func main() {
 	wg.Wait()
 }
 
-func dialAndPlay(ctx context.Context, url, name, password string, interval time.Duration, t bot.Temper) error {
+func dialAndPlay(ctx context.Context, url, name, password string, interval time.Duration, t bot.Temper, log *slog.Logger) error {
 	dialCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
@@ -111,5 +111,6 @@ func dialAndPlay(ctx context.Context, url, name, password string, interval time.
 		Seed:     time.Now().UnixNano() + int64(len(name)),
 		Interval: interval,
 		Temper:   t,
+		Log:      log,
 	})
 }

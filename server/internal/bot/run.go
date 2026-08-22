@@ -3,6 +3,7 @@ package bot
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"math/rand"
 	"time"
 
@@ -51,7 +52,7 @@ func Play(ctx context.Context, conn transport.Conn, cfg Config) error {
 	}
 
 	mind := &Brain{}
-	go readLoop(ctx, conn, codec, mind)
+	go readLoop(ctx, conn, codec, mind, cfg)
 
 	dir := protocol.Heading(rng.Intn(4))
 	var seq uint32
@@ -112,7 +113,7 @@ func Play(ctx context.Context, conn transport.Conn, cfg Config) error {
 // necesita. Drenar no es opcional: un cliente que no lee llena la cola de envío
 // del servidor y termina desconectado por lento, exactamente como una persona
 // con la conexión tapada.
-func readLoop(ctx context.Context, conn transport.Conn, codec protocol.JSONCodec, mind *Brain) {
+func readLoop(ctx context.Context, conn transport.Conn, codec protocol.JSONCodec, mind *Brain, cfg Config) {
 	go func() {
 		<-ctx.Done()
 		_ = conn.Close()
@@ -125,6 +126,12 @@ func readLoop(ctx context.Context, conn transport.Conn, codec protocol.JSONCodec
 		typ, payload, err := codec.DecodeEnvelope(frame)
 		if err != nil {
 			continue
+		}
+		// Con -debug, qué le llega. Es la sonda con la que se contesta "¿el
+		// servidor lo está mandando o el cliente no lo está mostrando?", que es
+		// la primera bifurcación de cualquier bug de mensaje que no aparece.
+		if cfg.Log != nil {
+			cfg.Log.Debug("bot recibió", "nombre", cfg.Name, "tipo", typ)
 		}
 		switch typ {
 		case protocol.TypePing:
@@ -176,4 +183,9 @@ type Config struct {
 	// dejaría avanzar igual.
 	Interval time.Duration
 	Temper   Temper
+	// Log es opcional: con él puesto y en nivel debug, el bot dice qué mensajes
+	// recibe. El relleno interno lo deja en nil — treinta y nueve bots narrando
+	// cada snapshot es exactamente el ruido que hubo que sacar del log de
+	// producción.
+	Log *slog.Logger
 }

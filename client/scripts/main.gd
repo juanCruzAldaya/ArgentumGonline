@@ -403,7 +403,11 @@ func _on_kill(event: Dictionary) -> void:
 	# Lo tuyo va en color; lo de los demás, apagado. Con cuarenta jugadores el
 	# feed corre solo, y lo que importa es que tu propia línea se distinga de
 	# las treinta y nueve que no te involucran.
-	var color := _hud.COLOR_TEXT_DIM
+	# Anotado y no inferido: _hud no está tipado, así que `:=` sobre una de sus
+	# constantes no tiene de dónde deducir el tipo y el script entero deja de
+	# parsear. Es la trampa de DIFICULTADES §5, y acá costó el cliente completo
+	# — sin main.gd no hay conexión, y la interfaz queda dibujada y muda.
+	var color: Color = _hud.COLOR_TEXT_DIM
 	if killer == _player_name:
 		color = _hud.COLOR_HP
 	elif mine:

@@ -884,6 +884,56 @@ tener una prueba de que la regla está mal. Acá había una prueba de que la
 cadencia era despareja, que no es lo mismo.
 
 
+## 23. El feed de bajas que no aparecía era el cliente entero sin arrancar
+
+Reportado como "las muertes no aparecen en la consola". Terminó siendo una
+línea de GDScript, y lo que costó no fue arreglarla sino llegar hasta ella.
+
+```gdscript
+var color := _hud.COLOR_TEXT_DIM   # no puede inferir el tipo
+```
+
+`_hud` no está tipado, así que `:=` no tiene de dónde deducir `Color`. Es la
+trampa del §5, ya documentada en este mismo archivo, escrita de nuevo. Pero
+acá el costo fue mayor que un error de compilación: **el script que no parsea
+es `main.gd`**, y sin `main.gd` el cliente no se conecta, no loguea, no juega.
+La interfaz se dibuja igual —el HUD es una escena, no depende del script— así
+que lo que el jugador ve es el juego completo, vacío y mudo. Un síntoma que no
+se parece en nada a la causa.
+
+### Lo que hizo perder el tiempo fue el filtro
+
+El chequeo de compilación se corrió, y en su salida estaba:
+
+```
+SCRIPT ERROR: Parse Error: Cannot infer the type of "color" variable
+   at: res://scripts/main.gd:406
+```
+
+No se vio porque el comando filtraba con `grep -iE "error|world_view"` — un
+filtro escrito mientras se tocaba `world_view.gd`, arrastrado a una corrida
+donde el archivo roto era otro. El error estaba impreso y el filtro lo tapó.
+
+La hora siguiente se fue verificando todo lo que **sí** funcionaba: el servidor
+emitía el mensaje, un bot headless lo recibía (`tipo=kill`), el `.pck`
+desplegado era el correcto, los mapas coincidían. Cada medición volvía en
+verde y cada una alejaba más, porque ninguna tocaba la parte rota.
+
+Lo que destrabó fue un dato del jugador: *"ni de incógnito"*. Eso mató la
+hipótesis del caché y obligó a preguntar algo que no se había preguntado —
+¿está llegando siquiera al servidor?— y el log de producción, sin una sola
+línea de conexión en veinte minutos, contestó que no.
+
+**Lección:** nunca filtrar la salida de un chequeo de compilación por nombre de
+archivo. Un compilador dice qué archivo está roto; si el filtro ya decidió cuál
+mirar, sólo puede confirmar lo que uno ya creía.
+
+**Y la de fondo, que es la misma del §11 y del §22:** cuando todas las
+mediciones dan bien y el síntoma sigue, lo que está mal es la pregunta. Medir
+que el mensaje sale, viaja y llega no prueba que algo lo dibuje — y nadie había
+preguntado si el cliente estaba vivo.
+
+
 ## Lo que quedó aprendido, en una línea cada uno
 
 1. Si el objetivo es "igual a esta imagen", usá la imagen.
@@ -938,7 +988,10 @@ cadencia era despareja, que no es lo mismo.
     que cambia la fuente. Y antes de investigar un síntoma visual, leer el log.
 23. Un test que no puede fallar no es cobertura. Se ve igual de verde que uno
     que sirve.
-24. Medir bien no es diagnosticar bien. Si un arreglo medido empeora la
+24. Nunca filtres la salida de un chequeo de compilación por nombre de archivo:
+    el compilador te dice qué archivo está roto, y un filtro que ya eligió cuál
+    mirar sólo puede confirmarte lo que ya creías.
+25. Medir bien no es diagnosticar bien. Si un arreglo medido empeora la
     experiencia, la que está mal es la métrica, no la percepción del que juega
     — y la métrica correcta suele ser la que cuenta lo que se pierde, no la que
     mide lo que se ve raro.
